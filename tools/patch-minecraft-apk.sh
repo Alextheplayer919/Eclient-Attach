@@ -245,8 +245,15 @@ cp \
     "$LOADER_SOURCE" \
     "$LOADER_DIR/EClientLoaderProvider.smali"
 
+# View-layer touch tap for the GUI (libminecraftpe.so 1.21.111 imports no
+# AInputQueue API, so touch delivery must happen in Java via the decor view).
+cp \
+    "$ROOT/tools/minecraft-touch-listener.smali" \
+    "$LOADER_DIR/EClientTouchListener.smali"
+
 echo "Loader installed:"
 echo "$LOADER_DIR/EClientLoaderProvider.smali"
+echo "$LOADER_DIR/EClientTouchListener.smali"
 echo
 
 # ============================================================
@@ -382,6 +389,20 @@ grep -q \
     'const-string v0, "eclient_host"' \
     "$LOADER_DIR/EClientLoaderProvider.smali" || {
         echo "ERROR: Loader does not load eclient_host."
+        exit 1
+    }
+
+grep -q \
+    'Landroid/view/View$OnTouchListener;' \
+    "$LOADER_DIR/EClientTouchListener.smali" || {
+        echo "ERROR: Touch listener smali missing its OnTouchListener interface."
+        exit 1
+    }
+
+grep -q \
+    'nativeGuiTouch(IFF)Z' \
+    "$LOADER_DIR/EClientTouchListener.smali" || {
+        echo "ERROR: Touch listener smali does not call nativeGuiTouch."
         exit 1
     }
 

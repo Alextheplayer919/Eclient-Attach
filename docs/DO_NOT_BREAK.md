@@ -11,6 +11,15 @@ commit `082d9cf`.
    runs `System.loadLibrary("eclient_host")`.
 2. `JNI_OnLoad` (`src/host/JniBootstrap.cpp`) stores the `JavaVM*` for the GUI
    and starts `MinecraftHost::bootstrapLoop`.
+2b. The provider's `onCreate` (smali) registers activity-lifecycle callbacks;
+    on each resumed activity it installs `EClientTouchListener` (an
+    `OnTouchListener`) on the decor view. **Touch delivery is Java-side by
+    design: `libminecraftpe.so` 1.21.111 imports NO `AInputQueue_*` symbols,
+    so native input hooks cannot observe touches.** The listener extracts
+    (action, x, y) and calls the native exports
+    `Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(IFF)Z`
+    / `_nativeTouchReady()V` by name — smali descriptors and native
+    signatures must stay in lockstep; they are ABI.
 3. Bootstrap loop polls `dl_iterate_phdr` (250 ms) until **unmodified**
    `libminecraftpe.so` appears → `GameBridge` sanity profile →
    `PatchManager` fail-closed validation of all 18 byte sites →

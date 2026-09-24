@@ -55,5 +55,6 @@ native/vendor/imgui/imstb_truetype.h
 tools/README.md
 tools/build-and-patch.sh
 tools/minecraft-host-loader.smali
+tools/minecraft-touch-listener.smali
 tools/patch-minecraft-apk.sh
 tools/verify-1.21.111.sh
