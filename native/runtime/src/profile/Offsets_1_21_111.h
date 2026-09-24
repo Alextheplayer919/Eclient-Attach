@@ -52,4 +52,51 @@ inline constexpr std::uint64_t GetPositionField = 0x208;
 inline constexpr std::uint64_t GetLevelField = 0x1D0;
 inline constexpr std::uint64_t GetGameModeField = 0x9C0;
 inline constexpr std::uint64_t GetNameField = 0xB30;
+
+// ---------------------------------------------------------------------------
+// Offsets below were DERIVED FROM THE 1.21.111 BINARY by Capstone disassembly
+// of the shipped libminecraftpe.so (SHA-256-verified APK). Each entry lists
+// the instruction-level evidence. They are NOT from the Apollon table.
+// ---------------------------------------------------------------------------
+
+// LerpMotion @ 0x0C947CDC:
+//   ldr  x8, [x0, #0x208]          ; x8 = actor->stateVector
+//   ldr  w9, [x1, #8] / ldr x10, [x1]
+//   str  w9, [x8, #0x20]           ; velocity.z at stateVector+0x20
+//   str  x10, [x8, #0x18]          ; velocity.x/y at stateVector+0x18
+// => *reinterpret_cast<void**>(actor + 0x208) is the state-vector component,
+//    layout matches Melody's StateVectorComponent: pos @+0x0, prevPos @+0x0C,
+//    velocity Vec3 @+0x18. Runtime gate: only write when finite and |v|<100.
+inline constexpr std::uint64_t VelocityField = 0x18;
+
+// GetHealth stub @ 0x0C9437D0 (add x0, x0, #8; b 0x0CDF16D8) and its
+// implementation @ 0x0CDF16D8:
+//   ldr  x9, [x0, #8]              ; entity registry pointer
+//   ldr  w8, [x0, #0x10]           ; entity id (u32 packed)
+// With x0 == actor+8 these become actor offsets 0x10 / 0x18, independently
+// re-confirmed by two more functions using the identical prologue:
+//   SetSprinting @ 0x6BF05B8:  ldr x9, [x20, #0x10]   (registry)
+//   ECS getter   @ 0x6BEE43C:  ldr x9, [x0, #0x10] / ldr w8, [x0, #0x18]
+// => ECS registry pointer at actor+0x10, packed entity id (u32) at actor+0x18.
+inline constexpr std::uint64_t EcsRegistryField = 0x10;
+inline constexpr std::uint64_t EntityIdField = 0x18;
+
+// GetEntityTypeId @ 0x0C937698 consists of (bl 0x0C950F38; ldr w0, [x0]; ret),
+// i.e. a pure getter returning a u32 type id. Used at runtime as the player
+// classifier: typeId(localPlayer) == 319 ("minecraft:player") on 1.21,
+// matching Melody's player-type check; other actors can be classified by
+// comparing against the local player's own id instead of hardcoding 319.
+
+// ---------------------------------------------------------------------------
+// ECS component identities discovered ON DEVICE via the ECSDump debug module.
+// All zero until the pool hash + element stride + field offsets have been
+// confirmed against a live game; module code must treat hash==0 as "feature
+// not unlocked" and fail inert (Melody Rotation/Switch modes, Hitbox, etc.).
+// ---------------------------------------------------------------------------
+inline constexpr std::uint32_t ActorRotationComponentHash = 0; // rotation {Vec2 yaw/pitch, old}
+inline constexpr std::uint64_t ActorRotationStride = 0;        // element stride in pool block
+inline constexpr std::uint64_t ActorRotationYawOffset = 0;     // offset of Vec2 yaw inside element
+inline constexpr std::uint64_t HitboxComponentHash = 0;        // hitbox (width/height floats)
+inline constexpr std::uint64_t HitboxStride = 0;
+inline constexpr std::uint64_t HitboxWidthOffset = 0;
 }

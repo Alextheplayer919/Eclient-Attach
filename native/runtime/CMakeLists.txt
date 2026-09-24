@@ -17,7 +17,9 @@ set(ECLIENT_COMMON_SOURCES
     src/main.cpp
     src/bridge/GameBridge.cpp
     src/bridge/LoopbackBridge.cpp
+    src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
+    src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
     src/profile/PatchManager.cpp
@@ -37,7 +39,9 @@ add_library(eclient_host SHARED
     src/host/MinecraftHost.cpp
     src/gui/InGameGui.cpp
     src/bridge/GameBridge.cpp
+    src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
+    src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
     src/profile/PatchManager.cpp

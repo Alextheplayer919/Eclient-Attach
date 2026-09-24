@@ -1,4 +1,5 @@
 #include "modules/GameplayModules.h"
+#include "modules/MelodyModules.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 #include "memory/NativeMemory.h"
@@ -15,9 +16,6 @@ using namespace eclient_runtime::profile::mc_1_21_111;
 
 using NormalTickFn = void* (*)(void*);
 using SpeedFn = void (*)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*);
-using GetAbilitiesFn = void* (*)(void*);
-using GetLayerFn = void* (*)(void*, int);
-using SetAbilityFn = void (*)(void*, int, bool);
 using GetRuntimeActorFn = std::vector<void*> (*)(void*);
 using AttackFn = void (*)(void*, void*, bool);
 using IsAttackableFn = bool (*)(void*);
@@ -25,9 +23,6 @@ using GetHealthFn = int (*)(void*);
 
 NormalTickFn oldNormalTick = nullptr;
 SpeedFn oldSpeed = nullptr;
-GetAbilitiesFn getAbilities = nullptr;
-GetLayerFn getLayer = nullptr;
-SetAbilityFn setAbility = nullptr;
 GetRuntimeActorFn getRuntimeActors = nullptr;
 AttackFn attack = nullptr;
 IsAttackableFn isAttackable = nullptr;
@@ -51,11 +46,8 @@ void* hookedNormalTick(void* player) {
         reinterpret_cast<Fn>(fn(InitMaxAutoStep))(player, 1.0625f);
     }
 
-    if (on("Fly") && getAbilities && getLayer && setAbility) {
-        void* abilities = getAbilities(player);
-        void* layer = abilities ? getLayer(abilities, 2) : nullptr;
-        if (layer) setAbility(layer, 10, true);
-    }
+    // NOTE: the old ability-layer Fly was removed — "Fly" is now the Melody
+    // velocity-fly port in MelodyModules (tickKillAura2/tickFly/tickEcsDump).
 
     if (on("KillAura") && getRuntimeActors && attack && isAttackable && getHealth) {
         void* level = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetLevelField);
@@ -80,6 +72,9 @@ void* hookedNormalTick(void* player) {
             if (best) attack(gameMode, best, true);
         }
     }
+
+    // Melody ports run after the vanilla-behaving modules above.
+    melody::onNormalTick(player);
     return result;
 }
 
@@ -98,16 +93,16 @@ bool initialize() {
     if (!memory::NativeMemory::instance().locateModule("libminecraftpe.so", info)) return false;
     base = info.base;
 
-    // Only bind ability helpers when the offset table supplies non-zero values.
-    if (GetAbilities) getAbilities = reinterpret_cast<GetAbilitiesFn>(fn(GetAbilities));
-    if (GetLayer)     getLayer     = reinterpret_cast<GetLayerFn>(fn(GetLayer));
-    if (SetAbility)   setAbility   = reinterpret_cast<SetAbilityFn>(fn(SetAbility));
-
+    // Ability helpers are unused now that Fly writes velocity directly.
     getRuntimeActors = reinterpret_cast<GetRuntimeActorFn>(fn(GetRuntimeActor));
     attack           = reinterpret_cast<AttackFn>(fn(Attack));
     isAttackable     = reinterpret_cast<IsAttackableFn>(fn(IsAttackable));
     getHealth        = reinterpret_cast<GetHealthFn>(fn(GetHealth));
 
+    if (!melody::initialize(base)) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Melody modules failed to bind");
+        return false;
+    }
     if (DobbyHook(fn(NormalTick), reinterpret_cast<void*>(hookedNormalTick), reinterpret_cast<void**>(&oldNormalTick)) != RS_SUCCESS) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "NormalTick hook failed");
         return false;

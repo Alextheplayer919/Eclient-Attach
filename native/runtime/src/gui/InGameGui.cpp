@@ -167,6 +167,76 @@ void drawModuleList() {
                                           module->memoryBacked ? " memory patch" : " runtime hook");
                     }
                 }
+
+                // Melody-style per-module settings panel (touch: tap arrow to expand).
+                if (!module->settings.empty()) {
+                    ImGui::SameLine();
+                    const bool open = ImGui::TreeNodeEx("##settings",
+                                                        ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                                                        ImGuiTreeNodeFlags_Bullet |
+                                                        ImGuiTreeNodeFlags_SpanAvailWidth);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%zu settings — tap to %s",
+                                          module->settings.size(), open ? "collapse" : "expand");
+                    }
+                    if (open) {
+                        ImGui::Indent(22.0f);
+                        for (const auto& setting : module->settings) {
+                            ImGui::PushID(setting.key.c_str());
+                            switch (setting.type) {
+                            case eclient_runtime::modules::Setting::Type::Bool: {
+                                bool v = setting.boolValue;
+                                if (ImGui::Checkbox(setting.label.c_str(), &v)) {
+                                    mgr.setBoolSetting(module->name, setting.key, v);
+                                }
+                                break;
+                            }
+                            case eclient_runtime::modules::Setting::Type::Int: {
+                                int v = setting.intValue;
+                                if (ImGui::SliderInt(setting.label.c_str(), &v,
+                                                     setting.intMin, setting.intMax)) {
+                                    mgr.setIntSetting(module->name, setting.key, v);
+                                }
+                                break;
+                            }
+                            case eclient_runtime::modules::Setting::Type::Float: {
+                                float v = setting.floatValue;
+                                if (ImGui::SliderFloat(setting.label.c_str(), &v,
+                                                       setting.floatMin, setting.floatMax,
+                                                       "%.2f", ImGuiSliderFlags_None)) {
+                                    mgr.setFloatSetting(module->name, setting.key, v);
+                                }
+                                break;
+                            }
+                            case eclient_runtime::modules::Setting::Type::Enum: {
+                                const int current = setting.enumValue;
+                                if (ImGui::BeginCombo(setting.label.c_str(),
+                                    (current >= 0 && current < static_cast<int>(setting.options.size()))
+                                        ? setting.options[static_cast<std::size_t>(current)].c_str()
+                                        : "…")) {
+                                    for (int oi = 0; oi < static_cast<int>(setting.options.size()); ++oi) {
+                                        const bool sel = (oi == current);
+                                        if (ImGui::Selectable(setting.options[static_cast<std::size_t>(oi)].c_str(), sel)) {
+                                            mgr.setEnumSetting(module->name, setting.key, oi);
+                                        }
+                                        if (sel) ImGui::SetItemDefaultFocus();
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                                break;
+                            }
+                            }
+                            if (!setting.tooltip.empty() &&
+                                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled |
+                                                     ImGuiHoveredFlags_DelayShort)) {
+                                ImGui::SetTooltip("%s", setting.tooltip.c_str());
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::Unindent(22.0f);
+                        ImGui::Spacing();
+                    }
+                }
                 ImGui::PopID();
             }
             ImGui::EndChild();
