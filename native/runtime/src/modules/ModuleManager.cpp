@@ -97,17 +97,26 @@ ModuleManager::ModuleManager() : modules_{
 
     // Movement
     {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false, {}},
-    // Fly: Melody Fly port — writes directly into the state-vector velocity
-    // (offset proven by LerpMotion disasm). Horizontal steering follows your
-    // current movement momentum (walk any direction to fly that way).
-    {"Fly", "Melody velocity-fly port (state-vector velocity write; momentum-steered)", "Movement", true, false, {
-        Setting::real("Speed", 0.5f, 0.1f, 6.0f,
-            "Horizontal speed in blocks/tick (vanilla sprint is ~0.28).\n"
-            "Steer by walking — your movement direction is kept."),
-        Setting::choice("VerticalMode", {"Hover", "Vanilla"}, 0,
-            "Hover: gravity cancels, you hold altitude.\n"
-            "Vanilla: normal gravity (horizontal speed only).\n"
-            "Pitch-based ascend/descend unlocks after rotation discovery."),
+    // Fly: MotionFly-style (proxy "LeHu fly") native port — momentum-steered
+    // horizontal speed that RESPECTS analog stick magnitude, glide/hover/
+    // jetpack vertical modes, anti-rubberband teleport skip. Direct
+    // state-vector velocity write (LerpMotion disasm-proven actor+0x208/+0x18).
+    {"Fly", "MotionFly-style velocity fly (analog-accurate speed, glide/hover/jetpack)", "Movement", true, false, {
+        Setting::real("HSpeed BPS", 20.0f, 1.0f, 100.0f,
+            "Horizontal speed in blocks/second at FULL stick (proxy MotionFly\n"
+            "'H Speed BPS'). Steer by walking; stick tilt scales speed."),
+        Setting::real("Glide", -0.02f, -0.3f, 0.0f,
+            "Fall speed per tick when not climbing (MotionFly 'Glide').\n"
+            "-0.02 = slow smooth descent; 0 = dead hover."),
+        Setting::real("UpSpeed BPS", 9.0f, 1.0f, 60.0f,
+            "Jetpack climb speed in blocks/second. Tap JUMP to climb\n"
+            "(each tap sustains ~0.5 s of climb, then you glide)."),
+        Setting::choice("VerticalMode", {"Glide", "Hover", "Jetpack"}, 0,
+            "Glide: constant slow descent (MotionFly default).\n"
+            "Hover: no vertical drift at all.\n"
+            "Jetpack: glide + tap JUMP to climb (proxy Jetpack feel).\n"
+            "Hold-to-ascend unlocks once jump/sneak flags are discovered\n"
+            "(run ECSDump while spamming jump+sneak buttons!)."),
     }},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},

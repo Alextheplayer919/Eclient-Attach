@@ -233,16 +233,29 @@ void tickKillAura2(void* player) {
 }
 
 // ============================================================================
-// Fly — Melody velocity-fly port.
+// Fly — native port of the proxy's MotionFly ("LeHu-style") feel.
 //
-// Melody (Windows): projects WASD over camera yaw and writes the state-vector
-// velocity x/z directly; space/shift drive y. On touch there are no WASD/space
-// keys or camera-yaw memory access yet, so the mobile-faithful adaptation is:
-//   * horizontal: keep your current momentum DIRECTION (stick-driven), scale
-//     its magnitude to the Speed setting — net effect identical direction-wise;
-//   * vertical: Hover = gravity cancel (melody "no keys held: y=0"), Vanilla =
-//     untouched y, Pitch = reserved for post-discovery ascend/descend.
+// Proxy MotionFly does a full 3D motion override per outgoing packet: analog
+// stick projected over camera yaw at HSpeed BPS, vertical = up-speed while
+// JUMP held / -down+glide while SNEAK held / glide otherwise, plus an
+// anti-rubberband position jump skip. Camera yaw and the jump/sneak flags
+// live in the PlayerAuthInputPacket the proxy reads; our in-process
+// equivalents (rotation component, input flag components) are still being
+// discovered via ECSDump, so the mobile-side adaptation keeps MotionFly's
+// BEHAVIOUR with observable state only:
+//   * horizontal: your vanilla momentum direction IS yaw-projected analog
+//     input already; we rescale its magnitude to HSpeed * (stick tilt ratio)
+//     so a light touch creeps and a full push sprints — same as the proxy.
+//   * vertical: glide default exactly like MotionFly; Jetpack mode detects
+//     real jump impulses (vy edge past ~0.3) and sustains UpSpeed for a
+//     short window — tap-jump to climb; hold-to-ascend unlocks with the
+//     jump-flag component once discovered.
 // ============================================================================
+
+Vec3 g_lastFlyPos{};
+bool g_haveLastFlyPos = false;
+int g_jetSustainTicks = 0;
+float g_prevVy = 0.0f;
 
 void tickFly(void* player) {
     Vec3* vel = velocityPtr(player);
@@ -254,35 +267,69 @@ void tickFly(void* player) {
     // Plausibility gate on ALL derived-layout writes (per port policy).
     if (std::fabs(vx) > 100.0f || std::fabs(vy) > 100.0f || std::fabs(vz) > 100.0f) return;
 
-    const float speed = mgr().floatSetting("Fly", "Speed", 0.5f);
+    // MotionFly anti-rubberband: skip a tick where the server teleported us
+    // (>4.5 blocks in one tick) so we never fight position corrections.
+    Vec3 pos{};
+    if (!getPosition(player, pos)) return;
+    if (g_haveLastFlyPos) {
+        const float dx = pos.x - g_lastFlyPos.x;
+        const float dy = pos.y - g_lastFlyPos.y;
+        const float dz = pos.z - g_lastFlyPos.z;
+        if ((dx * dx + dy * dy + dz * dz) > 4.5f * 4.5f) {
+            g_lastFlyPos = pos;
+            return;
+        }
+    }
+    g_haveLastFlyPos = true;
+    g_lastFlyPos = pos;
+
+    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 20.0f);
+    const float glide = mgr().floatSetting("Fly", "Glide", -0.02f);
+    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 9.0f);
     const int verticalMode = mgr().enumSetting("Fly", "VerticalMode", 0);
 
-    // Horizontal: rescale current momentum direction to Speed.
+    // Horizontal — MotionFly computes horizSpeed = min(BPS/20, sqrt(5.99)).
+    float horizSpeed = std::min(horizBps / 20.0f, 2.4449f);
+
     const float mag = std::sqrt(vx * vx + vz * vz);
-    if (mag > 0.05f) {
-        const float scale = speed / mag;
+    // Vanilla full-stick sprint momentum ≈ 0.28 (sprint) — treat that as the
+    // analog "1.0" so stick tilt scales speed; below ~0.02 there is no input.
+    if (mag > 0.02f) {
+        constexpr float FULL_STICK_MAG = 0.28f;
+        const float ratio = std::min(mag / FULL_STICK_MAG, 1.0f);
+        const float target = horizSpeed * ratio;
+        const float scale = target / mag;
         vx *= scale;
         vz *= scale;
     }
+    // No else: with no stick input vanilla friction already damps to a stop,
+    // matching MotionFly (input 0 → motion 0).
 
     // Vertical.
     switch (verticalMode) {
-    case 0: // Hover: cancel gravity, gently decay upward impulses
-        vy = (vy > 0.0f) ? vy * 0.75f : 0.0f;
-        break;
-    case 1: // Vanilla gravity
-    default:
-        break;
-    case 2: // Pitch-based ascend/descend — needs rotation comp (locked)
-        if (ActorRotationComponentHash == 0) {
-            vy = (vy > 0.0f) ? vy * 0.75f : 0.0f; // behave like Hover
+    case 2: // Jetpack: glide base + impulse-sustained climb on real jumps
+    {
+        // Edge detect a jump impulse: vy was low/negative, now strongly up.
+        if (vy > 0.30f && g_prevVy <= 0.10f && vy < 2.0f) {
+            g_jetSustainTicks = 10; // ~0.5 s of climb per tap
+        }
+        if (g_jetSustainTicks > 0) {
+            vy = std::min(upBps / 20.0f, 2.4449f);
+            --g_jetSustainTicks;
         } else {
-            // Unlocked path: vy = -sin(pitch) * speed when moving.
-            // TODO: enable once ActorRotation* constants are baked in.
-            vy = (vy > 0.0f) ? vy * 0.75f : 0.0f;
+            vy = glide;
         }
         break;
     }
+    case 1: // Hover: no vertical drift
+        vy = 0.0f;
+        break;
+    case 0: // Glide (MotionFly default vertical)
+    default:
+        vy = glide;
+        break;
+    }
+    g_prevVy = vy;
 
     if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) return;
     vel->x = vx;
@@ -335,18 +382,28 @@ void dumpSnapshot(bool second) {
         }
         if (!probe.haveBefore) continue;
 
-        // Log only pools where any float changed → rotating the camera during
-        // the 2 s window pinpoints the rotation component.
-        bool changed = false;
+        std::uint32_t beforeW[kProbeFloats];
+        std::uint32_t nowW[kProbeFloats];
+        std::memcpy(beforeW, probe.before, sizeof(beforeW));
+        std::memcpy(nowW, now, sizeof(nowW));
+
+        // Float delta → moving/rotating values (rotation comp, velocity...).
+        bool floatChanged = false;
+        // Raw word delta where floats barely moved → boolean/counter FLAGS
+        // (spam jump+sneak during the window to expose input flag comps).
+        bool flagChanged = false;
         for (int i = 0; i < kProbeFloats; ++i) {
-            if (std::fabs(now[i] - probe.before[i]) > 1.0e-4f) { changed = true; break; }
+            const float d = std::fabs(now[i] - probe.before[i]);
+            if (d > 1.0e-4f) floatChanged = true;
+            else if (nowW[i] != beforeW[i]) flagChanged = true;
         }
-        if (!changed) continue;
+        if (!floatChanged && !flagChanged) continue;
 
         std::string line;
         char chunk[192];
         std::snprintf(chunk, sizeof(chunk),
-                      "ECS-DELTA hash=0x%08x %s\n  before:",
+                      "ECS-%s hash=0x%08x %s\n  before:",
+                      floatChanged ? "DELTA" : "FLAG",
                       probe.hash, E::describe(probe.el).c_str());
         line += chunk;
         for (int i = 0; i < kProbeFloats; ++i) {
@@ -357,6 +414,13 @@ void dumpSnapshot(bool second) {
         for (int i = 0; i < kProbeFloats; ++i) {
             std::snprintf(chunk, sizeof(chunk), " %.3g", now[i]);
             line += chunk;
+        }
+        if (flagChanged) {
+            line += "\n  words :";
+            for (int i = 0; i < kProbeFloats; ++i) {
+                std::snprintf(chunk, sizeof(chunk), " %08x->%08x", beforeW[i], nowW[i]);
+                line += chunk;
+            }
         }
         __android_log_print(ANDROID_LOG_INFO, TAG, "%s", line.c_str());
     }
@@ -373,7 +437,8 @@ void tickEcsDump(void* player) {
         const auto pools = E::listPools(reinterpret_cast<std::uintptr_t>(player));
         __android_log_print(ANDROID_LOG_INFO, TAG,
             "ECSDump: %zu pools, eid=0x%x — snapshot 1 now,"
-            " snapshot 2 in ~2 s (rotate your view between them!)",
+            " snapshot 2 in ~2 s. During the window: ROTATE the view,"
+            " SPAM jump+sneak, take a hit if possible.",
             pools.size(), eid);
 
         for (const auto& d : pools) {
@@ -432,7 +497,13 @@ void onNormalTick(void* localPlayer) {
     if ((g_tick & 0x3FF) == 0 && g_hurtState.size() > 512) g_hurtState.clear();
 
     if (mgr().enabled("KillAura2")) tickKillAura2(localPlayer);
-    if (mgr().enabled("Fly")) tickFly(localPlayer);
+    if (mgr().enabled("Fly")) {
+        tickFly(localPlayer);
+    } else {
+        g_haveLastFlyPos = false;
+        g_jetSustainTicks = 0;
+        g_prevVy = 0.0f;
+    }
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
 }
 
