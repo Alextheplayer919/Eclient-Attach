@@ -273,7 +273,11 @@ jobs:
           echo "Downloading:"
           echo "${{ inputs.asset_name }}"
 
-          gh release download \
+          # Pinned to the dedicated input release: without a tag,
+          # `gh release download` resolves the LATEST release — which would
+          # become our own `patched` output release after the first run and
+          # break every subsequent build.
+          gh release download "minecraft-input" \
             --repo "${{ github.repository }}" \
             --pattern "${{ inputs.asset_name }}" \
             --dir "$RUNNER_TEMP/minecraft"

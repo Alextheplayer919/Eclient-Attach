@@ -4,16 +4,13 @@ MT Manager is NOT used anywhere in this flow. Patching and signing happen in
 GitHub Actions with the desktop tools (`apktool`, `zipalign`, `apksigner`
 v1+v2+v3) — nothing runs on the phone except upload/download/install.
 
-## One-time: upload the stock APK
+## One-time: upload the stock APK ✅ done
 
-The CI needs the exact unmodified Minecraft 1.21.111 ARM64 APK as a release
-asset named **`Minecraft-1.21.111-arm64-v8a.apk`** in this repo. The pipeline
-pins SHA-256 `69f6584c…3d59`; a wrong build fails loudly before patching.
-
-Any upload route works:
-- GitHub mobile web → repo → **Releases → Draft new release → attach APK**
-  (title/tag irrelevant, asset NAME matters), or
-- ship.py / `gh release upload <tag> <apk>` from Termux.
+The exact reference APK (SHA-256 `69f6584c…3d59`) now lives in the repo's
+**`minecraft-input`** release as `Minecraft-1.21.111-arm64-v8a.apk`. The
+workflow consumes it from that pinned tag (it never drifts onto the output
+release). Replace the asset there if the target version ever changes, and
+update the 3 SHA pins + offsets profile in the same commit.
 
 ## Every build
 
