@@ -30,9 +30,18 @@ std::atomic_bool g_ready{false};
 std::atomic_bool g_imguiReady{false};
 std::atomic_bool g_menuOpen{false};
 
+// Whole-frame guard: menus and in-world rendering may swap on different
+// threads/contexts transiently (world load). If a frame races, skip drawing
+// the GUI for that frame instead of corrupting ImGui state.
+std::mutex g_frameMutex;
+
+// EGL context the ImGui GL objects were created in. On a world join the game
+// can recreate its render context; a stale shader/program set then renders
+// NOTHING (the "menu fine on title screen, invisible in game" bug). Detect
+// the switch and rebuild ImGui's GL state.
+std::atomic<EGLContext> g_imguiContext{EGL_NO_CONTEXT};
+
 // Queued touch events: input thread pushes, render thread drains in order.
-// A single atomic pair was overwriting DOWN with UP between frames, so ImGui
-// never saw a complete click.
 struct TouchSample {
     float x{0};
     float y{0};
@@ -45,14 +54,27 @@ float g_lastTouchY = -1.0f;
 bool g_lastTouchDown = false;
 std::atomic<std::uint64_t> g_touchesSeen{0};
 
+// Window->surface scaling, recomputed per frame (dynamic resolution).
+std::atomic<float> g_scaleX{1.0f};
+std::atomic<float> g_scaleY{1.0f};
+
+// Floating toggle bar rect in DISPLAY (surface-pixel) coordinates.
+// Written on the render thread, read by the input route for hit-testing.
+std::mutex g_barMutex;
+float g_barX = 24.0f;
+float g_barY = 120.0f;
+float g_barW = 0.0f;
+float g_barH = 0.0f;
+bool g_barSeenOnce = false;
+
 // Stored by JNI_OnLoad; used to read the real display metrics from the
-// platform thread-safely. Never dereferenced outside helper below.
+// platform thread-safely.
 JavaVM* g_javaVm = nullptr;
 
 // Reads android.content.res.Resources.getSystem().getDisplayMetrics() through
-// JNI. This is the ACTUAL on-screen pixel size of the default display at the
-// current rotation, independent of any EGL hook timing, and is exactly the
-// coordinate space MotionEvents are delivered in.
+// JNI: the ACTUAL on-screen pixel size of the default display at the current
+// rotation, independent of any EGL hook timing, and exactly the coordinate
+// space MotionEvents are delivered in.
 bool queryDisplayMetrics(int& outW, int& outH) {
     outW = 0;
     outH = 0;
@@ -96,14 +118,11 @@ bool queryDisplayMetrics(int& outW, int& outH) {
     return ok;
 }
 
-using SwapBuffersFn = EGLBoolean (*)(EGLDisplay, EGLSurface);
-SwapBuffersFn g_originalSwap = nullptr;
-std::atomic<int> g_physicalWidth{0};
-std::atomic<int> g_physicalHeight{0};
-
 void drawModuleList() {
     auto& mgr = eclient_runtime::modules::ModuleManager::instance();
     const auto& modules = mgr.all();
+    const bool patchReady =
+        eclient_runtime::profile::PatchManager::instance().ready();
 
     // Group by category while preserving registration order.
     static const char* kOrder[] = {"Combat", "Movement", "Visual", "Player", "Misc"};
@@ -121,8 +140,6 @@ void drawModuleList() {
 
             ImGui::BeginChild((std::string("##scroll_") + cat).c_str(),
                               ImVec2(0, 320), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            const bool patchReady =
-                eclient_runtime::profile::PatchManager::instance().ready();
             for (const auto* module : it->second) {
                 const bool inert = module->memoryBacked && !patchReady;
                 bool enabled = module->enabled;
@@ -131,7 +148,6 @@ void drawModuleList() {
                 if (inert) ImGui::BeginDisabled(true);
                 if (ImGui::Checkbox(module->name.c_str(), &enabled)) {
                     if (!mgr.setEnabled(module->name, enabled)) {
-                        // Revert visual if patch layer rejected the change.
                         enabled = module->enabled;
                         __android_log_print(ANDROID_LOG_WARN, TAG,
                             "Toggle rejected by patch layer: %s", module->name.c_str());
@@ -160,128 +176,210 @@ void drawModuleList() {
     }
 }
 
+// Small floating bar: the ONLY menu switch (no hardware keys). Draggable by
+// its title bar; the button opens the full ClickGUI. Drawn only while the
+// main menu is closed, so taps elsewhere always belong to the game.
+void drawToggleBar() {
+    static bool placed = false;
+    if (!placed) {
+        ImGui::SetNextWindowPos(ImVec2(24.0f, 120.0f), ImGuiCond_Always);
+        placed = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(170.0f, 0.0f), ImGuiCond_Always);
+    ImGui::Begin("E-Client##togglebar", nullptr,
+                 ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoCollapse |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoSavedSettings);
+
+    if (ImGui::Button("Open menu", ImVec2(150.0f, 52.0f))) {
+        g_menuOpen.store(true);
+    }
+    ImGui::TextDisabled("drag this title to move");
+
+    // Record the rect for the input-route hit test.
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const ImVec2 size = ImGui::GetWindowSize();
+    {
+        std::lock_guard lock(g_barMutex);
+        g_barX = pos.x;
+        g_barY = pos.y;
+        g_barW = size.x;
+        g_barH = size.y;
+        g_barSeenOnce = true;
+    }
+    ImGui::End();
+}
+
+using SwapBuffersFn = EGLBoolean (*)(EGLDisplay, EGLSurface);
+SwapBuffersFn g_originalSwap = nullptr;
+std::atomic<int> g_physicalWidth{0};
+std::atomic<int> g_physicalHeight{0};
+
+void ensureImGuiInitialized() {
+    const EGLContext current = eglGetCurrentContext();
+    const EGLContext recorded = g_imguiContext.load();
+
+    if (g_imguiReady.load() && recorded != EGL_NO_CONTEXT && current != recorded) {
+        // Context was recreated by the game (e.g. world join): ImGui's
+        // shader/program/FBO objects belong to the dead context. Rebuild.
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+            "EGL context changed — rebuilding ImGui GL state");
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui::DestroyContext();
+        g_imguiReady.store(false);
+        g_imguiContext.store(EGL_NO_CONTEXT);
+    }
+
+    if (!g_imguiReady.load()) {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io0 = ImGui::GetIO();
+        io0.IniFilename = nullptr;
+        io0.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
+        style.FramePadding = ImVec2(10.0f, 8.0f);
+        style.ItemSpacing = ImVec2(10.0f, 8.0f);
+        style.ScrollbarSize = 28.0f;
+        style.WindowRounding = 8.0f;
+        style.FrameRounding = 6.0f;
+        ImGui_ImplOpenGL3_Init("#version 300 es");
+        g_imguiContext.store(current);
+        g_imguiReady.store(true);
+        __android_log_print(ANDROID_LOG_INFO, TAG, "ImGui renderer initialized");
+    }
+}
+
+void drainTouchQueue(ImGuiIO& io, float scaleX, float scaleY) {
+    std::lock_guard lock(g_touchMutex);
+    if (!g_touchQueue.empty()) {
+        for (const auto& sample : g_touchQueue) {
+            const float sx = sample.x * scaleX;
+            const float sy = sample.y * scaleY;
+            g_lastTouchX = sx;
+            g_lastTouchY = sy;
+            io.AddMousePosEvent(sx, sy);
+            if (sample.action == 0) {
+                g_lastTouchDown = true;
+                io.AddMouseButtonEvent(0, true);
+            } else if (sample.action == 2) {
+                g_lastTouchDown = false;
+                io.AddMouseButtonEvent(0, false);
+            }
+        }
+        g_touchQueue.clear();
+    } else if (g_lastTouchDown) {
+        io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
+        io.AddMouseButtonEvent(0, true);
+    } else if (g_lastTouchX >= 0.0f) {
+        io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
+        io.AddMouseButtonEvent(0, false);
+    } else {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        io.AddMouseButtonEvent(0, false);
+    }
+}
+
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     if (g_ready.load()) {
-        // The eglCreateWindowSurface hook usually installs after Minecraft
-        // created its surface, so it never fires. Backfill the physical size
-        // from DisplayMetrics until a non-zero value is known either way.
-        if (g_physicalWidth.load() <= 0 || g_physicalHeight.load() <= 0) {
-            int dispW = 0;
-            int dispH = 0;
-            if (queryDisplayMetrics(dispW, dispH)) {
-                g_physicalWidth.store(dispW);
-                g_physicalHeight.store(dispH);
-            }
-        }
-
-        EGLint width = 0;
-        EGLint height = 0;
-        eglQuerySurface(display, surface, EGL_WIDTH, &width);
-        eglQuerySurface(display, surface, EGL_HEIGHT, &height);
-        const int physW = g_physicalWidth.load();
-        const int physH = g_physicalHeight.load();
-        const bool needsScale = physW > 0 && physH > 0 && (physW != width || physH != height);
-        const float scaleX = needsScale ? static_cast<float>(width) / static_cast<float>(physW) : 1.0f;
-        const float scaleY = needsScale ? static_cast<float>(height) / static_cast<float>(physH) : 1.0f;
-
-        if (!g_imguiReady.exchange(true)) {
-            IMGUI_CHECKVERSION();
-            ImGui::CreateContext();
-            ImGuiIO& io0 = ImGui::GetIO();
-            io0.IniFilename = nullptr;
-            io0.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-            // Touch-friendly: windows can be moved from anywhere, larger frame padding.
-            ImGui::StyleColorsDark();
-            ImGuiStyle& style = ImGui::GetStyle();
-            style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
-            style.FramePadding = ImVec2(10.0f, 8.0f);
-            style.ItemSpacing = ImVec2(10.0f, 8.0f);
-            style.ScrollbarSize = 28.0f;
-            style.WindowRounding = 8.0f;
-            style.FrameRounding = 6.0f;
-            ImGui_ImplOpenGL3_Init("#version 300 es");
-            __android_log_print(ANDROID_LOG_INFO, TAG, "ImGui renderer initialized");
-        }
-
-        ImGuiIO& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
-        io.FontGlobalScale = std::max(1.5f, static_cast<float>(std::min(width, height)) / 360.0f);
-
-        // Drain the touch queue in arrival order so DOWN/MOVE/UP sequences reach ImGui.
-        {
-            std::lock_guard lock(g_touchMutex);
-            if (!g_touchQueue.empty()) {
-                for (const auto& sample : g_touchQueue) {
-                    const float sx = sample.x * scaleX;
-                    const float sy = sample.y * scaleY;
-                    g_lastTouchX = sx;
-                    g_lastTouchY = sy;
-                    io.AddMousePosEvent(sx, sy);
-                    if (sample.action == 0) {
-                        g_lastTouchDown = true;
-                        io.AddMouseButtonEvent(0, true);
-                    } else if (sample.action == 2) {
-                        g_lastTouchDown = false;
-                        io.AddMouseButtonEvent(0, false);
-                    }
-                    // action == 1 (move): position only, button state unchanged
+        std::unique_lock<std::mutex> frameLock(g_frameMutex, std::try_to_lock);
+        if (frameLock.owns_lock()) {
+            // Backfill physical size via DisplayMetrics (the create-surface
+            // hook installs too late to see the game's first surface).
+            if (g_physicalWidth.load() <= 0 || g_physicalHeight.load() <= 0) {
+                int dispW = 0;
+                int dispH = 0;
+                if (queryDisplayMetrics(dispW, dispH)) {
+                    g_physicalWidth.store(dispW);
+                    g_physicalHeight.store(dispH);
                 }
-                g_touchQueue.clear();
-            } else if (g_lastTouchDown) {
-                // Finger still down with no new events: keep position + button.
-                io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
-                io.AddMouseButtonEvent(0, true);
-            } else if (g_lastTouchX >= 0.0f) {
-                // After release keep last hover for a frame so ImGui can finish click.
-                io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
-                io.AddMouseButtonEvent(0, false);
-            } else {
-                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-                io.AddMouseButtonEvent(0, false);
+            }
+
+            EGLint width = 0;
+            EGLint height = 0;
+            eglQuerySurface(display, surface, EGL_WIDTH, &width);
+            eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+            const int physW = g_physicalWidth.load();
+            const int physH = g_physicalHeight.load();
+            const bool needsScale = physW > 0 && physH > 0 && (physW != width || physH != height);
+            const float scaleX = needsScale ? static_cast<float>(width) / static_cast<float>(physW) : 1.0f;
+            const float scaleY = needsScale ? static_cast<float>(height) / static_cast<float>(physH) : 1.0f;
+            g_scaleX.store(scaleX);
+            g_scaleY.store(scaleY);
+
+            if (width > 0 && height > 0) {
+                ensureImGuiInitialized();
+                if (g_imguiReady.load()) {
+                    ImGuiIO& io = ImGui::GetIO();
+                    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+                    io.FontGlobalScale = std::max(1.5f, static_cast<float>(std::min(width, height)) / 360.0f);
+
+                    drainTouchQueue(io, scaleX, scaleY);
+
+                    ImGui_ImplOpenGL3_NewFrame();
+                    ImGui::NewFrame();
+
+                    const bool open = g_menuOpen.load();
+                    if (!open) {
+                        drawToggleBar();
+                    } else {
+                        const float winW = std::min(480.0f, static_cast<float>(width) * 0.92f);
+                        const float winH = std::min(520.0f, static_cast<float>(height) * 0.85f);
+                        ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+                        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(width) * 0.04f,
+                                                       static_cast<float>(height) * 0.06f),
+                                                ImGuiCond_FirstUseEver);
+
+                        bool keepOpen = open;
+                        ImGui::Begin("E-Client 1.21.111", &keepOpen,
+                                     ImGuiWindowFlags_NoCollapse);
+
+                        const auto bridge = eclient_runtime::GameBridge::instance().snapshot();
+                        ImGui::Text("Minecraft: %s", bridge.libraryLoaded ? "YES" : "NO");
+                        const auto& patches = eclient_runtime::profile::PatchManager::instance();
+                        ImGui::Text("Patch profile: %s", patches.ready() ? "VALIDATED" : "NOT VALIDATED");
+                        if (!patches.ready()) {
+                            ImGui::TextWrapped("%s", patches.status().c_str());
+                        }
+                        ImGui::Text("Touch: %s | taps: %llu",
+                            eclient_runtime::input::touchHookInstalled()
+                                ? "view listener ready"
+                                : "waiting for window…",
+                            static_cast<unsigned long long>(g_touchesSeen.load()));
+                        ImGui::TextDisabled("Toggle: floating E-Client bar (no hardware keys)");
+                        ImGui::Separator();
+
+                        drawModuleList();
+
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Patches fail closed if the 1.21.111 profile does not match.");
+                        ImGui::End();
+                        if (!keepOpen) g_menuOpen.store(false);
+                    }
+
+                    ImGui::Render();
+
+                    // In-world the game may leave an OFFSCREEN framebuffer
+                    // and/or a reduced viewport bound at swap time (bloom,
+                    // water, shadow passes). ImGui draws into whatever is
+                    // bound — on the title screen that is FBO 0, which is why
+                    // the menu appeared there but NOT in a server/world.
+                    // Force the default framebuffer + full-surface viewport
+                    // for the GUI pass, then restore the game's state.
+                    GLint lastFbo = 0;
+                    GLint lastViewport[4] = {0, 0, 0, 0};
+                    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &lastFbo);
+                    glGetIntegerv(GL_VIEWPORT, lastViewport);
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glViewport(0, 0, width, height);
+                    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                    glBindFramebuffer(GL_FRAMEBUFFER, lastFbo);
+                    glViewport(lastViewport[0], lastViewport[1], lastViewport[2], lastViewport[3]);
+                }
             }
         }
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui::NewFrame();
-
-        const bool open = g_menuOpen.load();
-        if (open) {
-            const float winW = std::min(480.0f, static_cast<float>(width) * 0.92f);
-            const float winH = std::min(520.0f, static_cast<float>(height) * 0.85f);
-            ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowPos(ImVec2(static_cast<float>(width) * 0.04f,
-                                           static_cast<float>(height) * 0.06f),
-                                    ImGuiCond_FirstUseEver);
-
-            bool keepOpen = open;
-            ImGui::Begin("E-Client 1.21.111", &keepOpen,
-                         ImGuiWindowFlags_NoCollapse);
-
-            const auto bridge = eclient_runtime::GameBridge::instance().snapshot();
-            ImGui::Text("Minecraft: %s", bridge.libraryLoaded ? "YES" : "NO");
-            ImGui::Text("Build: %s", bridge.buildId.empty() ? "unknown" : bridge.buildId.c_str());
-            const auto& patches = eclient_runtime::profile::PatchManager::instance();
-            ImGui::Text("Patch profile: %s", patches.ready() ? "VALIDATED" : "NOT VALIDATED");
-            if (!patches.ready()) {
-                ImGui::TextWrapped("%s", patches.status().c_str());
-            }
-            ImGui::Text("Input: key=%s motion=%s touches=%llu",
-                eclient_runtime::input::keyHookInstalled() ? "hooked" : "MISSING",
-                eclient_runtime::input::touchHookInstalled() ? "hooked" : "MISSING",
-                static_cast<unsigned long long>(g_touchesSeen.load()));
-            ImGui::TextDisabled("Volume Up = toggle menu | drag title bar to move");
-            ImGui::Separator();
-
-            drawModuleList();
-
-            ImGui::Separator();
-            ImGui::TextDisabled("Patches fail closed if the 1.21.111 profile does not match.");
-            ImGui::End();
-            if (!keepOpen) g_menuOpen.store(false);
-        }
-
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
     return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
 }
@@ -325,6 +423,15 @@ void toggleMenu() { g_menuOpen.store(!g_menuOpen.load()); }
 void setJavaVm(JavaVM* vm) { g_javaVm = vm; }
 
 std::uint64_t touchesSeen() { return g_touchesSeen.load(); }
+
+bool hitTestToggleBar(float physicalX, float physicalY) {
+    const float sx = physicalX * g_scaleX.load();
+    const float sy = physicalY * g_scaleY.load();
+    std::lock_guard lock(g_barMutex);
+    if (!g_barSeenOnce) return false;
+    return sx >= g_barX && sx <= g_barX + g_barW &&
+           sy >= g_barY && sy <= g_barY + g_barH;
+}
 
 void setPhysicalWindowSize(int width, int height) {
     g_physicalWidth.store(width);
@@ -383,6 +490,7 @@ void shutdown() {
     if (g_imguiReady.exchange(false)) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui::DestroyContext();
+        g_imguiContext.store(EGL_NO_CONTEXT);
     }
 }
 

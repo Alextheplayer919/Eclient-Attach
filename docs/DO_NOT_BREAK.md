@@ -25,7 +25,24 @@ commit `082d9cf`.
    `PatchManager` fail-closed validation of all 18 byte sites →
    `GameplayModules` Dobby hooks (NormalTick, SpeedHack) →
    `InGameGui` (Dobby: eglSwapBuffers ± eglCreateWindowSurface) →
-   `NativeInputHook` (Dobby: nativeKeyHandler, AInputQueue_getEvent).
+   input route (view-layer listener; **no native key hook — hardware buttons
+   are not used; the floating toggle bar is the only menu switch**).
+
+## GUI invariants (learned the hard way)
+
+- GUI draw must bind **FBO 0 + full-surface viewport** during
+  `RenderDrawData` — in-world the game leaves off-screen FBOs (bloom/water/
+  shadow passes) and reduced viewports bound at swap time; drawing into them
+  renders the GUI into a texture nobody composites (menu visible on the title
+  screen but invisible in a world/server).
+- Rebuild ImGui GL objects if `eglGetCurrentContext()` changes (game recreates
+  its render context on world joins).
+- `g_frameMutex` try-lock per frame: transient swaps from a foreign thread get
+  skipped rather than corrupting ImGui state.
+- Menu-closed input: only gestures starting on the toggle-bar rect reach
+  ImGui, **latched until finger-up** (else bar drags leak MOVEs into the game
+  camera mid-drag).
+- Menu-open input: all touches consumed (classic ClickGUI behavior).
 
 Do NOT: rename/replace libminecraftpe.so, move hooks earlier than the poll
 loop, swap Dobby for hand-rolled trampolines, or re-order steps 3.

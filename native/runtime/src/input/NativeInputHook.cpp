@@ -1,92 +1,44 @@
 #include "input/NativeInputHook.h"
 
-#include <android/keycodes.h>
 #include <android/log.h>
-#include <dlfcn.h>
 #include <jni.h>
 #include <atomic>
 
-#include "dobby.h"
 #include "gui/InGameGui.h"
-#include "bridge/GameBridge.h"
 
 namespace eclient_runtime::input {
 namespace {
 constexpr const char* TAG = "EClientInput";
-using NativeKeyHandler = bool (*)(void*, void*, int, int);
 
-// Volume-key hook state (this path is verified working on 1.21.111:
-// Java_com_mojang_minecraftpe_MainActivity_nativeKeyHandler is a real export).
-std::atomic_bool g_keyInstalled{false};
-NativeKeyHandler g_original = nullptr;
-
-// TOUCH ROUTE (fixed 2026-09-24): libminecraftpe.so 1.21.111 imports NO
-// AInputQueue_* symbols at all, so the old AInputQueue_getEvent Dobby hook
-// could never observe a single touch — the GUI looked dead. Touches are now
-// delivered by a view-layer OnTouchListener (see
-// tools/minecraft-touch-listener.smali) calling into nativeGuiTouch below;
-// g_touchInstalled flips when the listener is actually installed on a resumed
-// activity window (nativeTouchReady callback).
+// DESIGN DECISION (2026-09-24, per user requirement): NO hardware-key
+// bindings. Volume Up conflicts with media volume on phones. The menu is
+// toggled exclusively by the floating E-Client bar drawn by the GUI itself,
+// so this TU installs no Dobby key hook at all. (The old
+// nativeKeyHandler hook worked, but the binding was the problem, not the
+// mechanism; it can be reinstated if a hardware bind is ever wanted.)
 std::atomic_bool g_touchInstalled{false};
 std::atomic<long> g_guiTouchCount{0};
-
-bool hookedNativeKeyHandler(void* a1, void* a2, int keyCode, int keyAction) {
-    // Volume-up toggles the in-game menu (ACTION_DOWN only).
-    if (keyCode == AKEYCODE_VOLUME_UP && keyAction == 0) {
-        eclient_runtime::host::InGameGui::toggleMenu();
-    }
-    return g_original ? g_original(a1, a2, keyCode, keyAction) : false;
-}
-
-void* findInMinecraft(const char* symbol) {
-    const auto snap = eclient_runtime::GameBridge::instance().snapshot();
-    const char* candidates[2] = {snap.libraryPath.empty() ? nullptr : snap.libraryPath.c_str(),
-                                 "libminecraftpe.so"};
-    for (const char* lib : candidates) {
-        if (!lib) continue;
-        void* handle = dlopen(lib, RTLD_NOW | RTLD_NOLOAD);
-        if (!handle) continue;
-        void* sym = dlsym(handle, symbol);
-        dlclose(handle);
-        if (sym) return sym;
-    }
-    return dlsym(RTLD_DEFAULT, symbol);
-}
-
-bool installKeyHook() {
-    if (g_keyInstalled.load()) return true;
-    void* symbol = findInMinecraft("Java_com_mojang_minecraftpe_MainActivity_nativeKeyHandler");
-    if (!symbol) {
-        __android_log_print(ANDROID_LOG_WARN, TAG, "nativeKeyHandler export not found");
-        return false;
-    }
-    if (DobbyHook(symbol, reinterpret_cast<void*>(hookedNativeKeyHandler),
-                  reinterpret_cast<void**>(&g_original)) != RS_SUCCESS || !g_original) {
-        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeKeyHandler hook failed");
-        g_original = nullptr;
-        return false;
-    }
-    g_keyInstalled.store(true);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "Mobile GUI hotkey ready: Volume Up");
-    return true;
-}
+// Gesture latch: a gesture that STARTS on the toggle bar must keep its events
+// routed to ImGui until finger-up, even when MOVE positions fall outside the
+// (moving) bar rect — otherwise dragging the bar would leak MOVE events into
+// the game camera mid-drag.
+std::atomic_bool g_barGestActive{false};
 } // namespace
 
 bool initialize() {
-    const bool key = installKeyHook();
-    if (!key) {
-        // No hotkey: open the menu so it remains reachable.
-        eclient_runtime::host::InGameGui::toggleMenu();
-    }
-    return key;
+    // Touch arrives asynchronously via the view-layer listener
+    // (tools/minecraft-touch-listener.smali) installed on each resumed
+    // activity's decor view; it calls nativeTouchReady/nativeGuiTouch below.
+    __android_log_print(ANDROID_LOG_INFO, TAG,
+        "Input: view-layer touch route armed; menu toggle = floating E-Client bar");
+    return true;
 }
 
 void shutdown() {
-    g_keyInstalled.store(false);
     g_touchInstalled.store(false);
 }
 
-bool keyHookInstalled() { return g_keyInstalled.load(); }
+bool keyHookInstalled() { return false; }       // hardware keys not used
 bool touchHookInstalled() { return g_touchInstalled.load(); }
 
 } // namespace eclient_runtime::input
@@ -108,9 +60,6 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(
         JNIEnv*, jclass, jint action, jfloat x, jfloat y) {
     namespace gui = eclient_runtime::host::InGameGui;
-    if (!gui::menuOpen()) {
-        return JNI_FALSE;  // forward into the app, game sees input normally
-    }
 
     // MotionEvent action-masked -> InGameGui touch codes (0=down, 1=move, 2=up)
     int mapped;
@@ -121,6 +70,28 @@ Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(
         case 3: /* ACTION_CANCEL */        mapped = 2; break;
         default: /* multi-touch variants */ mapped = 1; break;
     }
+
+    if (!gui::menuOpen()) {
+        // Menu closed: only gestures landing ON the floating toggle bar are
+        // diverted to ImGui; everything else belongs to the game.
+        if (mapped == 0) {
+            if (!gui::hitTestToggleBar(x, y)) {
+                eclient_runtime::input::g_barGestActive.store(false);
+                return JNI_FALSE;
+            }
+            eclient_runtime::input::g_barGestActive.store(true);
+        } else {
+            if (!eclient_runtime::input::g_barGestActive.load()) {
+                return JNI_FALSE;
+            }
+            if (mapped == 2) {
+                eclient_runtime::input::g_barGestActive.store(false);
+            }
+        }
+    } else {
+        eclient_runtime::input::g_barGestActive.store(false);
+    }
+
     gui::submitTouch(x, y, mapped);
 
     const long total = ++eclient_runtime::input::g_guiTouchCount;
@@ -128,5 +99,5 @@ Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(
         __android_log_print(ANDROID_LOG_INFO, "EClientInput",
             "GUI touch events flowing (%ld)", total);
     }
-    return JNI_TRUE;  // consumed while the menu is open
+    return JNI_TRUE;  // consumed
 }

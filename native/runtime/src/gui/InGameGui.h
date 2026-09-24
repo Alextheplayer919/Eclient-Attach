@@ -31,4 +31,10 @@ void setPhysicalWindowSize(int width, int height);
 // action: 0 = down, 1 = move, 2 = up/cancel.
 void submitTouch(float x, float y, int action);
 
+// Hit-test (PHYSICAL/window pixels, same space MotionEvents arrive in)
+// against the floating toggle bar. Used by the input route so that when the
+// main menu is closed, only taps landing ON the bar are diverted to ImGui —
+// everything else keeps flowing into the game.
+bool hitTestToggleBar(float physicalX, float physicalY);
+
 } // namespace eclient_runtime::host::InGameGui
