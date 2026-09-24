@@ -9,7 +9,9 @@ on:
         default: "Minecraft-1.21.111-arm64-v8a.apk"
 
 permissions:
-  contents: read
+  # write: the final step publishes the patched APK to the `patched` release
+  # so a phone can grab it from one fixed URL (no artifact-zip unpacking).
+  contents: write
 
 jobs:
   build:
@@ -706,3 +708,33 @@ jobs:
             build/native-android/**/*.a
           if-no-files-found: warn
           retention-days: 30
+
+      # ============================================================
+      # PUBLISH PATCHED APK TO THE `patched` RELEASE
+      # Stable phone-friendly download URL:
+      #   releases/download/patched/eclient-minecraft-1.21.111-arm64.apk
+      # --clobber replaces the previous build; releases retain history
+      # via tags if a rollback tag is ever created.
+      # ============================================================
+
+      - name: Publish patched APK to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          APK="out/eclient-minecraft-1.21.111-arm64.apk"
+
+          test -s "$APK"
+
+          gh release view patched >/dev/null 2>&1 || \
+            gh release create patched \
+              --title "Patched Minecraft 1.21.111 (latest CI build)" \
+              --notes "Always the newest CI-patched APK. Signed with the shared debug key (v1+v2+v3), installs over previous builds of this repo. SHA-pinned input: 1.21.111 ARM64."
+
+          gh release upload patched "$APK" --clobber
+
+          echo "Published:"
+          gh release view patched
+

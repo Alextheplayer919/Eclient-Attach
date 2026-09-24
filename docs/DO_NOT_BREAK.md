@@ -44,8 +44,11 @@ loop, swap Dobby for hand-rolled trampolines, or re-order steps 3.
   leftover (LoopbackBridge :38170 / NativeRuntimeBridge JNI). Dead in the
   APK flow by design ("everything inside MC").
 - **Vendored And64InlineHook compiled but unused** — Dobby owns all hooks.
-- **Debug keystore now persists** in `<repo>/.keystore/` (gitignored by
-  `*.keystore`) so builds install over each other; delete it to reset the cert.
+- **Shared debug keystore is COMMITTED** at `.signing/eclient-debug.p12`
+  (PKCS12, alias `eclient`, android/android). Every builder signs identically
+  → builds install over each other. It's a debug-grade sideload cert in a
+  private repo by design; do not regenerate it unless you accept that all
+  installs must then be uninstalled first. See docs/PATCHING_FROM_PHONE.md.
 
 ## Working rules
 

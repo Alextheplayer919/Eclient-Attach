@@ -521,10 +521,13 @@ echo
 
 echo "[9/11] Preparing signing key..."
 
-# Keystore lives OUTSIDE the wiped work directory: a stable signature means
-# patched builds can install OVER the previous build. (When it lived inside
-# $WORK, every run generated a new cert and forced an uninstall first.)
-KEYSTORE="$ROOT/.keystore/eclient-debug.keystore"
+# Shared debug keystore, committed to this PRIVATE repo: every builder
+# (CI, PC, phone) produces the SAME signature, so patched builds install
+# OVER the previous build with no uninstall step. Debug-grade key, not a
+# secret — its only purpose is a stable cert for sideloading.
+# If the file is ever missing, it is regenerated (note: a regenerated key
+# produces a DIFFERENT signature -> uninstall old build first in that case).
+KEYSTORE="$ROOT/.signing/eclient-debug.p12"
 
 mkdir -p "$(dirname "$KEYSTORE")"
 
@@ -534,13 +537,14 @@ if [[ ! -f "$KEYSTORE" ]]; then
         -genkeypair \
         -v \
         -keystore "$KEYSTORE" \
+        -storetype PKCS12 \
         -storepass android \
         -keypass android \
-        -alias androiddebugkey \
+        -alias eclient \
         -keyalg RSA \
         -keysize 2048 \
-        -validity 10000 \
-        -dname "CN=Android Debug,O=Android,C=US"
+        -validity 10950 \
+        -dname "CN=E-Client Debug,O=E-Client,C=US"
 
 fi
 
@@ -589,7 +593,7 @@ apksigner sign \
     --ks "$KEYSTORE" \
     --ks-pass pass:android \
     --key-pass pass:android \
-    --ks-key-alias androiddebugkey \
+    --ks-key-alias eclient \
     --v1-signing-enabled true \
     --v2-signing-enabled true \
     --v3-signing-enabled true \
