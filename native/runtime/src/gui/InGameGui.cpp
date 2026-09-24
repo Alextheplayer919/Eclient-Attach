@@ -19,6 +19,8 @@
 #include "dobby.h"
 #include "bridge/GameBridge.h"
 #include "modules/ModuleManager.h"
+#include "profile/PatchManager.h"
+#include "input/NativeInputHook.h"
 
 namespace eclient_runtime::host::InGameGui {
 namespace {
@@ -41,6 +43,58 @@ std::vector<TouchSample> g_touchQueue;
 float g_lastTouchX = -1.0f;
 float g_lastTouchY = -1.0f;
 bool g_lastTouchDown = false;
+std::atomic<std::uint64_t> g_touchesSeen{0};
+
+// Stored by JNI_OnLoad; used to read the real display metrics from the
+// platform thread-safely. Never dereferenced outside helper below.
+JavaVM* g_javaVm = nullptr;
+
+// Reads android.content.res.Resources.getSystem().getDisplayMetrics() through
+// JNI. This is the ACTUAL on-screen pixel size of the default display at the
+// current rotation, independent of any EGL hook timing, and is exactly the
+// coordinate space MotionEvents are delivered in.
+bool queryDisplayMetrics(int& outW, int& outH) {
+    outW = 0;
+    outH = 0;
+    if (!g_javaVm) return false;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (g_javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (g_javaVm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+        attached = true;
+    }
+
+    bool ok = false;
+    jclass resCls = env->FindClass("android/content/res/Resources");
+    if (resCls && !env->ExceptionCheck()) {
+        jmethodID getSystem = env->GetStaticMethodID(
+            resCls, "getSystem", "()Landroid/content/res/Resources;");
+        jobject res = getSystem ? env->CallStaticObjectMethod(resCls, getSystem) : nullptr;
+        if (res && !env->ExceptionCheck()) {
+            jmethodID getDm = env->GetMethodID(
+                resCls, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;");
+            jobject dm = getDm ? env->CallObjectMethod(res, getDm) : nullptr;
+            if (dm && !env->ExceptionCheck()) {
+                jclass dmCls = env->GetObjectClass(dm);
+                jfieldID wField = env->GetFieldID(dmCls, "widthPixels", "I");
+                jfieldID hField = env->GetFieldID(dmCls, "heightPixels", "I");
+                if (wField && hField) {
+                    outW = env->GetIntField(dm, wField);
+                    outH = env->GetIntField(dm, hField);
+                    ok = outW > 0 && outH > 0;
+                }
+                env->DeleteLocalRef(dmCls);
+                env->DeleteLocalRef(dm);
+            }
+            env->DeleteLocalRef(res);
+        }
+        env->DeleteLocalRef(resCls);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (attached) g_javaVm->DetachCurrentThread();
+    return ok;
+}
 
 using SwapBuffersFn = EGLBoolean (*)(EGLDisplay, EGLSurface);
 SwapBuffersFn g_originalSwap = nullptr;
@@ -67,21 +121,35 @@ void drawModuleList() {
 
             ImGui::BeginChild((std::string("##scroll_") + cat).c_str(),
                               ImVec2(0, 320), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            const bool patchReady =
+                eclient_runtime::profile::PatchManager::instance().ready();
             for (const auto* module : it->second) {
+                const bool inert = module->memoryBacked && !patchReady;
                 bool enabled = module->enabled;
                 // Larger hit target for touch.
                 ImGui::PushID(module->name.c_str());
+                if (inert) ImGui::BeginDisabled(true);
                 if (ImGui::Checkbox(module->name.c_str(), &enabled)) {
                     if (!mgr.setEnabled(module->name, enabled)) {
                         // Revert visual if patch layer rejected the change.
                         enabled = module->enabled;
+                        __android_log_print(ANDROID_LOG_WARN, TAG,
+                            "Toggle rejected by patch layer: %s", module->name.c_str());
                     }
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s\n[%s]%s",
-                                      module->description.c_str(),
-                                      module->category.c_str(),
-                                      module->memoryBacked ? " memory patch" : " runtime hook");
+                if (inert) ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    if (inert) {
+                        ImGui::SetTooltip("%s\n[%s] patch profile not validated —\n"
+                                          "this build's binary does not match the 1.21.111 reference bytes",
+                                          module->description.c_str(),
+                                          module->category.c_str());
+                    } else {
+                        ImGui::SetTooltip("%s\n[%s]%s",
+                                          module->description.c_str(),
+                                          module->category.c_str(),
+                                          module->memoryBacked ? " memory patch" : " runtime hook");
+                    }
                 }
                 ImGui::PopID();
             }
@@ -94,6 +162,18 @@ void drawModuleList() {
 
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     if (g_ready.load()) {
+        // The eglCreateWindowSurface hook usually installs after Minecraft
+        // created its surface, so it never fires. Backfill the physical size
+        // from DisplayMetrics until a non-zero value is known either way.
+        if (g_physicalWidth.load() <= 0 || g_physicalHeight.load() <= 0) {
+            int dispW = 0;
+            int dispH = 0;
+            if (queryDisplayMetrics(dispW, dispH)) {
+                g_physicalWidth.store(dispW);
+                g_physicalHeight.store(dispH);
+            }
+        }
+
         EGLint width = 0;
         EGLint height = 0;
         eglQuerySurface(display, surface, EGL_WIDTH, &width);
@@ -180,7 +260,16 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
             const auto bridge = eclient_runtime::GameBridge::instance().snapshot();
             ImGui::Text("Minecraft: %s", bridge.libraryLoaded ? "YES" : "NO");
             ImGui::Text("Build: %s", bridge.buildId.empty() ? "unknown" : bridge.buildId.c_str());
-            ImGui::TextDisabled("Volume Up = toggle menu | drag scrollbar to scroll");
+            const auto& patches = eclient_runtime::profile::PatchManager::instance();
+            ImGui::Text("Patch profile: %s", patches.ready() ? "VALIDATED" : "NOT VALIDATED");
+            if (!patches.ready()) {
+                ImGui::TextWrapped("%s", patches.status().c_str());
+            }
+            ImGui::Text("Input: key=%s motion=%s touches=%llu",
+                eclient_runtime::input::keyHookInstalled() ? "hooked" : "MISSING",
+                eclient_runtime::input::touchHookInstalled() ? "hooked" : "MISSING",
+                static_cast<unsigned long long>(g_touchesSeen.load()));
+            ImGui::TextDisabled("Volume Up = toggle menu | drag title bar to move");
             ImGui::Separator();
 
             drawModuleList();
@@ -233,12 +322,17 @@ bool hookSwapBuffers() {
 
 void toggleMenu() { g_menuOpen.store(!g_menuOpen.load()); }
 
+void setJavaVm(JavaVM* vm) { g_javaVm = vm; }
+
+std::uint64_t touchesSeen() { return g_touchesSeen.load(); }
+
 void setPhysicalWindowSize(int width, int height) {
     g_physicalWidth.store(width);
     g_physicalHeight.store(height);
 }
 
 void submitTouch(float x, float y, int action) {
+    g_touchesSeen.fetch_add(1);
     std::lock_guard lock(g_touchMutex);
     // Cap queue so a stuck input thread cannot grow without bound.
     if (g_touchQueue.size() > 64) g_touchQueue.erase(g_touchQueue.begin(), g_touchQueue.begin() + 32);
@@ -250,6 +344,21 @@ bool menuOpen() { return g_menuOpen.load(); }
 bool initialize() {
     std::lock_guard lock(g_mutex);
     if (g_ready.load()) return true;
+
+    // Seed the physical size from the platform BEFORE render starts, so touch
+    //→pixel scaling is correct even on devices with dynamic resolution where
+    // the EGL render buffer is smaller than the window.
+    int dispW = 0;
+    int dispH = 0;
+    if (queryDisplayMetrics(dispW, dispH)) {
+        setPhysicalWindowSize(dispW, dispH);
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+            "Physical display %dx%d via DisplayMetrics", dispW, dispH);
+    } else {
+        __android_log_print(ANDROID_LOG_WARN, TAG,
+            "DisplayMetrics unavailable; touch scale may be off on dynamic-res devices");
+    }
+
     if (!hookSwapBuffers()) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "eglSwapBuffers hook failed");
         return false;

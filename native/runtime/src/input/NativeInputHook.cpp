@@ -148,4 +148,7 @@ void shutdown() {
     g_touchInstalled.store(false);
 }
 
+bool keyHookInstalled() { return g_keyInstalled.load(); }
+bool touchHookInstalled() { return g_touchInstalled.load(); }
+
 } // namespace eclient_runtime::input

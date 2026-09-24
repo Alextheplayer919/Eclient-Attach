@@ -1,11 +1,24 @@
 #pragma once
 
+#include <cstdint>
+#include <jni.h>
+
 namespace eclient_runtime::host::InGameGui {
 
 bool initialize();
 void shutdown();
 void toggleMenu();
 bool menuOpen();
+
+// Called once from JNI_OnLoad so the GUI can query the real display size
+// through the platform (DisplayMetrics) even though the eglCreateWindowSurface
+// hook usually installs too late to see the surface Minecraft already created.
+// Stored only; the GUI never calls back into Java outside its own init thread.
+void setJavaVm(JavaVM* vm);
+
+// Total touch samples accepted by submitTouch() since process start.
+// Diagnostic surfaced in the menu so a dead input path is visible on-device.
+std::uint64_t touchesSeen();
 
 // The true on-screen pixel size, captured from the window Minecraft actually
 // creates its EGL surface on. This can differ from the surface's render-buffer

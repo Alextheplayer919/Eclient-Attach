@@ -8,4 +8,9 @@ namespace eclient_runtime::input {
 bool initialize();
 void shutdown();
 
+// Install status, surfaced by the in-game menu so a dead input path is
+// diagnosable on-device instead of looking like an unresponsive GUI.
+bool keyHookInstalled();
+bool touchHookInstalled();
+
 } // namespace eclient_runtime::input

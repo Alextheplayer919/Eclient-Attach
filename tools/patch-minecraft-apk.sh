@@ -521,7 +521,12 @@ echo
 
 echo "[9/11] Preparing signing key..."
 
-KEYSTORE="$WORK/eclient-debug.keystore"
+# Keystore lives OUTSIDE the wiped work directory: a stable signature means
+# patched builds can install OVER the previous build. (When it lived inside
+# $WORK, every run generated a new cert and forced an uninstall first.)
+KEYSTORE="$ROOT/.keystore/eclient-debug.keystore"
+
+mkdir -p "$(dirname "$KEYSTORE")"
 
 if [[ ! -f "$KEYSTORE" ]]; then
 

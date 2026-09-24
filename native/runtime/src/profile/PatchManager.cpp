@@ -27,12 +27,18 @@ bool PatchManager::initialize() {
         {"PlaceCamera", mc_1_21_111::PlaceCamera, {0xff,0xc3,0x00,0xd1}, RET},
         {"SlowDownTriggers", mc_1_21_111::SlowDownTriggers, {0xff,0xc3,0x00,0xd1}, RET},
         {"NoSlowDown", mc_1_21_111::NoSlowDown, {0xff,0xc3,0x00,0xd1}, RET},
-        {"WaterDrown", mc_1_21_111::WaterDrown, {0xff,0xc3,0x00,0xd1}, RET},
-        {"LavaDrown", mc_1_21_111::LavaDrown, {0xff,0xc3,0x00,0xd1}, RET},
+        // Spec names are the JOIN KEY to ModuleManager's UI names — they must
+        // match exactly. (Previously "WaterDrown"/"LavaDrown" here vs
+        // "NoWaterDrown"/"NoLavaDrown" in the UI meant those toggles could
+        // never apply; a spec-name typo fails silently.)
+        {"NoWaterDrown", mc_1_21_111::WaterDrown, {0xff,0xc3,0x00,0xd1}, RET},
+        {"NoLavaDrown", mc_1_21_111::LavaDrown, {0xff,0xc3,0x00,0xd1}, RET},
         {"Noclip", mc_1_21_111::Noclip, {0xff,0xc3,0x00,0xd1}, RET},
         {"XrayCameraThird", mc_1_21_111::XrayCameraThird, {0xff,0xc3,0x00,0xd1}, RET},
-        {"NoBlur1", mc_1_21_111::NoBlur1, {0xff,0xc3,0x05,0xd1}, RET},
-        {"NoBlur2", mc_1_21_111::NoBlur2, {0xff,0x03,0x05,0xd1}, RET},
+        // "NoBlur" is a COMPOSITE: two patch sites under one UI toggle.
+        // set()/enabled() apply/report across every spec sharing the name.
+        {"NoBlur", mc_1_21_111::NoBlur1, {0xff,0xc3,0x05,0xd1}, RET},
+        {"NoBlur", mc_1_21_111::NoBlur2, {0xff,0x03,0x05,0xd1}, RET},
         {"NoCaveVignette", mc_1_21_111::VignetteRenderer, {0xff,0x43,0x02,0xd1}, RET},
         {"AntiKnockback", mc_1_21_111::LerpMotion, {0x08,0x04,0x41,0xf9}, RET},
         {"AutoClickMine", mc_1_21_111::AutoClickMine, {0xfd,0x7b,0xbe,0xa9}, RET},
@@ -62,20 +68,33 @@ bool PatchManager::initialize() {
 
 bool PatchManager::set(const std::string& module, bool on) {
     if (!ready_ && !initialize()) return false;
+    // Apply to EVERY spec with this name (composites like "NoBlur").
+    bool matched = false;
+    bool allOk = true;
     for (std::size_t i=0; i<specs_.size(); ++i) {
         if (module != specs_[i].module) continue;
+        matched = true;
         const auto address = minecraft_.base + specs_[i].offset;
         const auto& bytes = on ? specs_[i].enabled : specs_[i].expected;
-        if (!memory::NativeMemory::instance().write(address, bytes.data(), bytes.size())) return false;
+        if (!memory::NativeMemory::instance().write(address, bytes.data(), bytes.size())) {
+            allOk = false;
+            continue;
+        }
         active_[i] = on;
-        return true;
     }
-    return false;
+    return matched && allOk;
 }
 
 bool PatchManager::enabled(const std::string& module) const {
-    for (std::size_t i=0; i<specs_.size(); ++i) if (module == specs_[i].module) return active_[i];
-    return false;
+    // Composite-aware: enabled only when every site sharing the name is active.
+    bool any = false;
+    bool all = true;
+    for (std::size_t i=0; i<specs_.size(); ++i) {
+        if (module != specs_[i].module) continue;
+        any = true;
+        if (!active_[i]) all = false;
+    }
+    return any && all;
 }
 bool PatchManager::ready() const { return ready_; }
 std::string PatchManager::status() const { return status_; }
