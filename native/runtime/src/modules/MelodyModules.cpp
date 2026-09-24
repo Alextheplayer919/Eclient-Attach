@@ -283,13 +283,16 @@ void tickFly(void* player) {
     g_haveLastFlyPos = true;
     g_lastFlyPos = pos;
 
-    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 20.0f);
+    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 46.0f);
     const float glide = mgr().floatSetting("Fly", "Glide", -0.02f);
-    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 9.0f);
-    const int verticalMode = mgr().enumSetting("Fly", "VerticalMode", 0);
+    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 19.8f);
+    const float upHFactor = mgr().floatSetting("Fly", "Up H Factor", 0.55f);
+    const int verticalMode = mgr().enumSetting("Fly", "VerticalMode", 2);
 
     // Horizontal — MotionFly computes horizSpeed = min(BPS/20, sqrt(5.99)).
     float horizSpeed = std::min(horizBps / 20.0f, 2.4449f);
+    // LeHu: horizontal is slowed by Up H Factor while ascending.
+    if (g_jetSustainTicks > 0) horizSpeed *= upHFactor;
 
     const float mag = std::sqrt(vx * vx + vz * vz);
     // Vanilla full-stick sprint momentum ≈ 0.28 (sprint) — treat that as the
