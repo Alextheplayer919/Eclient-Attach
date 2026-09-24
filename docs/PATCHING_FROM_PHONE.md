@@ -17,11 +17,15 @@ update the 3 SHA pins + offsets profile in the same commit.
 1. GitHub mobile web → repo → **Actions → "Build E-Client 1.21.111 ARM64" →
    Run workflow** (asset_name defaults correctly).
 2. Wait ~5–10 min. Red/green is honest: any validation failure stops the pipe.
-3. When green, download directly (fixed URL, always the newest build):
+3. When green, download directly. Every build creates its OWN release
+   (`patched-r<N>`), and the newest is always reachable at this fixed URL:
 
    ```
-   https://github.com/Alextheplayer919/Eclient-Attach/releases/download/patched/eclient-minecraft-1.21.111-arm64.apk
+   https://github.com/Alextheplayer919/Eclient-Attach/releases/latest/download/eclient-minecraft-1.21.111-arm64.apk
    ```
+
+   Older builds stay downloadable from their own `patched-r<N>` release
+   (newest 5 kept — useful if a build ever regresses).
 
 4. Install the downloaded APK (Play Protect off for sideloads). It is signed
    with the repo's shared debug key (`.signing/eclient-debug.p12`), so **new

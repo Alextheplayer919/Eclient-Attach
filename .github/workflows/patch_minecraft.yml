@@ -688,23 +688,18 @@ jobs:
           echo "=============================================="
 
       # ============================================================
-      # PUBLISH PATCHED APK TO THE `patched` RELEASE
+      # PUBLISH PATCHED APK — NEW RELEASE PER BUILD
       # ============================================================
-      # NOTE: actions/upload-artifact steps were removed (2026-09-24).
-      # The artifact-storage quota on free private repos (500 MB, billed as
-      # monthly-accrued GB-hours — deletions don't un-hit it) killed runs at
-      # "Create Artifact Container failed" AFTER all real work succeeded.
-      # Release assets are separate, unmetered storage (2 GiB/file), so the
-      # release publish IS the delivery channel and builds stay green
-      # while the repo remains private. No public-window workaround needed.
-      # Libs from the same build already ship on release runtime-1.21.111-fix1.
-      # Stable phone-friendly download URL:
-      #   releases/download/patched/eclient-minecraft-1.21.111-arm64.apk
-      # --clobber replaces the previous build; releases retain history
-      # via tags if a rollback tag is ever created.
+      # Every run creates its own release (tag patched-r<run_number>), so
+      # build history and rollbacks are preserved instead of clobbering one
+      # asset. The newest build is marked `latest`, giving a stable phone URL:
+      #   releases/latest/download/eclient-minecraft-1.21.111-arm64.apk
+      # Old patched-r* releases are pruned, newest 5 kept (each APK is
+      # ~323 MB). Other releases (minecraft-input, runtime-*) are never
+      # touched by the pruner.
       # ============================================================
 
-      - name: Publish patched APK to release
+      - name: Publish patched APK to a new per-build release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -715,13 +710,53 @@ jobs:
 
           test -s "$APK"
 
-          gh release view patched >/dev/null 2>&1 || \
-            gh release create patched \
-              --title "Patched Minecraft 1.21.111 (latest CI build)" \
-              --notes "Always the newest CI-patched APK. Signed with the shared debug key (v1+v2+v3), installs over previous builds of this repo. SHA-pinned input: 1.21.111 ARM64."
+          TAG="patched-r${{ github.run_number }}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
 
-          gh release upload patched "$APK" --clobber
+          gh release create "$TAG" "$APK" \
+            --title "Patched Minecraft 1.21.111 — build r${{ github.run_number }}" \
+            --notes "CI build r${{ github.run_number }} from commit ${SHORT_SHA}. Stock 1.21.111 ARM64 input (SHA-pinned). Signed with the shared debug key (v1+v2+v3) — installs over any previous build of this repo." \
+            --latest
 
           echo "Published:"
-          gh release view patched
+          gh release view "$TAG"
+
+      # ============================================================
+      # PRUNE OLD PER-BUILD RELEASES
+      # ============================================================
+
+      - name: Prune old patched releases (keep newest 5)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          KEEP=5
+
+          gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            --jq '.[].tag_name' \
+            | grep -E '^patched-r[0-9]+$' \
+            | sort -t r -k 2 -nr \
+            > /tmp/patched_tags.txt || true
+
+          COUNT=0
+          while IFS= read -r TAG_TO_PRUNE; do
+
+            if [ -z "$TAG_TO_PRUNE" ]; then
+              continue
+            fi
+
+            COUNT=$((COUNT + 1))
+
+            if [ "$COUNT" -le "$KEEP" ]; then
+              continue
+            fi
+
+            echo "Pruning old build release: $TAG_TO_PRUNE"
+            gh release delete "$TAG_TO_PRUNE" --yes || true
+
+          done < /tmp/patched_tags.txt
+
+          echo "Kept newest $KEEP patched builds."
 
