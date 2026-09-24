@@ -97,28 +97,26 @@ ModuleManager::ModuleManager() : modules_{
 
     // Movement
     {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false, {}},
-    // Fly: LeHu/MotionFly-style native port — momentum-steered
-    // horizontal speed that RESPECTS analog stick magnitude, glide/hover/
-    // jetpack vertical modes, anti-rubberband teleport skip. Direct
-    // state-vector velocity write (LerpMotion disasm-proven actor+0x208/+0x18).
-    {"Fly", "LeHu MotionFly native port (analog-accurate speed, glide/jetpack verticals)", "Movement", true, false, {
-        Setting::real("HSpeed BPS", 46.0f, 1.0f, 100.0f,
-            "Horizontal speed in blocks/second at FULL stick — LeHu default 46.\n"
-            "Steer by walking; stick tilt scales speed."),
+    // Fly v3 — from scratch, input-observer based: every tick we subtract
+    // our own previous velocity write from the current one; the residue is
+    // the player's pure input acceleration, so releasing the stick writes 0
+    // (dead stop + hover) and stick tilt scales speed exactly.
+    {"Fly", "Fly v3 — hover/exact speed from scratch (tap jump to climb, glide to land)", "Movement", true, false, {
+        Setting::real("HSpeed BPS", 12.0f, 1.0f, 100.0f,
+            "Horizontal speed in blocks/second at FULL stick.\n"
+            "Steer with the stick; tilt = proportional speed; release = stop."),
         Setting::real("Glide", -0.02f, -0.3f, 0.0f,
-            "Fall speed per tick when not climbing — LeHu default -0.02\n"
-            "(slow smooth descent); 0 = dead hover."),
-        Setting::real("UpSpeed BPS", 19.8f, 1.0f, 60.0f,
-            "Climb speed in blocks/second while ascending — LeHu default 19.8.\n"
-            "Tap JUMP to climb (each tap sustains ~0.5 s, then you glide)."),
-        Setting::real("Up H Factor", 0.55f, 0.1f, 1.0f,
-            "Horizontal speed multiplier while climbing — LeHu default 0.55."),
-        Setting::choice("VerticalMode", {"Glide", "Hover", "Jetpack"}, 2,
-            "Glide: constant slow descent (MotionFly neutral).\n"
-            "Hover: no vertical drift at all.\n"
-            "Jetpack (default): glide + tap JUMP to climb — closest to the\n"
-            "LeHu JUMPING-flag behaviour until hold-to-ascend unlocks\n"
-            "(run ECSDump while spamming jump+sneak buttons!)."),
+            "Descend-to-land speed per tick in Glide/Jetpack modes.\n"
+            "-0.02 = slow drift down; make it more negative to land faster."),
+        Setting::real("UpSpeed BPS", 10.0f, 1.0f, 60.0f,
+            "Climb speed in blocks/second while a jump impulse is sustained\n"
+            "(Jetpack mode: tap JUMP, each tap climbs ~0.5 s)."),
+        Setting::choice("VerticalMode", {"Hover", "Glide", "Jetpack"}, 2,
+            "Hover: dead pin, no vertical drift.\n"
+            "Glide: descend at the Glide slider (use this to land).\n"
+            "Jetpack (default): glide down gently, tap JUMP to climb.\n"
+            "Hold-jump/hold-sneak verticals unlock after ECS input-flag\n"
+            "discovery (run ECSDump while spamming jump+sneak!)."),
     }},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},

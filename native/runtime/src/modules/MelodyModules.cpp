@@ -233,42 +233,53 @@ void tickKillAura2(void* player) {
 }
 
 // ============================================================================
-// Fly — native port of the proxy's MotionFly ("LeHu-style") feel.
+// Fly — from scratch, device-built (v3). No momentum ratchet.
 //
-// Proxy MotionFly does a full 3D motion override per outgoing packet: analog
-// stick projected over camera yaw at HSpeed BPS, vertical = up-speed while
-// JUMP held / -down+glide while SNEAK held / glide otherwise, plus an
-// anti-rubberband position jump skip. Camera yaw and the jump/sneak flags
-// live in the PlayerAuthInputPacket the proxy reads; our in-process
-// equivalents (rotation component, input flag components) are still being
-// discovered via ECSDump, so the mobile-side adaptation keeps MotionFly's
-// BEHAVIOUR with observable state only:
-//   * horizontal: your vanilla momentum direction IS yaw-projected analog
-//     input already; we rescale its magnitude to HSpeed * (stick tilt ratio)
-//     so a light touch creeps and a full push sprints — same as the proxy.
-//   * vertical: glide default exactly like MotionFly; Jetpack mode detects
-//     real jump impulses (vy edge past ~0.3) and sustains UpSpeed for a
-//     short window — tap-jump to climb; hold-to-ascend unlocks with the
-//     jump-flag component once discovered.
+// Why the previous attempt felt possessed: it rescaled the CURRENT velocity
+// every tick — but that velocity already contained what we wrote last tick,
+// so one stick flick fed itself forever. v3 is input-observer-based:
+//
+//   Vanilla physics per tick: vel = FRICTION * vel_prev + inputAccel
+//                                   (+ gravity −0.08 in y, + impulses)
+//
+//   We always know what WE wrote last tick (g_flyPrevOut). Subtracting it
+//   (scaled by air friction 0.98) leaves the PURE vanilla input
+//   acceleration — the stick — as a clean signal:
+//
+//   inputAccel ≈ vel_now − 0.98 * g_flyPrevOut
+//
+//   Consequences the user actually asked for:
+//     * release stick → accel = 0 → we write 0 → dead stop + hover
+//     * tilt a little → tiny accel → tiny proportional speed (move an inch)
+//     * direction follows the stick instantly, no memory
+//
+//   Vertical:
+//     * Hover  — vy = 0 always
+//     * Glide  — vy = glide slider (deliberate slow descent to land)
+//     * Jetpack— glide base; a REAL jump impulse (+0.3+ residue in y after
+//                friction/gravity separation) sustains +UpSpeed for 10 ticks
+//                (tap jump = climb; land = glide back down)
+//   Hold-JUMP/hold-SNEAK verticals need the input flag components (ECSDump
+//   discovery, same as rotation) — until then taps, not holds.
 // ============================================================================
 
+Vec3 g_flyPrevOut{};
 Vec3 g_lastFlyPos{};
 bool g_haveLastFlyPos = false;
 int g_jetSustainTicks = 0;
-float g_prevVy = 0.0f;
 
 void tickFly(void* player) {
     Vec3* vel = velocityPtr(player);
     if (!vel) return;
 
-    float vx = vel->x, vy = vel->y, vz = vel->z;
-    if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) return;
+    const float rawX = vel->x, rawY = vel->y, rawZ = vel->z;
+    if (!std::isfinite(rawX) || !std::isfinite(rawY) || !std::isfinite(rawZ)) return;
 
     // Plausibility gate on ALL derived-layout writes (per port policy).
-    if (std::fabs(vx) > 100.0f || std::fabs(vy) > 100.0f || std::fabs(vz) > 100.0f) return;
+    if (std::fabs(rawX) > 100.0f || std::fabs(rawY) > 100.0f || std::fabs(rawZ) > 100.0f) return;
 
-    // MotionFly anti-rubberband: skip a tick where the server teleported us
-    // (>4.5 blocks in one tick) so we never fight position corrections.
+    // Anti-rubberband: skip a tick where the server teleported us so we never
+    // fight position corrections (prev-write reset to avoid a stale residue).
     Vec3 pos{};
     if (!getPosition(player, pos)) return;
     if (g_haveLastFlyPos) {
@@ -277,67 +288,71 @@ void tickFly(void* player) {
         const float dz = pos.z - g_lastFlyPos.z;
         if ((dx * dx + dy * dy + dz * dz) > 4.5f * 4.5f) {
             g_lastFlyPos = pos;
+            g_flyPrevOut = {0.0f, 0.0f, 0.0f};
             return;
         }
     }
     g_haveLastFlyPos = true;
     g_lastFlyPos = pos;
 
-    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 46.0f);
+    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 12.0f);
     const float glide = mgr().floatSetting("Fly", "Glide", -0.02f);
-    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 19.8f);
-    const float upHFactor = mgr().floatSetting("Fly", "Up H Factor", 0.55f);
+    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f);
     const int verticalMode = mgr().enumSetting("Fly", "VerticalMode", 2);
 
-    // Horizontal — MotionFly computes horizSpeed = min(BPS/20, sqrt(5.99)).
-    float horizSpeed = std::min(horizBps / 20.0f, 2.4449f);
-    // LeHu: horizontal is slowed by Up H Factor while ascending.
-    if (g_jetSustainTicks > 0) horizSpeed *= upHFactor;
+    // ---- separate our own contribution (horizontal) ----
+    constexpr float AIR_FRICTION = 0.98f;
+    float ax = rawX - AIR_FRICTION * g_flyPrevOut.x;
+    float az = rawZ - AIR_FRICTION * g_flyPrevOut.z;
+    // Clamp to the physical accel bound (garbage/teleport/friction-mismatch
+    // residues get clipped instead of steering us), then dead-zone.
+    ax = std::clamp(ax, -0.35f, 0.35f);
+    az = std::clamp(az, -0.35f, 0.35f);
+    const float amag = std::sqrt(ax * ax + az * az);
 
-    const float mag = std::sqrt(vx * vx + vz * vz);
-    // Vanilla full-stick sprint momentum ≈ 0.28 (sprint) — treat that as the
-    // analog "1.0" so stick tilt scales speed; below ~0.02 there is no input.
-    if (mag > 0.02f) {
-        constexpr float FULL_STICK_MAG = 0.28f;
-        const float ratio = std::min(mag / FULL_STICK_MAG, 1.0f);
-        const float target = horizSpeed * ratio;
-        const float scale = target / mag;
-        vx *= scale;
-        vz *= scale;
+    float outX = 0.0f, outZ = 0.0f;
+    constexpr float DEADZONE = 0.004f;
+    constexpr float FULL_STICK_ACCEL = 0.026f; // vanilla sprint air accel ≈ analog 1.0
+    if (amag > DEADZONE) {
+        const float target = std::min(horizBps / 20.0f, 2.4449f);
+        const float ratio = std::min(amag / FULL_STICK_ACCEL, 1.0f);
+        const float t = target * ratio;
+        outX = ax / amag * t;
+        outZ = az / amag * t;
     }
-    // No else: with no stick input vanilla friction already damps to a stop,
-    // matching MotionFly (input 0 → motion 0).
+    // else: no stick input → write 0 → instant hover stop (the whole point).
 
-    // Vertical.
+    // ---- vertical ----
+    float outY;
     switch (verticalMode) {
-    case 2: // Jetpack: glide base + impulse-sustained climb on real jumps
-    {
-        // Edge detect a jump impulse: vy was low/negative, now strongly up.
-        if (vy > 0.30f && g_prevVy <= 0.10f && vy < 2.0f) {
-            g_jetSustainTicks = 10; // ~0.5 s of climb per tap
+    case 2: { // Jetpack: glide base + impulse-sustained climb on real jumps
+        // Separate vertical the same way: remove our prev write and gravity.
+        const float vyResidue = rawY - AIR_FRICTION * g_flyPrevOut.y + 0.08f;
+        if (vyResidue > 0.25f && vyResidue < 1.5f) {
+            g_jetSustainTicks = 10; // a real jump impulse just happened
         }
         if (g_jetSustainTicks > 0) {
-            vy = std::min(upBps / 20.0f, 2.4449f);
+            outY = std::min(upBps / 20.0f, 2.4449f);
             --g_jetSustainTicks;
         } else {
-            vy = glide;
+            outY = glide;
         }
         break;
     }
-    case 1: // Hover: no vertical drift
-        vy = 0.0f;
+    case 1: // Glide: deliberate descend-to-land at the slider value
+        outY = glide;
         break;
-    case 0: // Glide (MotionFly default vertical)
+    case 0: // Hover: dead pin
     default:
-        vy = glide;
+        outY = 0.0f;
         break;
     }
-    g_prevVy = vy;
 
-    if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) return;
-    vel->x = vx;
-    vel->y = vy;
-    vel->z = vz;
+    if (!std::isfinite(outX) || !std::isfinite(outY) || !std::isfinite(outZ)) return;
+    vel->x = outX;
+    vel->y = outY;
+    vel->z = outZ;
+    g_flyPrevOut = {outX, outY, outZ};
 }
 
 // ============================================================================
@@ -505,7 +520,7 @@ void onNormalTick(void* localPlayer) {
     } else {
         g_haveLastFlyPos = false;
         g_jetSustainTicks = 0;
-        g_prevVy = 0.0f;
+        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
     }
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
 }
