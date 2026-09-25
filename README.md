@@ -43,12 +43,47 @@ are simply no longer exposed as toggles.
 Anything whose memory is not derived yet fails **inert and says so in the UI**.
 Nothing is faked, and nothing half-finished is allowed to silently misbehave.
 
-## UI and input (r25)
+## UI and input (r26)
 
-The overlay is Android Views on `WindowManager` sub-windows: a draggable chip and a
-small panel that is **never full-screen and never window-modal**, so any touch that
-does not land on a widget belongs to Minecraft. The decor-view `OnTouchListener` is
-no longer installed — nothing of ours sits in the game's own input path — while
-`nativeTouchReady()` is still called because it is the KotlinBridge bind point.
-A 1 Hz watchdog re-adds a chip the framework tore down and drops a panel that is no
-longer attached.
+The overlay is Android Views: a draggable chip and a small panel that is **never
+full-screen and never window-modal**, so any touch that does not land on a widget
+belongs to Minecraft. The decor-view `OnTouchListener` is not installed — nothing of
+ours sits in the game's own input path — while `nativeTouchReady()` is still called
+because it is the KotlinBridge bind point.
+
+### Nothing fails silently any more
+
+r25 shipped a structurally correct overlay that showed nothing on a real device, and
+every way it could fail looked identical from the outside. r26 makes each layer
+announce itself:
+
+| Signal | What it proves |
+|---|---|
+| Native toast `E-Client r26: native ready` | `libeclient_host.so` loaded, JNI + provider lifecycle fine |
+| Kotlin toast `E-Client r26: menu up (…)` | the injected `classes6.dex` runs and the chip mounted |
+| Chip label `E-Client r26 · PANEL ○` | which mount mechanism won, plus a live 1 Hz heartbeat |
+
+Missing signal 1 → the native host never ran. Signal 1 but not 2 → the injected dex
+never ran (packaging/classloader), not the UI. Both but no chip → the window layer
+only, and the log file below names the exact exception.
+
+### Mount ladder
+
+The chip is mounted before anything else that can fail, walking three rungs and
+reporting the winner in the chip label:
+
+1. `PANEL` — `TYPE_APPLICATION_PANEL` sub-window on the activity token (input passes
+   through; this is what r24 proved on device),
+2. `INJECTED` — a child view of the game's own content frame. Needs no token, no
+   permission and no z-order; the game's `SurfaceView` composites behind its window's
+   views, so this cannot be hidden and cannot eat input outside its own rectangle,
+3. `OVERLAY` — `TYPE_APPLICATION_OVERLAY`, needs *Display over other apps*
+   (declared in the patched manifest; a one-tap **GRANT OVERLAY** row appears in the
+   panel when it is not granted, and it is never required).
+
+### Log file (no adb needed)
+
+Every mount attempt with its exception, watchdog event, touch count and module
+toggle is written to `Download/EClient/eclient_ui_<epoch>.txt` (MediaStore, so the
+phone's Files app can open it) and mirrored into the app's external files dir. When
+something misbehaves, that file is the bug report.

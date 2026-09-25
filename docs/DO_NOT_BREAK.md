@@ -33,8 +33,22 @@ commit `082d9cf`.
 
 ## GUI invariants (learned the hard way)
 
-**r25 — the live UI is Android Views. ImGui/GL is dormant: `InGameGui::initialize()`
+**r26 — the live UI is Android Views. ImGui/GL is dormant: `InGameGui::initialize()`
 returns without installing the swap hook, so none of the ImGui code below runs.**
+
+- **Never reintroduce a silent mount.** The chip is mounted before the module
+  registry, prefs and every JNI call, so a broken subsystem cannot take the GUI
+  with it. If a mount rung fails it must be *recorded* (`attempts`, the log file,
+  the chip label showing the winning strategy) — "nothing appears and nobody
+  knows why" is the exact failure r26 was written to make impossible.
+- Mount order is PANEL → INJECTED → OVERLAY on purpose. `INJECTED` (a child of the
+  game's content frame) is the rung that cannot fail for token/permission/z-order
+  reasons; do not delete it, and do not move it after OVERLAY.
+- Three independent proof-of-life signals must stay: the native toast (fired once
+  from `nativeTouchReady`), the Kotlin toast, and the chip label with the strategy
+  + heartbeat. They localise a fault to native / dex / window layer in one glance.
+- The log file (`Download/EClient/eclient_ui_*.txt`) is part of the product, not
+  debug leftovers: it is how a device-only failure gets diagnosed without adb.
 
 - Every overlay window is a `TYPE_APPLICATION_PANEL` sub-window with
   `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`, and **no window is ever
@@ -104,6 +118,9 @@ loop, swap Dobby for hand-rolled trampolines, or re-order steps 3.
 - **`PatchManager` still validates all 18 sites** including the patches whose
   toggles were removed in r25. That is intentional: the validation is the
   fail-closed integrity gate, not a feature list.
+- **`SYSTEM_ALERT_WINDOW` is declared and verified by the patcher** even when the
+  overlay rung never runs. It is an optional third mount rung; the user grants it
+  from the panel, never from a forced settings jump.
 - **Shared debug keystore is COMMITTED** at `.signing/eclient-debug.p12`
   (PKCS12, alias `eclient`, android/android). Every builder signs identically
   → builds install over each other. It's a debug-grade sideload cert in a

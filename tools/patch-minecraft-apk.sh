@@ -355,6 +355,32 @@ authority_attr = f"{{{ANDROID_NS}}}authorities"
 exported_attr = f"{{{ANDROID_NS}}}exported"
 init_order_attr = f"{{{ANDROID_NS}}}initOrder"
 
+# ---------------------------------------------------------------------------
+# r26: "Display over other apps".
+#
+# The Views overlay has three mount rungs (panel sub-window / injected view /
+# overlay window). The overlay rung is the most robust of the three — it does
+# not depend on the activity token, survives activity recreation, and cannot be
+# z-ordered behind the game — but it needs this permission. It is requested,
+# never required: if the user does not grant it, the GUI still comes up through
+# the other two rungs and simply offers a one-tap GRANT button.
+# ---------------------------------------------------------------------------
+
+overlay_permission = "android.permission.SYSTEM_ALERT_WINDOW"
+
+has_overlay_permission = any(
+    item.get(name_attr) == overlay_permission
+    for item in root.findall("uses-permission")
+)
+
+if not has_overlay_permission:
+    permission = ET.Element("uses-permission")
+    permission.set(name_attr, overlay_permission)
+    root.insert(0, permission)
+    print(f"Added {overlay_permission}.")
+else:
+    print(f"{overlay_permission} already present.")
+
 provider_name = "com.rubidiumclient.host.EClientLoaderProvider"
 provider_authority = "com.rubidiumclient.eclientloader"
 
@@ -509,7 +535,19 @@ if not found:
         " in AndroidManifest.xml"
     )
 
+overlay_ok = any(
+    item.get(name_attr) == "android.permission.SYSTEM_ALERT_WINDOW"
+    for item in root.findall("uses-permission")
+)
+
+if not overlay_ok:
+    raise RuntimeError(
+        "SYSTEM_ALERT_WINDOW is missing from AndroidManifest.xml"
+        " (the overlay mount rung would be unavailable)."
+    )
+
 print("Manifest provider verified.")
+print("Manifest overlay permission verified.")
 PY
 
 echo

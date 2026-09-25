@@ -84,12 +84,68 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_host_EClientLoader
     return JNI_FALSE;
 }
 
+namespace {
+void clearEx(JNIEnv* env) {
+    if (env && env->ExceptionCheck()) env->ExceptionClear();
+}
+
+// r26 proof-of-life. One toast, once per process, fired from the FIRST call
+// that the loader smali makes into the native library.
+//
+// It answers, at a glance and without adb, the question that r25 left open:
+//   * toast missing entirely    → libeclient_host.so / provider / JNI dead
+//   * this toast but no Kotlin toast + no chip
+//                               → native host is fine, the injected Kotlin dex
+//                                 never ran (packaging/classloader), NOT the UI
+//   * both toasts but no chip   → the window/view layer only (see the log file:
+//                                 every mount attempt is recorded with its
+//                                 exception)
+// Entirely best-effort: every step is checked and exceptions are cleared, so
+// it can never take the game down with it.
+void proofOfLifeToast(JNIEnv* env) {
+    static bool shown = false;
+    if (shown || !env) return;
+    shown = true;
+
+    jclass atCls = env->FindClass("android/app/ActivityThread");
+    if (!atCls) { clearEx(env); return; }
+    jmethodID currentApplication =
+        env->GetStaticMethodID(atCls, "currentApplication", "()Landroid/app/Application;");
+    if (!currentApplication) { clearEx(env); return; }
+    jobject app = env->CallStaticObjectMethod(atCls, currentApplication);
+    if (!app || env->ExceptionCheck()) { clearEx(env); return; }
+
+    jclass toastCls = env->FindClass("android/widget/Toast");
+    if (!toastCls) { clearEx(env); return; }
+    jmethodID makeText = env->GetStaticMethodID(
+        toastCls, "makeText",
+        "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;");
+    if (!makeText) { clearEx(env); return; }
+
+    jstring msg = env->NewStringUTF("E-Client r26: native ready");
+    jobject toast = msg ? env->CallStaticObjectMethod(toastCls, makeText, app, msg, 1)
+                        : nullptr;
+    if (env->ExceptionCheck() || !toast) {
+        clearEx(env);
+        if (msg) env->DeleteLocalRef(msg);
+        return;
+    }
+    jmethodID show = env->GetMethodID(toastCls, "show", "()V");
+    if (show) {
+        env->CallVoidMethod(toast, show);
+        clearEx(env);
+    }
+    if (msg) env->DeleteLocalRef(msg);
+}
+} // namespace
+
 // Called by the host loader once the native library is loaded: marks the
 // input route ready. Idempotent (also driven from MinecraftHost startup).
 // Also the Kotlin module binder point — a Java-initiated call, so FindClass
 // here uses the application classloader and can see our dex classes.
 extern "C" JNIEXPORT void JNICALL Java_com_rubidiumclient_host_EClientLoaderProvider_nativeTouchReady(
     JNIEnv* env, jclass /*clazz*/) {
+    proofOfLifeToast(env);
     initialize();
     kotlinbridge::bind(env);
 }
