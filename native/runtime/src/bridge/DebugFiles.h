@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <jni.h>
 #include <string>
+#include <vector>
 
 namespace eclient_runtime::debugfiles {
 
@@ -11,10 +12,10 @@ namespace eclient_runtime::debugfiles {
 // JNI MediaStore so logs land in the user's public Downloads folder.
 void setJavaVm(JavaVM* vm);
 
-// One open debug log file in a user-reachable location.
-// Preferred location: Downloads/EClient/<name> via MediaStore (Android 10+,
-// no storage permission needed). Fallbacks: raw /sdcard/Download path, then
-// the game's own Android/data files dir. `where()` says which one was used.
+// One open debug log. Writes are TEE'd to every location that could be
+// opened: public Downloads via MediaStore (Android 10+, no permission), raw
+// /sdcard/Download, the MC app folder (Android/data/.../files/EClient/),
+// and legacy /sdcard/games/com.mojang. `where()` lists every active path.
 class PublicLog {
 public:
     PublicLog() = default;
@@ -23,14 +24,13 @@ public:
     PublicLog& operator=(const PublicLog&) = delete;
 
     bool open(const char* name);      // truncates/creates fresh
-    void write(const char* text);     // appends one line (+newline) and flushes
-    void close();                     // flushes and clears IS_PENDING so the
-                                      // file becomes visible in Downloads
-    bool isOpen() const { return file_ != nullptr; }
+    void write(const char* text);     // appends one line (+newline) to all sinks
+    void close();                     // closes all; clears MediaStore IS_PENDING
+    bool isOpen() const { return !files_.empty(); }
     const std::string& where() const { return where_; }
 
 private:
-    FILE* file_ = nullptr;
+    std::vector<FILE*> files_;
     std::string contentUri_;   // set when created via MediaStore (for IS_PENDING update)
     std::string where_{"(no file)"};
 };

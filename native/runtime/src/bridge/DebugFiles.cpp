@@ -2,6 +2,7 @@
 
 #include <android/log.h>
 #include <cstring>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace eclient_runtime::debugfiles {
@@ -147,47 +148,64 @@ PublicLog::~PublicLog() { close(); }
 
 bool PublicLog::open(const char* name) {
     close();
+    where_.clear();
     if (!name || !*name) return false;
+
+    auto addSink = [this](FILE* f, const std::string& label) {
+        if (!f) return;
+        files_.push_back(f);
+        if (!where_.empty()) where_ += " | ";
+        where_ += label;
+    };
 
     // 1) MediaStore → Download/EClient/<name> (survives scoped storage).
     std::string uri;
     int fd = mediaStoreCreate(name, uri);
     if (fd >= 0) {
         int dupFd = dup(fd);
-        file_ = dupFd >= 0 ? fdopen(dupFd, "w") : nullptr;
+        FILE* f = dupFd >= 0 ? fdopen(dupFd, "w") : nullptr;
         ::close(fd);
-        if (file_) {
+        if (f) {
             contentUri_ = uri;
-            where_ = std::string("Download/EClient/") + name;
-            __android_log_print(ANDROID_LOG_INFO, TAG, "log file: %s (mediastore)", where_.c_str());
-            return true;
+            addSink(f, std::string("Download/EClient/") + name);
         }
     }
 
-    // 2) Raw public Download path (legacy-storage devices).
-    std::string p2 = std::string("/sdcard/Download/EClient_") + name;
-    file_ = std::fopen(p2.c_str(), "w");
-    if (file_) { where_ = p2; __android_log_print(ANDROID_LOG_INFO, TAG, "log file: %s (raw)", p2.c_str()); return true; }
+    // Tee into every other plausible location too (any that fopen's fine):
+    // the user can reach whichever one their file manager sees.
+    const std::string mirrors[] = {
+        std::string("/sdcard/Android/data/com.mojang.minecraftpe/files/EClient/") + name,
+        std::string("/sdcard/Download/EClient_") + name,
+        std::string("/sdcard/games/com.mojang/EClient/") + name,
+    };
+    for (const auto& path : mirrors) {
+        // Best-effort leaf mkdir (parents always exist for the prefixes above).
+        const std::string dir = path.substr(0, path.find_last_of('/'));
+        (void)mkdir(dir.c_str(), 0775);
+        FILE* f = std::fopen(path.c_str(), "w");
+        if (f) addSink(f, path);
+    }
 
-    // 3) The game's own external files dir.
-    std::string p3 = std::string("/sdcard/Android/data/com.mojang.minecraftpe/files/") + name;
-    file_ = std::fopen(p3.c_str(), "w");
-    if (file_) { where_ = p3; __android_log_print(ANDROID_LOG_INFO, TAG, "log file: %s (appdir)", p3.c_str()); return true; }
-
-    __android_log_print(ANDROID_LOG_WARN, TAG, "no writable location for %s — logcat only", name);
-    return false;
+    if (files_.empty()) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "no writable location for %s — logcat only", name);
+        where_ = "(logcat only)";
+        return false;
+    }
+    __android_log_print(ANDROID_LOG_INFO, TAG, "log sinks: %s", where_.c_str());
+    return true;
 }
 
 void PublicLog::write(const char* text) {
-    if (!file_ || !text) return;
-    std::fprintf(file_, "%s\n", text);
-    std::fflush(file_);
+    if (!text) return;
+    for (FILE* f : files_) {
+        std::fprintf(f, "%s\n", text);
+        std::fflush(f);
+    }
 }
 
 void PublicLog::close() {
-    if (!file_) return;
-    std::fclose(file_);
-    file_ = nullptr;
+    for (FILE* f : files_) std::fclose(f);
+    files_.clear();
     if (!contentUri_.empty()) {
         mediaStoreClearPending(contentUri_);
         contentUri_.clear();
