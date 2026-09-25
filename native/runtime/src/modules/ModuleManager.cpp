@@ -97,31 +97,29 @@ ModuleManager::ModuleManager() : modules_{
 
     // Movement
     {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false, {}},
-    // Fly v3 — from scratch, input-observer based: every tick we subtract
-    // our own previous velocity write from the current one; the residue is
-    // the player's pure input acceleration, so releasing the stick writes 0
-    // (dead stop + hover) and stick tilt scales speed exactly.
-    {"Fly", "Fly v3 — hover/exact speed from scratch (tap jump to climb, glide to land)", "Movement", true, false, {
-        Setting::real("HSpeed BPS", 12.0f, 1.0f, 100.0f,
-            "Horizontal speed in blocks/second at FULL stick.\n"
-            "Steer with the stick; tilt = proportional speed; release = stop."),
+    // Fly — 1:1 port of the user-suggested "superman" Fly module
+    // (Horion-style: zero velocity, add Glide, yaw-projected keys at hSpeed,
+    // space/shift vertical at vSpeed, lerpMotion). Settings match the source's
+    // registered sliders verbatim; touch-side surrogates only where the
+    // platform has no key readback (see MelodyModules.cpp comments).
+    {"Fly", "Superman fly — 1:1 port of the suggested module (fresh velocity per tick)", "Movement", true, false, {
+        Setting::real("H-Speed", 1.0f, 0.2f, 3.0f,
+            "Source slider: 'H-Speed — Horizontal speed' (default 1.0,\n"
+            "range 0.2–3.0, blocks/tick)."),
+        Setting::real("V-Speed", 0.95f, 0.2f, 2.0f,
+            "Source slider: 'V-Speed — Vertical speed' (default 0.95,\n"
+            "range 0.2–2.0, blocks/tick). Climb: tap JUMP."),
         Setting::real("Glide", -0.02f, -0.3f, 0.0f,
-            "Descend-to-land speed per tick in Glide/Jetpack modes.\n"
-            "-0.02 = slow drift down; make it more negative to land faster."),
-        Setting::real("UpSpeed BPS", 10.0f, 1.0f, 60.0f,
-            "Climb speed in blocks/second while a jump impulse is sustained\n"
-            "(Jetpack mode: tap JUMP, each tap climbs ~0.5 s)."),
-        Setting::choice("VerticalMode", {"Hover", "Glide", "Jetpack"}, 2,
-            "Hover: dead pin, no vertical drift.\n"
-            "Glide: descend at the Glide slider (use this to land).\n"
-            "Jetpack (default): glide down gently, tap JUMP to climb.\n"
-            "Hold-jump/hold-sneak verticals unlock after ECS input-flag\n"
-            "discovery (run ECSDump while spamming jump+sneak!)."),
+            "Source slider: 'Glide — how much u want to go down'\n"
+            "(default -0.02, range -0.3–0). 0 = pin-hover."),
+        Setting::boolean("Bypass", false,
+            "Source BoolSetting: bypass for IGN — locks H-Speed to 1.0 while\n"
+            "reduced and 1.14 while ascending (source has no speed reducer on\n"
+            "this platform, so it applies the ascent rule)."),
         Setting::choice("WriteMode", {"Velocity", "Position"}, 0,
-            "Velocity: fly writes the velocity field (default).\n"
-            "Position: fly moves the position field directly + zeroes\n"
-            "velocity — fallback if the server/game ignores or overwrites\n"
-            "velocity writes (check flydebug.txt if unsure)."),
+            "Housekeeping (not in source): Velocity writes the velocity field\n"
+            "like lerpMotion; Position moves pos/prevPos directly — fallback\n"
+            "for servers that overwrite client velocity."),
     }},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},

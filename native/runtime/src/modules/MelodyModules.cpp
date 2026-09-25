@@ -293,34 +293,37 @@ void tickKillAura2(void* player) {
 }
 
 // ============================================================================
-// Fly — from scratch, device-built (v3). No momentum ratchet.
+// Fly — fidelity port of the user-suggested "superman" Fly module.
+// Source structure (quoted) and its mobile mapping:
 //
-// Why the previous attempt felt possessed: it rescaled the CURRENT velocity
-// every tick — but that velocity already contained what we wrote last tick,
-// so one stick flick fed itself forever. v3 is input-observer-based:
+//   source: Vec3<float>& velocity = localPlayer->stateVector->velocity;
+//   source: velocity = Vec3<float>(0.f, 0.f, 0.f);   // zero every tick
+//   source: velocity.y += Glide;
 //
-//   Vanilla physics per tick: vel = FRICTION * vel_prev + inputAccel
-//                                   (+ gravity −0.08 in y, + impulses)
+//   source: bool isForward/isLeft/... = Game::isKeyDown('W'/'A'/...);
+//   touch:  no WASD/space/shift readback exists, but the game treats the
+//           joystick EXACTLY as those keys — vanilla physics turns it into the
+//           same movement acceleration. Measuring THIS tick's pure input
+//           acceleration (vel_now − friction*our_prev_write) therefore reads
+//           the very same "key state" the source reads via isKeyDown —
+//           presence of acceleration == key held, its direction == the
+//           yaw-projected move vector the source builds from yaw+angleDeg.
 //
-//   We always know what WE wrote last tick (g_flyPrevOut). Subtracting it
-//   (scaled by air friction 0.98) leaves the PURE vanilla input
-//   acceleration — the stick — as a clean signal:
+//   source: if (isUp) velocity.y += vSpeed;      // VK_SPACE held
+//   touch:  real jump impulses (visible in the vertical residue) sustain
+//           +vSpeed for 10 ticks per tap — the closest hold-jump surrogate.
+//   source: if (isDown) velocity.y -= vSpeed;    // VK_SHIFT held — no touch
+//           readback; source documents Glide as "how much u want to go down",
+//           so descending is the Glide slider itself.
 //
-//   inputAccel ≈ vel_now − 0.98 * g_flyPrevOut
+//   source: localPlayer->lerpMotion(moveVec);    // writes velocity x/y/z
+//   ours:   direct write into stateVector+0x18 (identical; LerpMotion disasm)
 //
-//   Consequences the user actually asked for:
-//     * release stick → accel = 0 → we write 0 → dead stop + hover
-//     * tilt a little → tiny accel → tiny proportional speed (move an inch)
-//     * direction follows the stick instantly, no memory
-//
-//   Vertical:
-//     * Hover  — vy = 0 always
-//     * Glide  — vy = glide slider (deliberate slow descent to land)
-//     * Jetpack— glide base; a REAL jump impulse (+0.3+ residue in y after
-//                friction/gravity separation) sustains +UpSpeed for 10 ticks
-//                (tap jump = climb; land = glide back down)
-//   Hold-JUMP/hold-SNEAK verticals need the input flag components (ECSDump
-//   discovery, same as rotation) — until then taps, not holds.
+// Source side-features with no platform analog (kept out, NOT rewritten):
+//   AutoTravel cooperation (no such module), reduceSpeed()/restoreSpeed()
+//   external calls, Purplez spam timer fields (dead code in the paste).
+// Our anti-rubberband skip + join stability gate are kept platform-side
+// (crash insurance), they don't change the flight logic.
 // ============================================================================
 
 Vec3 g_flyPrevOut{};
@@ -356,58 +359,49 @@ void tickFly(void* player) {
     g_haveLastFlyPos = true;
     g_lastFlyPos = pos;
 
-    const float horizBps = mgr().floatSetting("Fly", "HSpeed BPS", 12.0f);
+    // Source settings (slider ranges/defaults registered verbatim in ModuleManager).
+    const float hSpeed = mgr().floatSetting("Fly", "H-Speed", 1.0f);
+    const float vSpeed = mgr().floatSetting("Fly", "V-Speed", 0.95f);
     const float glide = mgr().floatSetting("Fly", "Glide", -0.02f);
-    const float upBps = mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f);
-    const int verticalMode = mgr().enumSetting("Fly", "VerticalMode", 2);
+    const bool bypass = mgr().boolSetting("Fly", "Bypass", false);
 
-    // ---- separate our own contribution (horizontal) ----
+    // source: velocity = Vec3<float>(0,0,0);
+    // Equivalent without re-feeding our own write: subtract what WE wrote last
+    // tick (scaled by air friction) from what the game has now; the residue is
+    // pure vanilla input acceleration — the joystick → this was the WASD read.
     constexpr float AIR_FRICTION = 0.98f;
     float ax = rawX - AIR_FRICTION * g_flyPrevOut.x;
     float az = rawZ - AIR_FRICTION * g_flyPrevOut.z;
-    // Clamp to the physical accel bound (garbage/teleport/friction-mismatch
-    // residues get clipped instead of steering us), then dead-zone.
-    ax = std::clamp(ax, -0.35f, 0.35f);
+    ax = std::clamp(ax, -0.35f, 0.35f); // physical accel bound, kills garbage
     az = std::clamp(az, -0.35f, 0.35f);
     const float amag = std::sqrt(ax * ax + az * az);
 
-    float outX = 0.0f, outZ = 0.0f;
-    constexpr float DEADZONE = 0.004f;
-    constexpr float FULL_STICK_ACCEL = 0.026f; // vanilla sprint air accel ≈ analog 1.0
-    if (amag > DEADZONE) {
-        const float target = std::min(horizBps / 20.0f, 2.4449f);
-        const float ratio = std::min(amag / FULL_STICK_ACCEL, 1.0f);
-        const float t = target * ratio;
-        outX = ax / amag * t;
-        outZ = az / amag * t;
+    // source: if (isUp) velocity.y += vSpeed;  (SPACE held)
+    float outY = glide; // source: velocity.y += Glide;
+    const float vyRes = rawY - AIR_FRICTION * g_flyPrevOut.y + 0.08f;
+    if (vyRes > 0.25f && vyRes < 1.5f) {
+        g_jetSustainTicks = 10; // a real SPACE-equivalent just happened
     }
-    // else: no stick input → write 0 → instant hover stop (the whole point).
+    const bool isUp = g_jetSustainTicks > 0;
+    if (isUp) {
+        outY = glide + vSpeed;
+        --g_jetSustainTicks;
+    }
 
-    // ---- vertical ----
-    float outY;
-    switch (verticalMode) {
-    case 2: { // Jetpack: glide base + impulse-sustained climb on real jumps
-        // Separate vertical the same way: remove our prev write and gravity.
-        const float vyResidue = rawY - AIR_FRICTION * g_flyPrevOut.y + 0.08f;
-        if (vyResidue > 0.25f && vyResidue < 1.5f) {
-            g_jetSustainTicks = 10; // a real jump impulse just happened
-        }
-        if (g_jetSustainTicks > 0) {
-            outY = std::min(upBps / 20.0f, 2.4449f);
-            --g_jetSustainTicks;
-        } else {
-            outY = glide;
-        }
-        break;
+    // source: float currentHSpeed = hSpeed; ... else if (bypass && isUp) = 1.14f
+    float currentHSpeed = hSpeed;
+    if (bypass && isUp) currentHSpeed = 1.14f;
+
+    float outX = 0.0f, outZ = 0.0f;
+    // source: if ((moveValue.x != 0) || (moveValue.y != 0)) → projected motion
+    constexpr float DEADZONE = 0.004f;
+    if (amag > DEADZONE) {
+        // source builds moveVec from yaw+atan2(moveValue.x, moveValue.y); the
+        // measured accel direction is the same projected vector on touch.
+        outX = ax / amag * currentHSpeed;
+        outZ = az / amag * currentHSpeed;
     }
-    case 1: // Glide: deliberate descend-to-land at the slider value
-        outY = glide;
-        break;
-    case 0: // Hover: dead pin
-    default:
-        outY = 0.0f;
-        break;
-    }
+    // source: if (isDown) velocity.y -= vSpeed; — no touch readback (see header).
 
     if (!std::isfinite(outX) || !std::isfinite(outY) || !std::isfinite(outZ)) return;
 
@@ -415,7 +409,6 @@ void tickFly(void* player) {
     if (writeMode == 1) {
         // Position mode: move the state-vector position (and prevPos by the
         // same delta so render interpolation stays clean), zero velocity.
-        // Fallback for servers that overwrite client velocity every tick.
         if (auto* sv = static_cast<float*>(
                 *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField))) {
             sv[0] += outX; sv[1] += outY; sv[2] += outZ; // pos     @+0x00
@@ -427,6 +420,7 @@ void tickFly(void* player) {
         return;
     }
 
+    // source: localPlayer->lerpMotion(moveVec);
     vel->x = outX;
     vel->y = outY;
     vel->z = outZ;
@@ -602,13 +596,13 @@ void tickFlyDebugPre(void* player) {
     if (g_debugLeft <= 0) {
         g_debugLeft = kFlyDebugTicks;
         g_flyLog.open("flydebug.txt");
-        flyDebugLine("FLD-BEGIN tick=%ld mode=%d write=%d h=%.1f glide=%.3f up=%.1f file=%s",
+        flyDebugLine("FLD-BEGIN tick=%ld h=%.2f v=%.2f glide=%.3f bypass=%d write=%d file=%s",
                      g_tick,
-                     mgr().enumSetting("Fly", "VerticalMode", 2),
-                     mgr().enumSetting("Fly", "WriteMode", 0),
-                     mgr().floatSetting("Fly", "HSpeed BPS", 12.0f),
+                     mgr().floatSetting("Fly", "H-Speed", 1.0f),
+                     mgr().floatSetting("Fly", "V-Speed", 0.95f),
                      mgr().floatSetting("Fly", "Glide", -0.02f),
-                     mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f),
+                     mgr().boolSetting("Fly", "Bypass", false) ? 1 : 0,
+                     mgr().enumSetting("Fly", "WriteMode", 0),
                      g_flyLog.where().c_str());
         g_debugWasFly = mgr().enabled("Fly");
     }
