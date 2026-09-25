@@ -26,7 +26,9 @@ TOOLS_DIR="$BUILD_DIR/tools"
 KOTLIN_VERSION="${KOTLIN_VERSION:-2.0.21}"
 R8_VERSION="${R8_VERSION:-8.5.35}"
 SMALI_VERSION="${SMALI_VERSION:-2.5.2}"
-ANDROID_PLATFORM_JAR="$TOOLS_DIR/android-24.jar"
+# Compile-time API surface (guarded newer calls at runtime via SDK_INT checks;
+# D8 --min-api 24 keeps the runtime floor).
+ANDROID_PLATFORM_JAR="$TOOLS_DIR/android-33.jar"
 
 mkdir -p "$TOOLS_DIR" "$BUILD_DIR"
 
@@ -58,7 +60,7 @@ download \
 
 # ── android platform stubs (Sable mirror of the SDK platform jars) ────────
 download \
-    "https://github.com/Sable/android-platforms/raw/master/android-24/android.jar" \
+    "https://github.com/Sable/android-platforms/raw/master/android-33/android.jar" \
     "$ANDROID_PLATFORM_JAR"
 
 # ── Compile Kotlin ────────────────────────────────────────────────────────
@@ -66,7 +68,9 @@ CLASSES_JAR="$BUILD_DIR/classes.jar"
 rm -f "$CLASSES_JAR"
 echo "kotlinc: compiling $(find "$SRC_DIR" -name '*.kt' | wc -l) Kotlin files..."
 mapfile -t KT_FILES < <(find "$SRC_DIR" -name '*.kt')
-"$KOTLINC_HOME/bin/kotlinc" "${KT_FILES[@]}" -jvm-target 1.8 -nowarn -d "$CLASSES_JAR"
+# android.jar on the classpath: the module layer uses Activities/Views now.
+"$KOTLINC_HOME/bin/kotlinc" "${KT_FILES[@]}" -jvm-target 1.8 -nowarn \
+    -classpath "$ANDROID_PLATFORM_JAR" -d "$CLASSES_JAR"
 
 # ── Dex ───────────────────────────────────────────────────────────────────
 DEX_OUT="$BUILD_DIR/dex"

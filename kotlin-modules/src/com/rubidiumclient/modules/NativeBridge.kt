@@ -34,6 +34,9 @@ object NativeBridge {
     external fun getFloatSetting(module: String, key: String, fallback: Float): Float
     external fun getBoolSetting(module: String, key: String, fallback: Boolean): Boolean
 
+    // ── Validated binary patches the Kotlin layer plumbing-toggles ─────
+    external fun setFullBright(enabled: Boolean): Boolean
+
     // ── logcat (tag EClientKotlin) ──────────────────────────────────────
     external fun logLine(line: String)
 }

@@ -571,7 +571,9 @@ EGLSurface hookedCreateWindowSurface(EGLDisplay display, EGLConfig config,
                                    : EGL_NO_SURFACE;
 }
 
-bool hookSwapBuffers() {
+// Unused while the render hook is disabled (Kotlin Views overlay); kept
+// because swapping back to a GL overlay is one call away.
+[[maybe_unused]] bool hookSwapBuffers() {
     if (g_originalSwap) return true;
     void* swapSymbol = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
     if (!swapSymbol) swapSymbol = reinterpret_cast<void*>(eglSwapBuffers);
@@ -638,27 +640,15 @@ bool initialize() {
     std::lock_guard lock(g_mutex);
     if (g_ready.load()) return true;
 
-    // Seed the physical size from the platform BEFORE render starts, so touch
-    //→pixel scaling is correct even on devices with dynamic resolution where
-    // the EGL render buffer is smaller than the window.
-    int dispW = 0;
-    int dispH = 0;
-    if (queryDisplayMetrics(dispW, dispH)) {
-        setPhysicalWindowSize(dispW, dispH);
-        __android_log_print(ANDROID_LOG_INFO, TAG,
-            "Physical display %dx%d via DisplayMetrics", dispW, dispH);
-    } else {
-        __android_log_print(ANDROID_LOG_WARN, TAG,
-            "DisplayMetrics unavailable; touch scale may be off on dynamic-res devices");
-    }
-
-    if (!hookSwapBuffers()) {
-        __android_log_print(ANDROID_LOG_ERROR, TAG, "eglSwapBuffers hook failed");
-        return false;
-    }
-    g_ready.store(true);
-    g_menuOpen.store(false);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "Render host ready");
+    // ── RENDER HOOK DISABLED (Kotlin-first UI retool) ─────────────────────
+    // The whole ImGui overlay (menu, toggle bar, GL fly buttons) is replaced
+    // by native Android Views attached to the decor view (kotlin-modules/ui).
+    // Installing eglSwapBuffers hook here cost every frame a GL FBO/viewport
+    // save-restore — the main FPS drain on tiled phone GPUs. With the Views
+    // overlay the game renders completely untouched.
+    __android_log_print(ANDROID_LOG_INFO, TAG,
+        "Render hook not installed — UI lives in the Kotlin Views overlay");
+    g_ready = true;
     return true;
 }
 

@@ -11,6 +11,7 @@
 #include "modules/FlyInput.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
+#include "profile/PatchManager.h"
 
 // ============================================================================
 // Kotlin module bridge — lets dex-compiled Kotlin modules (see kotlin-modules/
@@ -257,6 +258,14 @@ JNIEXPORT void JNICALL Java_com_rubidiumclient_modules_NativeBridge_logLine(
     const char* s = env->GetStringUTFChars(line, nullptr);
     __android_log_print(ANDROID_LOG_INFO, "EClientKotlin", "%s", s);
     env->ReleaseStringUTFChars(line, s);
+}
+
+// FullBright: a straight plumbing call to the (validated, memory-backed)
+// patch profile. Called from the UI thread, not the tick.
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_setFullBright(
+    JNIEnv* /*env*/, jobject /*self*/, jboolean enabled) {
+    return eclient_runtime::profile::PatchManager::instance()
+                   .set("FullBright", enabled == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

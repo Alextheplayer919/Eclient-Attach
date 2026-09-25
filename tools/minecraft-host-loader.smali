@@ -81,6 +81,10 @@
     # in classes2.dex — injected as smali_classes2 by the patcher).
     invoke-static {}, Lcom/rubidiumclient/modules/ModuleRegistry;->init()V
 
+    # Kotlin-first UI: attach the Android-Views overlay (menu + fly buttons)
+    # to this activity's decor view. Replaces the old ImGui/GL overlay.
+    invoke-static {p1}, Lcom/rubidiumclient/modules/ui/EClientUi;->attach(Landroid/app/Activity;)V
+
     :cond_0
     return-void
 .end method

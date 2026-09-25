@@ -63,12 +63,12 @@ ModuleManager& ModuleManager::instance() {
 
 ModuleManager::ModuleManager() : modules_{
     // Combat
-    {"KillAura", "Nearest attackable actor within 4 blocks", "Combat", true, false, {}},
+    {"KillAura", "Nearest attackable actor within 4 blocks", "Combat", false, false, {}},
 
     // KillAura2: full Melody (1.20.51) KillAura port. Settings match the
     // Melody module 1:1; the two that need memory we have not discovered yet
     // (see tooltip notes) fail inert instead of degrading the rest.
-    {"KillAura2", "Melody KillAura port — rotation math, delay, single/multi, A/B vs KillAura", "Combat", true, false, {
+    {"KillAura2", "Melody KillAura port — rotation math, delay, single/multi, A/B vs KillAura", "Combat", false, false, {
         Setting::real("Range", 3.0f, 1.0f, 12.0f,
             "Melody Range slider (their min was 3.0; 1.0 left available)"),
         Setting::real("WallRange", 0.0f, 0.0f, 12.0f,
@@ -94,11 +94,11 @@ ModuleManager::ModuleManager() : modules_{
             "Only attack actors whose entity type id matches the local\n"
             "player's own (the same classification melody called isPlayer)."),
     }},
-    {"CriticalHit", "Attack-state hook; pending verification", "Combat", true, false, {}},
+    {"CriticalHit", "Attack-state hook; pending verification", "Combat", false, false, {}},
     {"AutoClickMine", "Skip the automatic mining cooldown routine", "Combat", false, true, {}},
 
     // Movement
-    {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false, {}},
+    {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", false, false, {}},
     // Fly — E-Client's OWN fly (built from scratch, no module ports).
     // On-screen ▲/▼ hold buttons drive the vertical: hold ▲ = ascend at
     // V-Speed, hold ▼ = descend, release = true hover (velocity.y pinned to
@@ -107,7 +107,7 @@ ModuleManager::ModuleManager() : modules_{
     // they never spin the camera; two-thumb flying (stick + ▲ + camera with a
     // third finger) works because the pipeline is multi-pointer.
     // Horizontal: velocity-free accel-residue direction projected at H-Speed.
-    {"Fly", "E-Client fly — hold ▲ to rise, release to hover, ▼ to sink", "Movement", true, false, {
+    {"Fly", "E-Client fly — hold ▲ to rise, release to hover, ▼ to sink", "Movement", false, false, {
         Setting::real("H-Speed", 1.0f, 0.2f, 3.0f,
             "Horizontal fly speed (blocks/tick, 0.2–3.0).\n"
             "Steer with the movement stick as usual."),
@@ -128,7 +128,7 @@ ModuleManager::ModuleManager() : modules_{
     // through the KotlinBridge). LeHu-style speeds, driven by the SAME ▲/▼
     // GUI buttons as the C++ Fly. Fly ⇄ MotionFly are mutually exclusive so
     // they can never fight over the velocity field.
-    {"MotionFly", "LeHu-style motion fly — KOTLIN module (see kotlin-modules/)", "Movement", true, false, {
+    {"MotionFly", "LeHu-style motion fly — KOTLIN module (see kotlin-modules/)", "Movement", false, false, {
         Setting::real("H-BPS", 46.0f, 1.0f, 100.0f,
             "LeHu 'H Speed BPS' (blocks/second, clamped to sqrt(5.99)/tick)."),
         Setting::real("Up-BPS", 19.8f, 1.0f, 60.0f,
@@ -145,8 +145,8 @@ ModuleManager::ModuleManager() : modules_{
         Setting::boolean("FlyButtons", true,
             "Show the on-screen ▲/▼ buttons (shared with the C++ Fly)."),
     }, true},
-    {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
-    {"Step", "Raise the player auto-step height", "Movement", true, false, {}},
+    {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", false, false, {}},
+    {"Step", "Raise the player auto-step height", "Movement", false, false, {}},
     {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
     {"Noclip", "Disable solid collision response", "Movement", false, true, {}},
     {"AntiKnockback", "Suppress motion interpolation used by knockback", "Movement", false, true, {}},
@@ -164,14 +164,14 @@ ModuleManager::ModuleManager() : modules_{
     {"NoCamSleep", "Disable camera sleep fade", "Visual", false, true, {}},
     {"PlaceCamera", "Disable camera blend placement step", "Visual", false, true, {}},
     {"XrayCameraThird", "Disable third-person camera avoidance", "Visual", false, true, {}},
-    {"ESP", "Actor enumeration + world-to-screen renderer; pending verification", "Visual", true, false, {}},
+    {"ESP", "Actor enumeration + world-to-screen renderer; pending verification", "Visual", false, false, {}},
 
     // Player / Misc
     {"NoEmoteCooldown", "Remove the emote cooldown gate", "Player", false, true, {}},
 
     // Misc / debug
-    {"ECSDump", "Debug: ECS component deltas for the local player (2 snapshots, ~2s).\nWritten to ALL reachable spots: Download/EClient/ecsdump.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", true, false, {}},
-    {"FlyDebug", "Debug: per-tick fly telemetry (240 ticks, self-disables).\nWritten to ALL reachable spots: Download/EClient/flydebug.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", true, false, {}},
+    {"ECSDump", "Debug: ECS component deltas for the local player (2 snapshots, ~2s).\nWritten to ALL reachable spots: Download/EClient/ecsdump.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", false, false, {}},
+    {"FlyDebug", "Debug: per-tick fly telemetry (240 ticks, self-disables).\nWritten to ALL reachable spots: Download/EClient/flydebug.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", false, false, {}},
 } {}
 
 const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
