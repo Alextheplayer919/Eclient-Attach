@@ -20,6 +20,7 @@ set(ECLIENT_COMMON_SOURCES
     src/bridge/LoopbackBridge.cpp
     src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
+    src/modules/FlyInput.cpp
     src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
@@ -43,6 +44,7 @@ add_library(eclient_host SHARED
     src/bridge/GameBridge.cpp
     src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
+    src/modules/FlyInput.cpp
     src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp

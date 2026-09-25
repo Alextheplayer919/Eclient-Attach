@@ -19,6 +19,7 @@
 #include "dobby.h"
 #include "bridge/DebugFiles.h"
 #include "bridge/GameBridge.h"
+#include "modules/FlyInput.h"
 #include "modules/ModuleManager.h"
 #include "profile/PatchManager.h"
 #include "input/NativeInputHook.h"
@@ -282,6 +283,71 @@ void drawToggleBar() {
     ImGui::End();
 }
 
+// The Fly module's own on-screen fly buttons: ▲ ascend / ▼ descend while
+// held; release = hover. Drawn as pure overlay (no ImGui window/input — the
+// native input route consumes their touches before the game or ImGui sees
+// them). Shown only when the Fly module is on, menu closed.
+
+bool flyButtonsActive() {
+    auto& mgr = eclient_runtime::modules::ModuleManager::instance();
+    return mgr.enabled("Fly") && mgr.boolSetting("Fly", "FlyButtons", true);
+}
+
+void drawFlyButtons(int surfaceW, int surfaceH) {
+    using eclient_runtime::flyinput::Buttons;
+    if (!flyButtonsActive() || g_menuOpen.load()) {
+        eclient_runtime::flyinput::clearRects();
+        return;
+    }
+
+    const float w = static_cast<float>(surfaceW);
+    const float h = static_cast<float>(surfaceH);
+    if (w <= 0.0f || h <= 0.0f) return;
+
+    // Placed just left of the vanilla jump/sneak zone so both thumbs work:
+    // left thumb steers (stick), right thumb holds ▲/▼.
+    const float dia = std::clamp(std::min(w, h) * 0.14f, 84.0f, 150.0f);
+    const float cx = w - dia * 2.2f - 40.0f;
+    const float upCy = h * 0.58f;
+    const float downCy = h * 0.58f + dia * 1.12f;
+
+    Buttons b;
+    b.valid = true;
+    b.upCx = cx;  b.upCy = upCy;
+    b.downCx = cx; b.downCy = downCy;
+    b.dia = dia;
+    eclient_runtime::flyinput::setRects(b);
+
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const bool upHeld = eclient_runtime::flyinput::heldUp();
+    const bool downHeld = eclient_runtime::flyinput::heldDown();
+    const ImU32 upCol = IM_COL32(upHeld ? 60 : 20, upHeld ? 220 : 130, 90, 200);
+    const ImU32 downCol = IM_COL32(200, downHeld ? 60 : 110, 60, 200);
+    const ImU32 rimCol = IM_COL32(255, 255, 255, 220);
+
+    dl->AddCircleFilled(ImVec2(cx, upCy), dia * 0.5f, upCol, 24);
+    dl->AddCircle(ImVec2(cx, upCy), dia * 0.5f, rimCol, 24, 2.0f);
+    {
+        // ▲ triangle
+        const float s = dia * 0.30f;
+        dl->AddTriangleFilled(ImVec2(cx, upCy - s * 0.8f),
+                              ImVec2(cx - s, upCy + s * 0.5f),
+                              ImVec2(cx + s, upCy + s * 0.5f),
+                              IM_COL32(255, 255, 255, 235));
+    }
+
+    dl->AddCircleFilled(ImVec2(cx, downCy), dia * 0.5f, downCol, 24);
+    dl->AddCircle(ImVec2(cx, downCy), dia * 0.5f, rimCol, 24, 2.0f);
+    {
+        // ▼ triangle
+        const float s = dia * 0.30f;
+        dl->AddTriangleFilled(ImVec2(cx, downCy + s * 0.8f),
+                              ImVec2(cx - s, downCy - s * 0.5f),
+                              ImVec2(cx + s, downCy - s * 0.5f),
+                              IM_COL32(255, 255, 255, 235));
+    }
+}
+
 using SwapBuffersFn = EGLBoolean (*)(EGLDisplay, EGLSurface);
 SwapBuffersFn g_originalSwap = nullptr;
 std::atomic<int> g_physicalWidth{0};
@@ -395,7 +461,10 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
                     const bool open = g_menuOpen.load();
                     if (!open) {
                         drawToggleBar();
+                        drawFlyButtons(width, height);
                     } else {
+                        // Menu open: fly buttons stay off-screen and inert.
+                        eclient_runtime::flyinput::clearRects();
                         const float winW = std::min(480.0f, static_cast<float>(width) * 0.92f);
                         const float winH = std::min(520.0f, static_cast<float>(height) * 0.85f);
                         ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
@@ -505,6 +574,16 @@ bool hitTestToggleBar(float physicalX, float physicalY) {
     if (!g_barSeenOnce) return false;
     return sx >= g_barX && sx <= g_barX + g_barW &&
            sy >= g_barY && sy <= g_barY + g_barH;
+}
+
+bool flyTouch(int pointerId, int action, float physicalX, float physicalY) {
+    if (!flyButtonsActive() || g_menuOpen.load()) {
+        eclient_runtime::flyinput::reset();
+        return false;
+    }
+    const float sx = physicalX * g_scaleX.load();
+    const float sy = physicalY * g_scaleY.load();
+    return eclient_runtime::flyinput::touch(pointerId, action, sx, sy);
 }
 
 void setPhysicalWindowSize(int width, int height) {

@@ -37,4 +37,10 @@ void submitTouch(float x, float y, int action);
 // everything else keeps flowing into the game.
 bool hitTestToggleBar(float physicalX, float physicalY);
 
+// Fly module on-screen buttons: route a raw pointer event (PHYSICAL pixels,
+// action 0=down/1=move/2=up) through the fly-button gesture tracker. Returns
+// true when the event belongs to a fly button and must be consumed before it
+// reaches the game. Inactive (fly off / buttons hidden / menu open) ⇒ false.
+bool flyTouch(int pointerId, int action, float physicalX, float physicalY);
+
 } // namespace eclient_runtime::host::InGameGui

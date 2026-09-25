@@ -1,103 +1,93 @@
 #include "input/NativeInputHook.h"
 
-#include <android/log.h>
-#include <jni.h>
 #include <atomic>
+
+#include <jni.h>
 
 #include "gui/InGameGui.h"
 
 namespace eclient_runtime::input {
 namespace {
-constexpr const char* TAG = "EClientInput";
-
-// DESIGN DECISION (2026-09-24, per user requirement): NO hardware-key
-// bindings. Volume Up conflicts with media volume on phones. The menu is
-// toggled exclusively by the floating E-Client bar drawn by the GUI itself,
-// so this TU installs no Dobby key hook at all. (The old
-// nativeKeyHandler hook worked, but the binding was the problem, not the
-// mechanism; it can be reinstated if a hardware bind is ever wanted.)
-std::atomic_bool g_touchInstalled{false};
-std::atomic<long> g_guiTouchCount{0};
-// Gesture latch: a gesture that STARTS on the toggle bar must keep its events
-// routed to ImGui until finger-up, even when MOVE positions fall outside the
-// (moving) bar rect — otherwise dragging the bar would leak MOVE events into
-// the game camera mid-drag.
-std::atomic_bool g_barGestActive{false};
+std::atomic<bool> g_initialized{false};
+// Toggle-bar gesture latch: while a touch gesture started on the bar is still
+// held down, keep consuming its moves (the bar drags; the game only sees
+// motion when the user swipes outside the bar). Per-pointer: pid 0 only.
+std::atomic<bool> g_barGesture{false};
 } // namespace
 
 bool initialize() {
-    // Touch arrives asynchronously via the view-layer listener
-    // (tools/minecraft-touch-listener.smali) installed on each resumed
-    // activity's decor view; it calls nativeTouchReady/nativeGuiTouch below.
-    __android_log_print(ANDROID_LOG_INFO, TAG,
-        "Input: view-layer touch route armed; menu toggle = floating E-Client bar");
+    g_initialized = true;
     return true;
 }
 
 void shutdown() {
-    g_touchInstalled.store(false);
+    g_initialized = false;
+    g_barGesture = false;
 }
 
-bool keyHookInstalled() { return false; }       // hardware keys not used
-bool touchHookInstalled() { return g_touchInstalled.load(); }
+bool keyHookInstalled() { return g_initialized.load(); }
+bool touchHookInstalled() { return g_initialized.load(); }
+
+namespace {
+// Map Android ACTION_* / ACTION_POINTER_* to our 0=down / 1=move / 2=up.
+// 5=POINTER_DOWN, 6=POINTER_UP, 3=CANCEL are per-pointer; MOVE(2) arrives
+// once per pointer from the Java listener; keyboard buttons use 4 (ignore).
+int mapAction(int androidAction) {
+    switch (androidAction) {
+        case 0: case 5: return 0;
+        case 2: return 1;
+        case 1: case 3: case 6: return 2;
+        default: return -1;
+    }
+}
+} // namespace
+
+// JNI contract with the Java listener: (int pointerId, int action, float x,
+// float y) -> consumed:boolean — declared in minecraft-host-loader.smali as
+// EClientLoaderProvider.nativeGuiTouch.
+extern "C" JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(
+    JNIEnv* /*env*/, jclass /*clazz*/, jint pointerId, jint androidAction, jfloat x, jfloat y) {
+    if (!g_initialized.load()) return JNI_FALSE;
+    const int action = mapAction(androidAction);
+    if (action < 0) return JNI_FALSE;
+
+    // Menu open: every pointer drives ONLY ImGui (single mouse = pid 0).
+    if (host::InGameGui::menuOpen()) {
+        if (pointerId == 0) {
+            g_barGesture = false;
+            host::InGameGui::submitTouch(x, y, action);
+        }
+        return JNI_TRUE;
+    }
+
+    // Menu closed. Fly buttons first: any pointer claimed by a fly button is
+    // consumed here so it never spins the camera or touches the world.
+    if (host::InGameGui::flyTouch(pointerId, action, x, y)) {
+        if (pointerId == 0) g_barGesture = false;
+        return JNI_TRUE;
+    }
+
+    // Then the toggle bar / its move-gesture latch (primary pointer only).
+    if (pointerId == 0) {
+        if (action == 0) {
+            g_barGesture = host::InGameGui::hitTestToggleBar(x, y);
+        }
+        if (g_barGesture.load()) {
+            host::InGameGui::submitTouch(x, y, action);
+            if (action == 2) g_barGesture = false;
+            return JNI_TRUE;
+        }
+    }
+
+    // Not ours: game handles the touch normally.
+    return JNI_FALSE;
+}
+
+// Called by the host loader once the native library is loaded: marks the
+// input route ready. Idempotent (also driven from MinecraftHost startup).
+extern "C" JNIEXPORT void JNICALL Java_com_rubidiumclient_host_EClientLoaderProvider_nativeTouchReady(
+    JNIEnv* /*env*/, jclass /*clazz*/) {
+    initialize();
+}
 
 } // namespace eclient_runtime::input
-
-// ---------------------------------------------------------------------------
-// JNI entry points called from the injected smali (resolved by NAME at load).
-// Keep signatures in exact sync with tools/minecraft-host-loader.smali and
-// tools/minecraft-touch-listener.smali — the smali is ABI here.
-// ---------------------------------------------------------------------------
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_rubidiumclient_host_EClientLoaderProvider_nativeTouchReady(JNIEnv*, jclass) {
-    eclient_runtime::input::g_touchInstalled.store(true);
-    __android_log_print(ANDROID_LOG_INFO, "EClientInput",
-        "View-layer touch listener installed on a resumed activity window");
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_rubidiumclient_host_EClientLoaderProvider_nativeGuiTouch(
-        JNIEnv*, jclass, jint action, jfloat x, jfloat y) {
-    namespace gui = eclient_runtime::host::InGameGui;
-
-    // MotionEvent action-masked -> InGameGui touch codes (0=down, 1=move, 2=up)
-    int mapped;
-    switch (action) {
-        case 0: /* ACTION_DOWN */          mapped = 0; break;
-        case 2: /* ACTION_MOVE */          mapped = 1; break;
-        case 1: /* ACTION_UP */
-        case 3: /* ACTION_CANCEL */        mapped = 2; break;
-        default: /* multi-touch variants */ mapped = 1; break;
-    }
-
-    if (!gui::menuOpen()) {
-        // Menu closed: only gestures landing ON the floating toggle bar are
-        // diverted to ImGui; everything else belongs to the game.
-        if (mapped == 0) {
-            if (!gui::hitTestToggleBar(x, y)) {
-                eclient_runtime::input::g_barGestActive.store(false);
-                return JNI_FALSE;
-            }
-            eclient_runtime::input::g_barGestActive.store(true);
-        } else {
-            if (!eclient_runtime::input::g_barGestActive.load()) {
-                return JNI_FALSE;
-            }
-            if (mapped == 2) {
-                eclient_runtime::input::g_barGestActive.store(false);
-            }
-        }
-    } else {
-        eclient_runtime::input::g_barGestActive.store(false);
-    }
-
-    gui::submitTouch(x, y, mapped);
-
-    const long total = ++eclient_runtime::input::g_guiTouchCount;
-    if (total == 1 || total % 100 == 0) {
-        __android_log_print(ANDROID_LOG_INFO, "EClientInput",
-            "GUI touch events flowing (%ld)", total);
-    }
-    return JNI_TRUE;  // consumed
-}

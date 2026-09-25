@@ -400,9 +400,9 @@ grep -q \
     }
 
 grep -q \
-    'nativeGuiTouch(IFF)Z' \
+    'nativeGuiTouch(IIFF)Z' \
     "$LOADER_DIR/EClientTouchListener.smali" || {
-        echo "ERROR: Touch listener smali does not call nativeGuiTouch."
+        echo "ERROR: Touch listener smali does not call nativeGuiTouch (multi-pointer ABI)."
         exit 1
     }
 

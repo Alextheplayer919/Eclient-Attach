@@ -97,29 +97,30 @@ ModuleManager::ModuleManager() : modules_{
 
     // Movement
     {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false, {}},
-    // Fly — 1:1 port of the user-suggested "superman" Fly module
-    // (Horion-style: zero velocity, add Glide, yaw-projected keys at hSpeed,
-    // space/shift vertical at vSpeed, lerpMotion). Settings match the source's
-    // registered sliders verbatim; touch-side surrogates only where the
-    // platform has no key readback (see MelodyModules.cpp comments).
-    {"Fly", "Superman fly — 1:1 port of the suggested module (fresh velocity per tick)", "Movement", true, false, {
+    // Fly — E-Client's OWN fly (built from scratch, no module ports).
+    // On-screen ▲/▼ hold buttons drive the vertical: hold ▲ = ascend at
+    // V-Speed, hold ▼ = descend, release = true hover (velocity.y pinned to
+    // exactly 0.0 — no glide creep, so no periodic correction/lagback).
+    // Button touches are consumed at our own view-layer injection point, so
+    // they never spin the camera; two-thumb flying (stick + ▲ + camera with a
+    // third finger) works because the pipeline is multi-pointer.
+    // Horizontal: velocity-free accel-residue direction projected at H-Speed.
+    {"Fly", "E-Client fly — hold ▲ to rise, release to hover, ▼ to sink", "Movement", true, false, {
         Setting::real("H-Speed", 1.0f, 0.2f, 3.0f,
-            "Source slider: 'H-Speed — Horizontal speed' (default 1.0,\n"
-            "range 0.2–3.0, blocks/tick)."),
-        Setting::real("V-Speed", 0.95f, 0.2f, 2.0f,
-            "Source slider: 'V-Speed — Vertical speed' (default 0.95,\n"
-            "range 0.2–2.0, blocks/tick). Climb: tap JUMP."),
-        Setting::real("Glide", -0.02f, -0.3f, 0.0f,
-            "Source slider: 'Glide — how much u want to go down'\n"
-            "(default -0.02, range -0.3–0). 0 = pin-hover."),
-        Setting::boolean("Bypass", false,
-            "Source BoolSetting: bypass for IGN — locks H-Speed to 1.0 while\n"
-            "reduced and 1.14 while ascending (source has no speed reducer on\n"
-            "this platform, so it applies the ascent rule)."),
+            "Horizontal fly speed (blocks/tick, 0.2–3.0).\n"
+            "Steer with the movement stick as usual."),
+        Setting::real("V-Speed", 0.5f, 0.2f, 2.0f,
+            "Vertical fly speed while holding ▲ or ▼\n"
+            "(blocks/tick, 0.2–2.0). Released = hover at exactly 0."),
+        Setting::boolean("FlyButtons", true,
+            "Show the on-screen ▲/▼ fly buttons while Fly is on.\n"
+            "Button touches are consumed before the game sees them,\n"
+            "so they never move the camera. Turn off to hide the buttons\n"
+            "(vertical then pins to hover wherever you are)."),
         Setting::choice("WriteMode", {"Velocity", "Position"}, 0,
-            "Housekeeping (not in source): Velocity writes the velocity field\n"
-            "like lerpMotion; Position moves pos/prevPos directly — fallback\n"
-            "for servers that overwrite client velocity."),
+            "Velocity writes the velocity field (normal); Position moves\n"
+            "pos/prevPos directly — fallback for servers that overwrite\n"
+            "client velocity."),
     }},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},

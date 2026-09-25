@@ -3,6 +3,7 @@
 #include "bridge/DebugFiles.h"
 #include "memory/ComponentWalk.h"
 #include "memory/NativeMemory.h"
+#include "modules/FlyInput.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 
@@ -293,43 +294,33 @@ void tickKillAura2(void* player) {
 }
 
 // ============================================================================
-// Fly — fidelity port of the user-suggested "superman" Fly module.
-// Source structure (quoted) and its mobile mapping:
+// Fly — E-Client's OWN fly, built from scratch for touch (no module ports).
 //
-//   source: Vec3<float>& velocity = localPlayer->stateVector->velocity;
-//   source: velocity = Vec3<float>(0.f, 0.f, 0.f);   // zero every tick
-//   source: velocity.y += Glide;
-//
-//   source: bool isForward/isLeft/... = Game::isKeyDown('W'/'A'/...);
-//   touch:  no WASD/space/shift readback exists, but the game treats the
-//           joystick EXACTLY as those keys — vanilla physics turns it into the
-//           same movement acceleration. Measuring THIS tick's pure input
-//           acceleration (vel_now − friction*our_prev_write) therefore reads
-//           the very same "key state" the source reads via isKeyDown —
-//           presence of acceleration == key held, its direction == the
-//           yaw-projected move vector the source builds from yaw+angleDeg.
-//
-//   source: if (isUp) velocity.y += vSpeed;      // VK_SPACE held
-//   touch:  real jump impulses (visible in the vertical residue) sustain
-//           +vSpeed for 10 ticks per tap — the closest hold-jump surrogate.
-//   source: if (isDown) velocity.y -= vSpeed;    // VK_SHIFT held — no touch
-//           readback; source documents Glide as "how much u want to go down",
-//           so descending is the Glide slider itself.
-//
-//   source: localPlayer->lerpMotion(moveVec);    // writes velocity x/y/z
-//   ours:   direct write into stateVector+0x18 (identical; LerpMotion disasm)
-//
-// Source side-features with no platform analog (kept out, NOT rewritten):
-//   AutoTravel cooperation (no such module), reduceSpeed()/restoreSpeed()
-//   external calls, Purplez spam timer fields (dead code in the paste).
-// Our anti-rubberband skip + join stability gate are kept platform-side
-// (crash insurance), they don't change the flight logic.
+// Why this works on mobile where ported keyboard flies never did:
+//   * We own the ENTIRE touch pipeline (view-layer listener → JNI → GUI), so
+//     instead of inventing keyboard surrogates (jetpack impulse residue, etc.)
+//     we render REAL ▲/▼ hold buttons and read them like hardware keys:
+//         hold ▲  → velocity.y = +V-Speed   (ascend)
+//         hold ▼  → velocity.y = −V-Speed   (descend)
+//         neither → velocity.y =  0.0f      (TRUE hover, pinned exactly —
+//             no glide creep means there is nothing for an anticheat to
+//             periodically correct, so no lagback stutter)
+//   * Button touches are CONSUMED at our injection point before the game sees
+//     them (gesture-latched per pointer id), so holding ▲ never spins the
+//     camera; multi-pointer tracking means a second thumb can steer the
+//     joystick / look around while one finger holds ▲.
+//   * Horizontal: no key readback exists on touch, so direction comes from
+//     measuring the vanilla input acceleration residue
+//     (vel_now − AIR_FRICTION·our_prev_write), normalized and projected at
+//     H-Speed — the joystick IS vanilla keyboard-equivalent input, so this
+//     reads the same move vector the game itself produces.
+//   * Anti-rubberband skip (server teleport >4.5 blk) + world-stability gate
+//     stay as crash insurance; WriteMode=Position is the server-fallback.
 // ============================================================================
 
 Vec3 g_flyPrevOut{};
 Vec3 g_lastFlyPos{};
 bool g_haveLastFlyPos = false;
-int g_jetSustainTicks = 0;
 
 void tickFly(void* player) {
     Vec3* vel = velocityPtr(player);
@@ -359,16 +350,13 @@ void tickFly(void* player) {
     g_haveLastFlyPos = true;
     g_lastFlyPos = pos;
 
-    // Source settings (slider ranges/defaults registered verbatim in ModuleManager).
+    // Settings (registered in ModuleManager).
     const float hSpeed = mgr().floatSetting("Fly", "H-Speed", 1.0f);
-    const float vSpeed = mgr().floatSetting("Fly", "V-Speed", 0.95f);
-    const float glide = mgr().floatSetting("Fly", "Glide", -0.02f);
-    const bool bypass = mgr().boolSetting("Fly", "Bypass", false);
+    const float vSpeed = mgr().floatSetting("Fly", "V-Speed", 0.5f);
 
-    // source: velocity = Vec3<float>(0,0,0);
-    // Equivalent without re-feeding our own write: subtract what WE wrote last
-    // tick (scaled by air friction) from what the game has now; the residue is
-    // pure vanilla input acceleration — the joystick → this was the WASD read.
+    // Horizontal: subtract what WE wrote last tick (scaled by air friction)
+    // from what the game has now; the residue is pure vanilla input
+    // acceleration — joystick direction on touch screens.
     constexpr float AIR_FRICTION = 0.98f;
     float ax = rawX - AIR_FRICTION * g_flyPrevOut.x;
     float az = rawZ - AIR_FRICTION * g_flyPrevOut.z;
@@ -376,32 +364,21 @@ void tickFly(void* player) {
     az = std::clamp(az, -0.35f, 0.35f);
     const float amag = std::sqrt(ax * ax + az * az);
 
-    // source: if (isUp) velocity.y += vSpeed;  (SPACE held)
-    float outY = glide; // source: velocity.y += Glide;
-    const float vyRes = rawY - AIR_FRICTION * g_flyPrevOut.y + 0.08f;
-    if (vyRes > 0.25f && vyRes < 1.5f) {
-        g_jetSustainTicks = 10; // a real SPACE-equivalent just happened
-    }
-    const bool isUp = g_jetSustainTicks > 0;
-    if (isUp) {
-        outY = glide + vSpeed;
-        --g_jetSustainTicks;
-    }
-
-    // source: float currentHSpeed = hSpeed; ... else if (bypass && isUp) = 1.14f
-    float currentHSpeed = hSpeed;
-    if (bypass && isUp) currentHSpeed = 1.14f;
+    // Vertical — E-Client's own fly: hold ▲ = ascend, hold ▼ = descend,
+    // neither = true hover pinned at exactly 0 (no glide creep ⇒ nothing for
+    // an anticheat to periodically correct ⇒ no lagback stutter).
+    const bool upHeld = flyinput::heldUp();
+    const bool downHeld = flyinput::heldDown();
+    float outY = 0.0f;
+    if (upHeld && !downHeld) outY = vSpeed;
+    else if (downHeld && !upHeld) outY = -vSpeed;
 
     float outX = 0.0f, outZ = 0.0f;
-    // source: if ((moveValue.x != 0) || (moveValue.y != 0)) → projected motion
     constexpr float DEADZONE = 0.004f;
     if (amag > DEADZONE) {
-        // source builds moveVec from yaw+atan2(moveValue.x, moveValue.y); the
-        // measured accel direction is the same projected vector on touch.
-        outX = ax / amag * currentHSpeed;
-        outZ = az / amag * currentHSpeed;
+        outX = ax / amag * hSpeed;
+        outZ = az / amag * hSpeed;
     }
-    // source: if (isDown) velocity.y -= vSpeed; — no touch readback (see header).
 
     if (!std::isfinite(outX) || !std::isfinite(outY) || !std::isfinite(outZ)) return;
 
@@ -596,13 +573,14 @@ void tickFlyDebugPre(void* player) {
     if (g_debugLeft <= 0) {
         g_debugLeft = kFlyDebugTicks;
         g_flyLog.open("flydebug.txt");
-        flyDebugLine("FLD-BEGIN tick=%ld h=%.2f v=%.2f glide=%.3f bypass=%d write=%d file=%s",
+        flyDebugLine("FLD-BEGIN tick=%ld h=%.2f v=%.2f buttons=%d write=%d up=%d down=%d file=%s",
                      g_tick,
                      mgr().floatSetting("Fly", "H-Speed", 1.0f),
-                     mgr().floatSetting("Fly", "V-Speed", 0.95f),
-                     mgr().floatSetting("Fly", "Glide", -0.02f),
-                     mgr().boolSetting("Fly", "Bypass", false) ? 1 : 0,
+                     mgr().floatSetting("Fly", "V-Speed", 0.5f),
+                     mgr().boolSetting("Fly", "FlyButtons", true) ? 1 : 0,
                      mgr().enumSetting("Fly", "WriteMode", 0),
+                     flyinput::heldUp() ? 1 : 0,
+                     flyinput::heldDown() ? 1 : 0,
                      g_flyLog.where().c_str());
         g_debugWasFly = mgr().enabled("Fly");
     }
@@ -678,7 +656,7 @@ void onNormalTick(void* localPlayer) {
         // Let a disabled ECSDump re-arm so the next enable starts fresh.
         if (!mgr().enabled("ECSDump")) { g_dumped = false; g_dumpStartTick = -1; }
         g_haveLastFlyPos = false;
-        g_jetSustainTicks = 0;
+        flyinput::reset();
         g_flyPrevOut = {0.0f, 0.0f, 0.0f};
         return;
     }
@@ -693,7 +671,7 @@ void onNormalTick(void* localPlayer) {
         tickFly(localPlayer);
     } else {
         g_haveLastFlyPos = false;
-        g_jetSustainTicks = 0;
+        flyinput::reset();
         g_flyPrevOut = {0.0f, 0.0f, 0.0f};
     }
     if (debug) tickFlyDebugPost(localPlayer);

@@ -26,7 +26,7 @@
 # PUBLIC: nativeGuiTouch is called cross-class from EClientTouchListener.
 # -----------------------------------------------------------------------
 
-.method public static native nativeGuiTouch(IFF)Z
+.method public static native nativeGuiTouch(IIFF)Z
 .end method
 
 .method public static native nativeTouchReady()V
