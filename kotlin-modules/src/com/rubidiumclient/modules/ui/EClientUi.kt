@@ -139,25 +139,34 @@ object EClientUi {
         var dragDX = 0f
         var dragDY = 0f
         var moved = false
+        var downAt = 0L
         chip.setOnTouchListener { v, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     dragDX = v.x - ev.rawX
                     dragDY = v.y - ev.rawY
                     moved = false
+                    downAt = System.currentTimeMillis()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val parent = v.parent as View
+                    if (parent.width <= 0 || parent.height <= 0) return@setOnTouchListener true
                     val nx = ev.rawX + dragDX
                     val ny = ev.rawY + dragDY
                     if (kotlin.math.abs(nx - v.x) + kotlin.math.abs(ny - v.y) > 8f) moved = true
-                    val parent = v.parent as View
-                    v.x = nx.coerceIn(0f, (parent.width - v.width).toFloat())
-                    v.y = ny.coerceIn(0f, (parent.height - v.height).toFloat())
+                    v.x = nx.coerceIn(0f, (parent.width - v.width).toFloat().coerceAtLeast(0f))
+                    v.y = ny.coerceIn(0f, (parent.height - v.height).toFloat().coerceAtLeast(0f))
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) togglePanel()
+                    if (!moved) {
+                        if (System.currentTimeMillis() - downAt > 700L) {
+                            resetOverlayState() // PANIC recovery: long-press
+                        } else {
+                            togglePanel()
+                        }
+                    }
                     true
                 }
                 else -> false
@@ -165,6 +174,34 @@ object EClientUi {
         }
         overlay.addView(chip)
         chipView = chip
+    }
+
+    private fun syncRootClickable() {
+        // THE rule that never leaks: the fullscreen root absorbs touches IF
+        // AND ONLY IF the panel is visible. Every overlay state change funnels
+        // through here — a stale "eating all touches" root is what made the
+        // MC UI unresponsive.
+        val r = root ?: return
+        val open = panel?.visibility == View.VISIBLE
+        r.isClickable = open
+        r.setOnClickListener(if (open) View.OnClickListener { togglePanel() } else null)
+    }
+
+    /** Long-press-chip recovery: close menu, free the game of all touch
+     *  interference, send fly buttons home, drop held state, clear offsets. */
+    private fun resetOverlayState() {
+        try {
+            panel?.visibility = View.GONE
+            syncRootClickable()
+            upHeld = false; downHeld = false
+            flyColumn?.let { col ->
+                col.translationX = 0f; col.translationY = 0f
+            }
+            uiPrefs()?.edit()?.remove("fly_dx")?.remove("fly_dy")?.apply()
+            com.rubidiumclient.modules.NativeBridge.logLine("overlay state reset")
+        } catch (t: Throwable) {
+            com.rubidiumclient.modules.NativeBridge.logLine("reset: $t")
+        }
     }
 
     private fun togglePanel() {
@@ -178,16 +215,12 @@ object EClientUi {
             if (show) {
                 rebuildPanel(r)
                 panel?.visibility = View.VISIBLE
-                // While the menu is open, empty space outside the panel
-                // absorbs touches and acts as "tap outside to close".
-                r.isClickable = true
-                r.setOnClickListener { togglePanel() }
             } else {
                 panel?.visibility = View.GONE
-                r.isClickable = false
-                r.setOnClickListener(null)
             }
-            chip()?.bringToFront() // chip stays reachable even over the panel
+            syncRootClickable()
+            chip()?.bringToFront()
+            flyColumn?.bringToFront() // buttons never get buried under the panel
         } catch (t: Throwable) {
             com.rubidiumclient.modules.NativeBridge.logLine("panel toggle: $t")
         }
@@ -310,11 +343,18 @@ object EClientUi {
         overlay.addView(col)
         flyColumn = col
 
-        // Restore saved drag offsets once the view is laid out.
+        // Restore saved drag offsets once the view is laid out — clamped to
+        // the screen so a stale save (e.g. from before a rotation) can never
+        // slide the buttons fully off-screen.
         col.post {
             uiPrefs()?.let { p ->
-                col.translationX = p.getFloat("fly_dx", 0f)
-                col.translationY = p.getFloat("fly_dy", 0f)
+                val parent = col.parent as? View ?: return@let
+                col.translationX = p.getFloat("fly_dx", 0f).coerceIn(
+                    -col.left.toFloat(), (parent.width - col.right).toFloat()
+                        .coerceAtLeast(-col.left.toFloat()))
+                col.translationY = p.getFloat("fly_dy", 0f).coerceIn(
+                    -col.top.toFloat(), (parent.height - col.bottom).toFloat()
+                        .coerceAtLeast(-col.top.toFloat()))
             }
         }
     }
@@ -395,6 +435,11 @@ object EClientUi {
         pane.addView(col)
         if (oldIndex >= 0) container.addView(pane, oldIndex, lp) else container.addView(pane, lp)
         panel = pane
+        // Keep th world-model consistent after every rebuild: root touch
+        // absorption tracks panel visibility; overlays stay on top.
+        syncRootClickable()
+        chipView?.bringToFront()
+        flyColumn?.bringToFront()
     }
 
     private fun moduleRow(m: KotlinModule): View {
