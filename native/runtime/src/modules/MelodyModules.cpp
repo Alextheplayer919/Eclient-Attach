@@ -1,5 +1,6 @@
 #include "modules/MelodyModules.h"
 
+#include "bridge/DebugFiles.h"
 #include "memory/ComponentWalk.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
@@ -397,6 +398,12 @@ struct DumpProbe {
 std::vector<DumpProbe> g_dumpProbes;
 long g_dumpStartTick = -1;
 bool g_dumped = false;
+debugfiles::PublicLog g_ecsLog;
+
+void ecsLogLine(const std::string& line) {
+    __android_log_print(ANDROID_LOG_INFO, TAG, "%s", line.c_str());
+    g_ecsLog.write(line.c_str());
+}
 
 void dumpSnapshot(bool second) {
     namespace E = eclient_runtime::ecs;
@@ -459,7 +466,7 @@ void dumpSnapshot(bool second) {
                 line += chunk;
             }
         }
-        __android_log_print(ANDROID_LOG_INFO, TAG, "%s", line.c_str());
+        ecsLogLine(line);
     }
 }
 
@@ -468,15 +475,18 @@ void tickEcsDump(void* player) {
     if (g_dumpStartTick < 0) {
         g_dumpStartTick = g_tick;
         g_dumpProbes.clear();
+        g_ecsLog.open("ecsdump.txt");
 
         namespace E = eclient_runtime::ecs;
         const std::uint32_t eid = entityIdOf(player);
         const auto pools = E::listPools(reinterpret_cast<std::uintptr_t>(player));
-        __android_log_print(ANDROID_LOG_INFO, TAG,
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
             "ECSDump: %zu pools, eid=0x%x — snapshot 1 now,"
             " snapshot 2 in ~2 s. During the window: ROTATE the view,"
-            " SPAM jump+sneak, take a hit if possible.",
-            pools.size(), eid);
+            " SPAM jump+sneak, take a hit if possible. file=%s",
+            pools.size(), eid, g_ecsLog.where().c_str());
+        ecsLogLine(buf);
 
         for (const auto& d : pools) {
             if (g_dumpProbes.size() >= kMaxPools) break;
@@ -485,16 +495,19 @@ void tickEcsDump(void* player) {
             probe.el = E::resolveElement(d.pool, eid);
             if (probe.el.valid) g_dumpProbes.push_back(probe);
         }
-        __android_log_print(ANDROID_LOG_INFO, TAG, "ECSDump: %zu pools resolve for local player",
-                            g_dumpProbes.size());
+        std::snprintf(buf, sizeof(buf), "ECSDump: %zu pools resolve for local player",
+                      g_dumpProbes.size());
+        ecsLogLine(buf);
         dumpSnapshot(false);
         return;
     }
 
     if (g_tick - g_dumpStartTick >= static_cast<long>(kDumpDelayTicks)) {
-        __android_log_print(ANDROID_LOG_INFO, TAG, "ECSDump: snapshot sqrt-2 — deltas follow");
+        ecsLogLine("ECSDump: snapshot 2 — deltas follow");
         dumpSnapshot(true);
-        __android_log_print(ANDROID_LOG_INFO, TAG, "ECSDump: done (module auto-disabled)");
+        std::string done = "ECSDump: done (module auto-disabled) file=" + g_ecsLog.where();
+        ecsLogLine(done);
+        g_ecsLog.close();
         g_dumped = true;
         mgr().setEnabled("ECSDump", false);
     }
@@ -509,13 +522,11 @@ void tickEcsDump(void* player) {
 // re-enable for another window.
 // ============================================================================
 
-constexpr const char* kFlyDebugPath =
-    "/sdcard/Android/data/com.mojang.minecraftpe/files/flydebug.txt";
 constexpr long kFlyDebugTicks = 240;
 
 long g_debugLeft = 0;
 bool g_debugWasFly = false;
-std::uint64_t g_debugFile = 0; // FILE* as uintptr to avoid <cstdio> FILE leak
+debugfiles::PublicLog g_flyLog;
 Vec3 g_debugPreVel{}, g_debugPrePos{};
 bool g_debugHavePre = false;
 
@@ -526,27 +537,21 @@ void flyDebugLine(const char* fmt, ...) {
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     __android_log_print(ANDROID_LOG_INFO, TAG, "%s", buf);
-    if (g_debugFile) {
-        auto* f = reinterpret_cast<FILE*>(g_debugFile);
-        std::fprintf(f, "%s\n", buf);
-        std::fflush(f);
-    }
+    g_flyLog.write(buf);
 }
 
 void tickFlyDebugPre(void* player) {
     if (g_debugLeft <= 0) {
         g_debugLeft = kFlyDebugTicks;
-        // Fresh file each capture.
-        FILE* f = std::fopen(kFlyDebugPath, "w");
-        if (f) g_debugFile = reinterpret_cast<std::uintptr_t>(f);
-        flyDebugLine("FLD-BEGIN tick=%ld mode=%d write=%d h=%.1f glide=%.3f up=%.1f",
+        g_flyLog.open("flydebug.txt");
+        flyDebugLine("FLD-BEGIN tick=%ld mode=%d write=%d h=%.1f glide=%.3f up=%.1f file=%s",
                      g_tick,
                      mgr().enumSetting("Fly", "VerticalMode", 2),
                      mgr().enumSetting("Fly", "WriteMode", 0),
                      mgr().floatSetting("Fly", "HSpeed BPS", 12.0f),
                      mgr().floatSetting("Fly", "Glide", -0.02f),
-                     mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f));
-        if (!g_debugFile) flyDebugLine("FLD-WARN flydebug.txt not writable — logcat only");
+                     mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f),
+                     g_flyLog.where().c_str());
         g_debugWasFly = mgr().enabled("Fly");
     }
     Vec3* vel = velocityPtr(player);
@@ -577,11 +582,8 @@ void tickFlyDebugPost(void* player) {
                  vel ? vel->x : 0.f, vel ? vel->y : 0.f, vel ? vel->z : 0.f,
                  pos.x, pos.y, pos.z, sv);
     if (--g_debugLeft <= 0) {
-        flyDebugLine("FLD-END — send flydebug.txt (logcat tag EClientMelody)");
-        if (g_debugFile) {
-            std::fclose(reinterpret_cast<FILE*>(g_debugFile));
-            g_debugFile = 0;
-        }
+        flyDebugLine("FLD-END file=%s — send it (logcat tag EClientMelody)", g_flyLog.where().c_str());
+        g_flyLog.close();
         mgr().setEnabled("FlyDebug", false);
     }
 }

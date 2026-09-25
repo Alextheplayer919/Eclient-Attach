@@ -148,7 +148,8 @@ ModuleManager::ModuleManager() : modules_{
     {"NoEmoteCooldown", "Remove the emote cooldown gate", "Player", false, true, {}},
 
     // Misc / debug
-    {"ECSDump", "Debug: dump local player's ECS components to logcat (self-disables)", "Misc", true, false, {}},
+    {"ECSDump", "Debug: dump local player's ECS components (2 snapshots, ~2s apart;\nlive value deltas) to logcat + Download/EClient/ecsdump.txt (self-disables)", "Misc", true, false, {}},
+    {"FlyDebug", "Debug: log fly internals per tick (240 ticks, self-disables) to logcat\n+ Download/EClient/flydebug.txt", "Misc", true, false, {}},
 } {}
 
 const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }

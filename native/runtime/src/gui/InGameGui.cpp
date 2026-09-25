@@ -17,6 +17,7 @@
 #include "backends/imgui_impl_android.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "dobby.h"
+#include "bridge/DebugFiles.h"
 #include "bridge/GameBridge.h"
 #include "modules/ModuleManager.h"
 #include "profile/PatchManager.h"
@@ -490,7 +491,10 @@ bool hookSwapBuffers() {
 
 void toggleMenu() { g_menuOpen.store(!g_menuOpen.load()); }
 
-void setJavaVm(JavaVM* vm) { g_javaVm = vm; }
+void setJavaVm(JavaVM* vm) {
+    g_javaVm = vm;
+    eclient_runtime::debugfiles::setJavaVm(vm); // feeds public-Download debug logs
+}
 
 std::uint64_t touchesSeen() { return g_touchesSeen.load(); }
 

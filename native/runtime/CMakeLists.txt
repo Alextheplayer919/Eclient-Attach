@@ -15,6 +15,7 @@ endif()
 
 set(ECLIENT_COMMON_SOURCES
     src/main.cpp
+    src/bridge/DebugFiles.cpp
     src/bridge/GameBridge.cpp
     src/bridge/LoopbackBridge.cpp
     src/memory/ComponentWalk.cpp
@@ -38,6 +39,7 @@ add_library(eclient_host SHARED
     src/host/JniBootstrap.cpp
     src/host/MinecraftHost.cpp
     src/gui/InGameGui.cpp
+    src/bridge/DebugFiles.cpp
     src/bridge/GameBridge.cpp
     src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
