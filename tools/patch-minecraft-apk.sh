@@ -256,6 +256,24 @@ echo "$LOADER_DIR/EClientLoaderProvider.smali"
 echo "$LOADER_DIR/EClientTouchListener.smali"
 echo
 
+# Kotlin module layer (optional): dex-compiled Kotlin source produced by
+# tools/build-kotlin-modules.sh. Injected via the unknown/ passthrough as
+# classes2.dex at APK root — ART's multidex loader picks up root classesN.dex
+# verbatim, and cross-dex references from the loader (classes.dex) are legal.
+KOTLIN_INSTALLED=0
+if [[ -n "${KOTLIN_DEX_FILE:-}" ]] && [[ -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]]; then
+    head -c 4 "$KOTLIN_DEX_FILE" | grep -q "dex" || {
+        echo "ERROR: KOTLIN_DEX_FILE is not a dex file."
+        exit 1
+    }
+    mkdir -p "$DECODED/unknown"
+    cp "$KOTLIN_DEX_FILE" "$DECODED/unknown/classes2.dex"
+    KOTLIN_INSTALLED=1
+    echo "Kotlin module layer installed:"
+    echo "$DECODED/unknown/classes2.dex ($(du -h "$DECODED/unknown/classes2.dex" | cut -f1))"
+    echo
+fi
+
 # ============================================================
 # Install native library
 # ============================================================
@@ -405,6 +423,19 @@ grep -q \
         echo "ERROR: Touch listener smali does not call nativeGuiTouch (multi-pointer ABI)."
         exit 1
     }
+
+if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
+    grep -q \
+        'Lcom/rubidiumclient/modules/ModuleRegistry;->init()V' \
+        "$LOADER_DIR/EClientLoaderProvider.smali" || {
+            echo "ERROR: Kotlin layer was installed but the loader never calls ModuleRegistry.init."
+            exit 1
+        }
+    [[ -f "$DECODED/unknown/classes2.dex" ]] || {
+        echo "ERROR: classes2.dex did not survive the copy."
+        exit 1
+    }
+fi
 
 echo "Loader verified."
 echo

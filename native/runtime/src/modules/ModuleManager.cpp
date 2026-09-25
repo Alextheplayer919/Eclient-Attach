@@ -1,9 +1,11 @@
 #include "modules/ModuleManager.h"
+#include "kotlin/KotlinBridge.h"
 #include "profile/PatchManager.h"
 
 #include <cmath>
 
 namespace eclient_runtime::modules {
+using eclient_runtime::kotlinbridge::setModuleEnabled;
 
 Setting Setting::boolean(std::string key, bool def, std::string tooltip) {
     Setting s;
@@ -122,6 +124,27 @@ ModuleManager::ModuleManager() : modules_{
             "pos/prevPos directly — fallback for servers that overwrite\n"
             "client velocity."),
     }},
+    // MotionFly — Kotlin-language module (dex-compiled into the APK, runs
+    // through the KotlinBridge). LeHu-style speeds, driven by the SAME ▲/▼
+    // GUI buttons as the C++ Fly. Fly ⇄ MotionFly are mutually exclusive so
+    // they can never fight over the velocity field.
+    {"MotionFly", "LeHu-style motion fly — KOTLIN module (see kotlin-modules/)", "Movement", true, false, {
+        Setting::real("H-BPS", 46.0f, 1.0f, 100.0f,
+            "LeHu 'H Speed BPS' (blocks/second, clamped to sqrt(5.99)/tick)."),
+        Setting::real("Up-BPS", 19.8f, 1.0f, 60.0f,
+            "LeHu 'Up Speed BPS' while holding ▲."),
+        Setting::real("Down-BPS", 46.0f, 1.0f, 60.0f,
+            "LeHu 'Down Speed BPS' while holding ▼."),
+        Setting::real("Glide", -0.02f, -0.3f, 0.0f,
+            "LeHu 'Glide' — idle vertical speed when no button is held\n"
+            "(0 = pin-hover like the C++ Fly)."),
+        Setting::real("Up-H-Factor", 0.55f, 0.1f, 1.0f,
+            "LeHu 'Up H Factor' — horizontal speed multiplier while rising."),
+        Setting::real("Down-H-Factor", 0.55f, 0.1f, 1.0f,
+            "LeHu 'Down H Factor' — multiplier while sinking."),
+        Setting::boolean("FlyButtons", true,
+            "Show the on-screen ▲/▼ buttons (shared with the C++ Fly)."),
+    }, true},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},
     {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
@@ -155,12 +178,32 @@ const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
 
 bool ModuleManager::setEnabled(const std::string& name, bool enabled) {
     std::lock_guard lock(mutex_);
+    // Fly-family exclusivity: these share the velocity field AND the ▲/▼
+    // buttons, so only one may ever be on. Add new pairs here as needed.
+    static const char* const kExclusivePairs[][2] = {
+        {"Fly", "MotionFly"},
+    };
     for (auto& module : modules_) {
         if (module.name != name) continue;
         if (module.memoryBacked) {
             if (!profile::PatchManager::instance().set(name, enabled)) return false;
         }
+        if (enabled) {
+            for (const auto& pair : kExclusivePairs) {
+                std::string other;
+                if (module.name == pair[0]) other = pair[1];
+                else if (module.name == pair[1]) other = pair[0];
+                if (other.empty()) continue;
+                for (auto& o : modules_) {
+                    if (o.name != other || !o.enabled) continue;
+                    if (o.memoryBacked) profile::PatchManager::instance().set(other, false);
+                    o.enabled = false;
+                    if (o.kotlin) kotlinbridge::setModuleEnabled(other.c_str(), false);
+                }
+            }
+        }
         module.enabled = enabled;
+        if (module.kotlin) kotlinbridge::setModuleEnabled(name.c_str(), enabled);
         return true;
     }
     return false;

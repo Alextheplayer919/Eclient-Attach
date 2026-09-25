@@ -3,3 +3,5 @@ local.properties
 *.keystore
 *.jks
 *.keystore
+
+kotlin-modules/build/

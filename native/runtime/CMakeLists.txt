@@ -18,6 +18,7 @@ set(ECLIENT_COMMON_SOURCES
     src/bridge/DebugFiles.cpp
     src/bridge/GameBridge.cpp
     src/bridge/LoopbackBridge.cpp
+    src/kotlin/KotlinBridge.cpp
     src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
     src/modules/FlyInput.cpp
@@ -42,6 +43,7 @@ add_library(eclient_host SHARED
     src/gui/InGameGui.cpp
     src/bridge/DebugFiles.cpp
     src/bridge/GameBridge.cpp
+    src/kotlin/KotlinBridge.cpp
     src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
     src/modules/FlyInput.cpp

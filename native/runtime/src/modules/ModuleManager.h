@@ -51,6 +51,10 @@ struct ModuleState {
     bool enabled{false};
     bool memoryBacked{false};
     std::vector<Setting> settings;
+    // Implementation lives in the dex-compiled Kotlin layer (kotlin-modules/):
+    // the native toggle is mirrored into the Kotlin ModuleRegistry via the
+    // KotlinBridge and its tick is dispatched from the melody tick.
+    bool kotlin{false};
 };
 
 class ModuleManager final {

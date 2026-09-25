@@ -77,6 +77,10 @@
 
     invoke-static {}, Lcom/rubidiumclient/host/EClientLoaderProvider;->nativeTouchReady()V
 
+    # Kotlin module layer: register Kotlin modules (idempotent; class lives
+    # in classes2.dex — injected as smali_classes2 by the patcher).
+    invoke-static {}, Lcom/rubidiumclient/modules/ModuleRegistry;->init()V
+
     :cond_0
     return-void
 .end method

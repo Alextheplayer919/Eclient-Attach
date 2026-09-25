@@ -492,6 +492,21 @@ jobs:
       # PATCH MINECRAFT
       # ============================================================
 
+      # ============================================================
+      # KOTLIN MODULE LAYER
+      # Compile kotlin-modules/ (plain Kotlin) -> classes2.dex; the patch
+      # step injects it via apktool's unknown/ passthrough. C++ modules are
+      # unaffected; the two share the in-game menu and tick.
+      # ============================================================
+
+      - name: Build Kotlin modules to dex
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/build-kotlin-modules.sh
+          tools/build-kotlin-modules.sh
+          echo "KOTLIN_DEX_FILE=$PWD/kotlin-modules/build/classes2.dex" >> "$GITHUB_ENV"
+
       - name: Patch Minecraft APK
         shell: bash
         run: |
