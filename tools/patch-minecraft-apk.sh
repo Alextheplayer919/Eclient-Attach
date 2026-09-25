@@ -257,12 +257,16 @@ echo "$LOADER_DIR/EClientTouchListener.smali"
 echo
 
 # Kotlin module layer (optional): dex-compiled Kotlin source produced by
-# tools/build-kotlin-modules.sh. Injected via the unknown/ passthrough under
-# the NEXT FREE multidex name — Minecraft is already multidex (it ships its
-# own classes2..classesN.dex), and stomping one of those = instant startup
-# crash (the r16 regression). apktool decodes each dex as a smali dir
-# (smali = classes.dex, smali_classes2 = classes2.dex, ...), so the next
-# free index = smali dir count + 1.
+# tools/build-kotlin-modules.sh.
+#
+# r16 lesson #1: Minecraft is already multidex (ships classes2..classesN.dex)
+# — stomping one = instant pre-splash crash. So the dex goes in under the
+# NEXT FREE index: smali dirs decode 1:1 (smali = classes.dex,
+# smali_classes2 = classes2.dex, ...) ⇒ next = dir count + 1.
+# r16 lesson #2: apktool does NOT reliably pack files added to decoded/unknown
+# post-decode — so the injection happens AFTER `apktool b`, appended straight
+# into the unsigned APK zip (before zipalign/apksigner, so the v2 signature
+# covers it).
 KOTLIN_INSTALLED=0
 if [[ -n "${KOTLIN_DEX_FILE:-}" ]] && [[ -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]]; then
     head -c 4 "$KOTLIN_DEX_FILE" | grep -q "dex" || {
@@ -281,11 +285,9 @@ if [[ -n "${KOTLIN_DEX_FILE:-}" ]] && [[ -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]
         echo "ERROR: index $NEXT_INDEX collides with an existing smali dir."
         exit 1
     fi
-    mkdir -p "$DECODED/unknown"
-    cp "$KOTLIN_DEX_FILE" "$DECODED/unknown/$KOTLIN_DEX_NAME"
     KOTLIN_INSTALLED=1
-    echo "Kotlin module layer installed (game already has $SMALI_DIRS dex(es)):"
-    echo "$DECODED/unknown/$KOTLIN_DEX_NAME ($(du -h "$DECODED/unknown/$KOTLIN_DEX_NAME" | cut -f1))"
+    echo "Kotlin module layer staged (game already has $SMALI_DIRS dex(es)):"
+    echo "will append $KOTLIN_DEX_NAME to the unsigned APK after apktool b."
     echo
 fi
 
@@ -446,8 +448,8 @@ if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
             echo "ERROR: Kotlin layer was installed but the loader never calls ModuleRegistry.init."
             exit 1
         }
-    [[ -f "$DECODED/unknown/$KOTLIN_DEX_NAME" ]] || {
-        echo "ERROR: Kotlin dex did not survive the copy."
+    [[ -z "${KOTLIN_DEX_NAME:-}" || ! -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]] && {
+        echo "ERROR: Kotlin dex payload is not staged."
         exit 1
     }
 fi
@@ -535,18 +537,34 @@ ls -lh "$BUILT_APK"
 echo
 
 if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
-    # Final guard: the built APK must contain our dex NEXT to all the game's
-    # original dex files (nothing replaced, exactly one entry added).
-    python3 - "$BUILT_APK" "$KOTLIN_DEX_NAME" <<'PY'
+    # Append the Kotlin dex at APK root under the next free multidex name,
+    # then re-verify: (a) it's present, (b) ALL original game dexes are
+    # still there (exactly one entry added, none replaced).
+    python3 - "$BUILT_APK" "$KOTLIN_DEX_FILE" "$KOTLIN_DEX_NAME" "$NEXT_INDEX" <<'PY'
 import sys, zipfile
-apk, injected = sys.argv[1], sys.argv[2]
+apk, dex_src, dex_name, next_idx = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 with zipfile.ZipFile(apk) as z:
     dexes = sorted(n for n in z.namelist()
                    if "/" not in n and n.startswith("classes") and n.endswith(".dex"))
-if injected not in dexes:
-    print(f"ERROR: {injected} missing from built APK — dex list: {dexes}")
+if dex_name in dexes:
+    print(f"ERROR: {dex_name} already exists in the built APK — refusing to overwrite "
+          f"(dex list: {dexes})")
     sys.exit(1)
-print(f"APK dex files ({len(dexes)}): {dexes}")
+expected = ["classes.dex"] + [f"classes{i}.dex" for i in range(2, next_idx)]
+if dexes != expected:
+    print(f"ERROR: unexpected baseline dex layout {dexes} (expected {expected})")
+    sys.exit(1)
+with open(dex_src, "rb") as f:
+    payload = f.read()
+assert payload[:4] == b"dex\n", "KOTLIN_DEX_FILE is not a dex"
+with zipfile.ZipFile(apk, "a", zipfile.ZIP_DEFLATED) as z:
+    z.writestr(dex_name, payload)
+with zipfile.ZipFile(apk) as z:
+    final = sorted(n for n in z.namelist()
+                   if "/" not in n and n.startswith("classes") and n.endswith(".dex"))
+assert final == expected + [dex_name], f"post-append layout wrong: {final}"
+print(f"Kotlin dex appended as {dex_name} ({len(payload)/1024/1024:.1f} MB).")
+print(f"APK dex files ({len(final)}): {final}")
 PY
 fi
 
