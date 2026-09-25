@@ -1,6 +1,7 @@
 #include "modules/MelodyModules.h"
 
 #include "bridge/DebugFiles.h"
+#include "kotlin/KotlinBridge.h"
 #include "memory/ComponentWalk.h"
 #include "memory/NativeMemory.h"
 #include "modules/FlyInput.h"
@@ -238,18 +239,24 @@ void tickKillAura2(void* player) {
     const float effectiveRange = std::max(range, wallRange);
     const std::uint32_t myTypeId = (getEntityTypeId && playersOnly) ? getEntityTypeId(player) : 0;
 
-    // Gather + sort targets Melody-style (nearest first).
-    std::vector<std::pair<float, void*>> targets;
-    for (void* actor : getRuntimeActors(level)) {
-        if (!killauraTargetValid(player, actor, myPos, effectiveRange, playersOnly, myTypeId)) continue;
-        if (useHurttime && recentlyHurt(actor, getHealth(actor))) continue;
-        Vec3 pos{};
-        getPosition(actor, pos);
-        const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
-        targets.emplace_back(dx * dx + dy * dy + dz * dz, actor);
+    // FPS: full entity enumeration (virtual calls over every actor) runs
+    // every 2nd tick; the sorted target list is reused in between. At 20 tps
+    // that is a 10 Hz target refresh — faster than any legit delay setting.
+    static std::vector<std::pair<float, void*>> targets;
+    static int scanDivider = 0;
+    if ((scanDivider++ & 0x1) == 0) {
+        targets.clear();
+        for (void* actor : getRuntimeActors(level)) {
+            if (!killauraTargetValid(player, actor, myPos, effectiveRange, playersOnly, myTypeId)) continue;
+            if (useHurttime && recentlyHurt(actor, getHealth(actor))) continue;
+            Vec3 pos{};
+            getPosition(actor, pos);
+            const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
+            targets.emplace_back(dx * dx + dy * dy + dz * dz, actor);
+        }
+        std::sort(targets.begin(), targets.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
     }
-    std::sort(targets.begin(), targets.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
 
     if (++g_attackTimer <= delay) return;
     if (targets.empty()) return;
@@ -674,6 +681,10 @@ void onNormalTick(void* localPlayer) {
         flyinput::reset();
         g_flyPrevOut = {0.0f, 0.0f, 0.0f};
     }
+    // Kotlin-language modules (MotionFly & future): one JNI dispatch per tick.
+    // Shares the tick's world-stability gate, so Kotlin modules never touch
+    // memory while the world is still rebuilding.
+    if (kotlinbridge::anyKotlinModuleEnabled()) kotlinbridge::dispatchTick(localPlayer);
     if (debug) tickFlyDebugPost(localPlayer);
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
 }

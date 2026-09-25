@@ -5,6 +5,7 @@
 #include <jni.h>
 
 #include "gui/InGameGui.h"
+#include "kotlin/KotlinBridge.h"
 
 namespace eclient_runtime::input {
 namespace {
@@ -85,9 +86,12 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_host_EClientLoader
 
 // Called by the host loader once the native library is loaded: marks the
 // input route ready. Idempotent (also driven from MinecraftHost startup).
+// Also the Kotlin module binder point — a Java-initiated call, so FindClass
+// here uses the application classloader and can see our dex classes.
 extern "C" JNIEXPORT void JNICALL Java_com_rubidiumclient_host_EClientLoaderProvider_nativeTouchReady(
-    JNIEnv* /*env*/, jclass /*clazz*/) {
+    JNIEnv* env, jclass /*clazz*/) {
     initialize();
+    kotlinbridge::bind(env);
 }
 
 } // namespace eclient_runtime::input

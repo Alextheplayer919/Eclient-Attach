@@ -148,7 +148,8 @@ void drawModuleList() {
                 // Larger hit target for touch.
                 ImGui::PushID(module->name.c_str());
                 if (inert) ImGui::BeginDisabled(true);
-                if (ImGui::Checkbox(module->name.c_str(), &enabled)) {
+                const std::string label = module->kotlin ? module->name + "  [Kotlin]" : module->name;
+                if (ImGui::Checkbox(label.c_str(), &enabled)) {
                     if (!mgr.setEnabled(module->name, enabled)) {
                         enabled = module->enabled;
                         __android_log_print(ANDROID_LOG_WARN, TAG,
@@ -290,7 +291,11 @@ void drawToggleBar() {
 
 bool flyButtonsActive() {
     auto& mgr = eclient_runtime::modules::ModuleManager::instance();
-    return mgr.enabled("Fly") && mgr.boolSetting("Fly", "FlyButtons", true);
+    // The C++ Fly and the Kotlin MotionFly share the same ▲/▼ buttons
+    // (they are mutually exclusive, so at most one is ever enabled).
+    if (mgr.enabled("Fly") && mgr.boolSetting("Fly", "FlyButtons", true)) return true;
+    if (mgr.enabled("MotionFly") && mgr.boolSetting("MotionFly", "FlyButtons", true)) return true;
+    return false;
 }
 
 void drawFlyButtons(int surfaceW, int surfaceH) {
@@ -419,6 +424,14 @@ void drainTouchQueue(ImGuiIO& io, float scaleX, float scaleY) {
     }
 }
 
+// Overlay frame throttle state: while the menu is CLOSED the toggle bar and
+// fly buttons are nearly static, so refresh them every Nth frame instead of
+// tearing the game's GL state save/restore down every single frame.
+std::uint32_t g_overlayFrame = 0;
+EGLSurface g_cachedSurface = EGL_NO_SURFACE;
+EGLint g_cachedWidth = 0;
+EGLint g_cachedHeight = 0;
+
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     if (g_ready.load()) {
         std::unique_lock<std::mutex> frameLock(g_frameMutex, std::try_to_lock);
@@ -436,8 +449,18 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
 
             EGLint width = 0;
             EGLint height = 0;
-            eglQuerySurface(display, surface, EGL_WIDTH, &width);
-            eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+            // eglQuerySurface is a round-trip into the driver — cache it per
+            // surface instead of asking every frame.
+            if (surface == g_cachedSurface && g_cachedWidth > 0) {
+                width = g_cachedWidth;
+                height = g_cachedHeight;
+            } else {
+                eglQuerySurface(display, surface, EGL_WIDTH, &width);
+                eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+                g_cachedSurface = surface;
+                g_cachedWidth = width;
+                g_cachedHeight = height;
+            }
             const int physW = g_physicalWidth.load();
             const int physH = g_physicalHeight.load();
             const bool needsScale = physW > 0 && physH > 0 && (physW != width || physH != height);
@@ -445,6 +468,16 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
             const float scaleY = needsScale ? static_cast<float>(height) / static_cast<float>(physH) : 1.0f;
             g_scaleX.store(scaleX);
             g_scaleY.store(scaleY);
+
+            // ── FPS: with the menu closed, refresh the (nearly static)
+            // overlay every 4th frame only. Skips the whole ImGui frame —
+            // NewFrame/Render, vertex uploads and the FBO+viewport
+            // save/restore that stalls the game's render targets on tiled
+            // phone GPUs. Menu open → full-rate as before.
+            const bool menuOpenNow = g_menuOpen.load();
+            if (!menuOpenNow && ((++g_overlayFrame & 0x3) != 0)) {
+                return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
+            }
 
             if (width > 0 && height > 0) {
                 ensureImGuiInitialized();
