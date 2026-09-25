@@ -2,6 +2,7 @@
 
 #include "bridge/DebugFiles.h"
 #include "memory/ComponentWalk.h"
+#include "memory/NativeMemory.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 
@@ -79,6 +80,63 @@ std::uint32_t entityIdOf(void* actor) {
     return *reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(actor) + EntityIdField);
 }
 
+// ---------------------------------------------------------------------------
+// World-stability gate.
+//
+// During world/server JOIN the LocalPlayer exists but its state vector, ECS
+// registry and derived structures are still being torn down/rebuilt. Any
+// deref in that window (fly debug, ECS walk, aura scans) segfaults the game.
+//
+// heavyPlayerSafe() performs only GUARDED reads (NativeMemory::read validates
+// against /proc/self/maps before copying) and plausibility-checks the state
+// vector. The result is latched: while latched-open we do cheap checks only;
+// a huge position jump (teleport / dimension change / join) force-closes the
+// latch so everything re-validates instead of crashing on the half-built data.
+// ---------------------------------------------------------------------------
+
+bool g_stableLatch = false;
+long g_lastStableCheck = -1000;
+long g_tick = 0; // declared early: the world-stability gate reads it
+
+bool heavyPlayerSafe(void* player) {
+    using memory::NativeMemory;
+    auto& mem = NativeMemory::instance();
+    std::uintptr_t sv = 0;
+    if (!mem.read(reinterpret_cast<std::uintptr_t>(player) + GetPositionField, &sv, sizeof(sv)) || !sv)
+        return false;
+    float buf[6]{}; // pos + prevPos
+    if (!mem.read(sv, buf, sizeof(buf))) return false;
+    for (float v : buf) if (!std::isfinite(v)) return false;
+    if (std::fabs(buf[0]) > 1.0e7f || std::fabs(buf[2]) > 1.0e7f || std::fabs(buf[1]) > 1.0e5f)
+        return false;
+    return true;
+}
+
+// Called once per normalTick before any module code. Returns true when module
+// logic may touch player memory; false = this tick is a join window (skip).
+bool worldReady(void* player) {
+    if (!player) { g_stableLatch = false; return false; }
+    if (g_stableLatch) {
+        if (g_tick - g_lastStableCheck >= 40) {
+            g_lastStableCheck = g_tick;
+            g_stableLatch = heavyPlayerSafe(player);
+            return g_stableLatch;
+        }
+        // Cheap hot-path check: null gates + finite values after plain deref.
+        void* sv = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField);
+        if (!sv) { g_stableLatch = false; return false; }
+        const float* p = static_cast<const float*>(sv);
+        if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2])) {
+            g_stableLatch = false;
+            return false;
+        }
+        return true;
+    }
+    g_stableLatch = heavyPlayerSafe(player);
+    g_lastStableCheck = g_tick;
+    return g_stableLatch;
+}
+
 // ============================================================================
 // KillAura2 — full Melody KillAura port (source: MelodyV2 Modules/Combat/
 // Killaura.cpp + Utils/TargetUtils.cpp; settings cloned 1:1 into ModuleManager)
@@ -121,7 +179,6 @@ struct HurtState {
 };
 
 std::unordered_map<void*, HurtState> g_hurtState;
-long g_tick = 0;
 int g_attackTimer = 0;
 
 bool recentlyHurt(void* actor, int health) {
@@ -292,6 +349,7 @@ void tickFly(void* player) {
         if ((dx * dx + dy * dy + dz * dz) > 4.5f * 4.5f) {
             g_lastFlyPos = pos;
             g_flyPrevOut = {0.0f, 0.0f, 0.0f};
+            g_stableLatch = false; // teleport/join → re-validate next tick
             return;
         }
     }
@@ -619,6 +677,17 @@ bool initialize(std::uintptr_t minecraftBase) {
 void onNormalTick(void* localPlayer) {
     if (!localPlayer) return;
     ++g_tick;
+
+    // Stability gate: skip ALL memory-touching modules while the world/server
+    // join rebuilds the actor structures (this was the join-crash root cause).
+    if (!worldReady(localPlayer)) {
+        // Let a disabled ECSDump re-arm so the next enable starts fresh.
+        if (!mgr().enabled("ECSDump")) { g_dumped = false; g_dumpStartTick = -1; }
+        g_haveLastFlyPos = false;
+        g_jetSustainTicks = 0;
+        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
+        return;
+    }
 
     // Prune hurt-state map of stale pointers occasionally.
     if ((g_tick & 0x3FF) == 0 && g_hurtState.size() > 512) g_hurtState.clear();
