@@ -4,7 +4,6 @@
 #include "kotlin/KotlinBridge.h"
 #include "memory/ComponentWalk.h"
 #include "memory/NativeMemory.h"
-#include "modules/FlyInput.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 
@@ -301,117 +300,6 @@ void tickKillAura2(void* player) {
 }
 
 // ============================================================================
-// Fly — E-Client's OWN fly, built from scratch for touch (no module ports).
-//
-// Why this works on mobile where ported keyboard flies never did:
-//   * We own the ENTIRE touch pipeline (view-layer listener → JNI → GUI), so
-//     instead of inventing keyboard surrogates (jetpack impulse residue, etc.)
-//     we render REAL ▲/▼ hold buttons and read them like hardware keys:
-//         hold ▲  → velocity.y = +V-Speed   (ascend)
-//         hold ▼  → velocity.y = −V-Speed   (descend)
-//         neither → velocity.y =  0.0f      (TRUE hover, pinned exactly —
-//             no glide creep means there is nothing for an anticheat to
-//             periodically correct, so no lagback stutter)
-//   * Button touches are CONSUMED at our injection point before the game sees
-//     them (gesture-latched per pointer id), so holding ▲ never spins the
-//     camera; multi-pointer tracking means a second thumb can steer the
-//     joystick / look around while one finger holds ▲.
-//   * Horizontal: no key readback exists on touch, so direction comes from
-//     measuring the vanilla input acceleration residue
-//     (vel_now − AIR_FRICTION·our_prev_write), normalized and projected at
-//     H-Speed — the joystick IS vanilla keyboard-equivalent input, so this
-//     reads the same move vector the game itself produces.
-//   * Anti-rubberband skip (server teleport >4.5 blk) + world-stability gate
-//     stay as crash insurance; WriteMode=Position is the server-fallback.
-// ============================================================================
-
-Vec3 g_flyPrevOut{};
-Vec3 g_lastFlyPos{};
-bool g_haveLastFlyPos = false;
-
-void tickFly(void* player) {
-    Vec3* vel = velocityPtr(player);
-    if (!vel) return;
-
-    const float rawX = vel->x, rawY = vel->y, rawZ = vel->z;
-    if (!std::isfinite(rawX) || !std::isfinite(rawY) || !std::isfinite(rawZ)) return;
-
-    // Plausibility gate on ALL derived-layout writes (per port policy).
-    if (std::fabs(rawX) > 100.0f || std::fabs(rawY) > 100.0f || std::fabs(rawZ) > 100.0f) return;
-
-    // Anti-rubberband: skip a tick where the server teleported us so we never
-    // fight position corrections (prev-write reset to avoid a stale residue).
-    Vec3 pos{};
-    if (!getPosition(player, pos)) return;
-    if (g_haveLastFlyPos) {
-        const float dx = pos.x - g_lastFlyPos.x;
-        const float dy = pos.y - g_lastFlyPos.y;
-        const float dz = pos.z - g_lastFlyPos.z;
-        if ((dx * dx + dy * dy + dz * dz) > 4.5f * 4.5f) {
-            g_lastFlyPos = pos;
-            g_flyPrevOut = {0.0f, 0.0f, 0.0f};
-            g_stableLatch = false; // teleport/join → re-validate next tick
-            return;
-        }
-    }
-    g_haveLastFlyPos = true;
-    g_lastFlyPos = pos;
-
-    // Settings (registered in ModuleManager).
-    const float hSpeed = mgr().floatSetting("Fly", "H-Speed", 1.0f);
-    const float vSpeed = mgr().floatSetting("Fly", "V-Speed", 0.5f);
-
-    // Horizontal: subtract what WE wrote last tick (scaled by air friction)
-    // from what the game has now; the residue is pure vanilla input
-    // acceleration — joystick direction on touch screens.
-    constexpr float AIR_FRICTION = 0.98f;
-    float ax = rawX - AIR_FRICTION * g_flyPrevOut.x;
-    float az = rawZ - AIR_FRICTION * g_flyPrevOut.z;
-    ax = std::clamp(ax, -0.35f, 0.35f); // physical accel bound, kills garbage
-    az = std::clamp(az, -0.35f, 0.35f);
-    const float amag = std::sqrt(ax * ax + az * az);
-
-    // Vertical — E-Client's own fly: hold ▲ = ascend, hold ▼ = descend,
-    // neither = true hover pinned at exactly 0 (no glide creep ⇒ nothing for
-    // an anticheat to periodically correct ⇒ no lagback stutter).
-    const bool upHeld = flyinput::heldUp();
-    const bool downHeld = flyinput::heldDown();
-    float outY = 0.0f;
-    if (upHeld && !downHeld) outY = vSpeed;
-    else if (downHeld && !upHeld) outY = -vSpeed;
-
-    float outX = 0.0f, outZ = 0.0f;
-    constexpr float DEADZONE = 0.004f;
-    if (amag > DEADZONE) {
-        outX = ax / amag * hSpeed;
-        outZ = az / amag * hSpeed;
-    }
-
-    if (!std::isfinite(outX) || !std::isfinite(outY) || !std::isfinite(outZ)) return;
-
-    const int writeMode = mgr().enumSetting("Fly", "WriteMode", 0);
-    if (writeMode == 1) {
-        // Position mode: move the state-vector position (and prevPos by the
-        // same delta so render interpolation stays clean), zero velocity.
-        if (auto* sv = static_cast<float*>(
-                *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField))) {
-            sv[0] += outX; sv[1] += outY; sv[2] += outZ; // pos     @+0x00
-            sv[3] += outX; sv[4] += outY; sv[5] += outZ; // prevPos @+0x0C
-        }
-        vel->x = 0.0f; vel->y = 0.0f; vel->z = 0.0f;
-        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
-        g_lastFlyPos = {pos.x + outX, pos.y + outY, pos.z + outZ};
-        return;
-    }
-
-    // source: localPlayer->lerpMotion(moveVec);
-    vel->x = outX;
-    vel->y = outY;
-    vel->z = outZ;
-    g_flyPrevOut = {outX, outY, outZ};
-}
-
-// ============================================================================
 // ECSDump — one-shot discovery of the local player's ECS component layout.
 //
 // Walks every pool in the player's registry, resolves the player element the
@@ -549,81 +437,6 @@ void tickEcsDump(void* player) {
     }
 }
 
-// ============================================================================
-// FlyDebug — per-tick telemetry to answer *why* the fly misbehaves.
-// Writes 240 ticks (~12 s) of raw velocity in / fly write out / re-read
-// verify / resulting position to logcat AND to
-//   /sdcard/Android/data/com.mojang.minecraftpe/files/flydebug.txt
-// so it can be pulled with any file manager. Self-disables when done;
-// re-enable for another window.
-// ============================================================================
-
-constexpr long kFlyDebugTicks = 240;
-
-long g_debugLeft = 0;
-bool g_debugWasFly = false;
-debugfiles::PublicLog g_flyLog;
-Vec3 g_debugPreVel{}, g_debugPrePos{};
-bool g_debugHavePre = false;
-
-void flyDebugLine(const char* fmt, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, fmt);
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "%s", buf);
-    g_flyLog.write(buf);
-}
-
-void tickFlyDebugPre(void* player) {
-    if (g_debugLeft <= 0) {
-        g_debugLeft = kFlyDebugTicks;
-        g_flyLog.open("flydebug.txt");
-        flyDebugLine("FLD-BEGIN tick=%ld h=%.2f v=%.2f buttons=%d write=%d up=%d down=%d file=%s",
-                     g_tick,
-                     mgr().floatSetting("Fly", "H-Speed", 1.0f),
-                     mgr().floatSetting("Fly", "V-Speed", 0.5f),
-                     mgr().boolSetting("Fly", "FlyButtons", true) ? 1 : 0,
-                     mgr().enumSetting("Fly", "WriteMode", 0),
-                     flyinput::heldUp() ? 1 : 0,
-                     flyinput::heldDown() ? 1 : 0,
-                     g_flyLog.where().c_str());
-        g_debugWasFly = mgr().enabled("Fly");
-    }
-    Vec3* vel = velocityPtr(player);
-    Vec3 pos{};
-    getPosition(player, pos);
-    if (vel) g_debugPreVel = *vel;
-    g_debugPrePos = pos;
-    g_debugHavePre = vel != nullptr;
-
-    const bool flyNow = mgr().enabled("Fly");
-    if (flyNow != g_debugWasFly) {
-        flyDebugLine("FLD-TOGGLE fly=%s t=%ld", flyNow ? "ON" : "off", g_tick);
-        g_debugWasFly = flyNow;
-    }
-}
-
-void tickFlyDebugPost(void* player) {
-    if (g_debugLeft <= 0) return;
-    Vec3* vel = velocityPtr(player);
-    Vec3 pos{};
-    getPosition(player, pos);
-    void* sv = vel ? *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField)
-                   : nullptr;
-    flyDebugLine("FLD t=%ld pre=(%.3f,%.3f,%.3f) out=(%.3f,%.3f,%.3f) post=(%.3f,%.3f,%.3f) pos=(%.2f,%.2f,%.2f) sv=%p",
-                 g_tick,
-                 g_debugPreVel.x, g_debugPreVel.y, g_debugPreVel.z,
-                 g_flyPrevOut.x, g_flyPrevOut.y, g_flyPrevOut.z,
-                 vel ? vel->x : 0.f, vel ? vel->y : 0.f, vel ? vel->z : 0.f,
-                 pos.x, pos.y, pos.z, sv);
-    if (--g_debugLeft <= 0) {
-        flyDebugLine("FLD-END file=%s — send it (logcat tag EClientMelody)", g_flyLog.where().c_str());
-        g_flyLog.close();
-        mgr().setEnabled("FlyDebug", false);
-    }
-}
 
 void resetState() {
     g_hurtState.clear();
@@ -631,8 +444,6 @@ void resetState() {
     g_dumpProbes.clear();
     g_dumpStartTick = -1;
     g_dumped = false;
-    g_debugLeft = 0;
-    g_debugHavePre = false;
 }
 
 } // namespace
@@ -649,7 +460,7 @@ bool initialize(std::uintptr_t minecraftBase) {
 
     resetState();
     __android_log_print(ANDROID_LOG_INFO, TAG,
-        "Melody ports ready: KillAura2 + Fly(velocity) + ECSDump");
+        "PvP modules ready: KillAura2 + ECSDump (Fly/FlyDebug removed in r25)");
     return true;
 }
 
@@ -662,30 +473,19 @@ void onNormalTick(void* localPlayer) {
     if (!worldReady(localPlayer)) {
         // Let a disabled ECSDump re-arm so the next enable starts fresh.
         if (!mgr().enabled("ECSDump")) { g_dumped = false; g_dumpStartTick = -1; }
-        g_haveLastFlyPos = false;
-        flyinput::reset();
-        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
         return;
     }
 
     // Prune hurt-state map of stale pointers occasionally.
     if ((g_tick & 0x3FF) == 0 && g_hurtState.size() > 512) g_hurtState.clear();
 
-    const bool debug = mgr().enabled("FlyDebug");
-    if (debug) tickFlyDebugPre(localPlayer);
     if (mgr().enabled("KillAura2")) tickKillAura2(localPlayer);
-    if (mgr().enabled("Fly")) {
-        tickFly(localPlayer);
-    } else {
-        g_haveLastFlyPos = false;
-        flyinput::reset();
-        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
-    }
-    // Kotlin-language modules (MotionFly & future): one JNI dispatch per tick.
-    // Shares the tick's world-stability gate, so Kotlin modules never touch
-    // memory while the world is still rebuilding.
+
+    // Kotlin-language modules (Hitbox / AutoTotem today, the PvP bot next): one
+    // JNI dispatch per tick. Shares this tick's world-stability gate, so Kotlin
+    // modules never touch memory while the world is still rebuilding.
     if (kotlinbridge::anyKotlinModuleEnabled()) kotlinbridge::dispatchTick(localPlayer);
-    if (debug) tickFlyDebugPost(localPlayer);
+
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
 }
 

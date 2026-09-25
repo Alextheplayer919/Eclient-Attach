@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <string>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -90,6 +91,14 @@ JNIEnv* jniEnv() {
 }
 } // namespace
 
+// ── Kotlin tick gate ───────────────────────────────────────────────────────
+// Written from the Kotlin side (NativeBridge.setKotlinTickActive) whenever its
+// enable state changes, read once per game tick by the native game-thread hook.
+// Before r25 this was inferred by scanning the native ModuleManager for mirror
+// entries with kotlin=true — i.e. a duplicated copy of the Kotlin registry's
+// state, which is exactly how the two registries drifted apart. One writer now.
+std::atomic<bool> g_kotlinTickActive{false};
+
 void setJavaVm(JavaVM* vm) { g_vm = vm; }
 
 void bind(JNIEnv* env) {
@@ -150,9 +159,8 @@ void dispatchTick(void* localPlayer) {
 }
 
 bool anyKotlinModuleEnabled() {
-    auto& mgr = eclient_runtime::modules::ModuleManager::instance();
-    for (const auto& m : mgr.all()) if (m.kotlin && m.enabled) return true;
-    return false;
+    // Cached answer from the Kotlin registry (see g_kotlinTickActive).
+    return g_kotlinTickActive.load();
 }
 
 } // namespace eclient_runtime::kotlinbridge
@@ -266,6 +274,82 @@ JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_setFullB
     JNIEnv* /*env*/, jobject /*self*/, jboolean enabled) {
     return eclient_runtime::profile::PatchManager::instance()
                    .set("FullBright", enabled == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Native module surface for the Kotlin Views UI (r25)
+//
+// The panel fetches the C++ module list in ONE call per redraw instead of an
+// N-call ping-pong. Line format, tab-separated:
+//     name \t category \t enabled(0|1) \t memoryBacked(0|1) \t description
+// The description is flattened to a single line (the UI has no multi-line rows).
+// ════════════════════════════════════════════════════════════════════════════
+
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeListModules(
+    JNIEnv* env, jobject /*self*/) {
+    using eclient_runtime::modules::ModuleManager;
+    std::string out;
+    for (const auto& m : ModuleManager::instance().all()) {
+        out += m.name;
+        out += '\t';
+        out += m.category;
+        out += '\t';
+        out += m.enabled ? "1" : "0";
+        out += '\t';
+        out += m.memoryBacked ? "1" : "0";
+        out += '\t';
+        for (char c : m.description) out += (c == '\n' || c == '\t') ? ' ' : c;
+        out += '\n';
+    }
+    return env->NewStringUTF(out.c_str());
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeModuleEnabled(
+    JNIEnv* env, jobject /*self*/, jstring name) {
+    using eclient_runtime::modules::ModuleManager;
+    if (!name) return JNI_FALSE;
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    if (!n) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return JNI_FALSE;
+    }
+    const bool on = ModuleManager::instance().enabled(n);
+    env->ReleaseStringUTFChars(name, n);
+    return on ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeSetModuleEnabled(
+    JNIEnv* env, jobject /*self*/, jstring name, jboolean enabled) {
+    using eclient_runtime::modules::ModuleManager;
+    if (!name) return JNI_FALSE;
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    if (!n) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return JNI_FALSE;
+    }
+    // Returns false when the layer refuses — for a memory-backed module that
+    // means the patch profile was not validated, and the UI must show that
+    // instead of a switch that silently lies.
+    const bool ok = ModuleManager::instance().setEnabled(n, enabled == JNI_TRUE);
+    env->ReleaseStringUTFChars(name, n);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativePatchStatus(
+    JNIEnv* env, jobject /*self*/) {
+    using eclient_runtime::profile::PatchManager;
+    auto& pm = PatchManager::instance();
+    std::string s = pm.ready() ? "patches: VALIDATED" : "patches: NOT VALIDATED";
+    if (!pm.ready()) {
+        const std::string why = pm.status();
+        if (!why.empty()) { s += " ("; s += why; s += ")"; }
+    }
+    return env->NewStringUTF(s.c_str());
+}
+
+JNIEXPORT void JNICALL Java_com_rubidiumclient_modules_NativeBridge_setKotlinTickActive(
+    JNIEnv* /*env*/, jobject /*self*/, jboolean active) {
+    eclient_runtime::kotlinbridge::g_kotlinTickActive.store(active == JNI_TRUE);
 }
 
 } // extern "C"

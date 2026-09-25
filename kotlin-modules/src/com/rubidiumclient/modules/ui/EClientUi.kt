@@ -2,9 +2,12 @@ package com.rubidiumclient.modules.ui
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -12,12 +15,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import com.rubidiumclient.modules.BoolSetting
 import com.rubidiumclient.modules.EnumSetting
 import com.rubidiumclient.modules.FloatSetting
@@ -25,146 +28,208 @@ import com.rubidiumclient.modules.IntSetting
 import com.rubidiumclient.modules.KSetting
 import com.rubidiumclient.modules.KotlinModule
 import com.rubidiumclient.modules.ModuleRegistry
+import com.rubidiumclient.modules.NativeBridge
 
 /**
- * The in-game overlay, REBUILT (r24) on Android's WindowManager after it
- * became clear that attaching views into Minecraft's own window can never
- * be made touch-safe (the game's input co-exists in the same dispatch tree;
- * any flag mistake = dead game input; any reorder = chip "under the game").
+ * ═══ E-Client overlay — r25, rebuilt from scratch, dead simple ═══
  *
- * The canonical in-process overlay is THREE SEPARATE WINDOWS, each with the
- * exact flags it needs and nothing more:
+ * WHY THIS FILE WAS REWRITTEN
  *
- *   1. chip window    — tiny, draggable. FLAG_NOT_TOUCH_MODAL ⇒ every touch
- *      that does NOT land on the chip falls through to Minecraft by
- *      construction (WindowManager routes it to the window behind). It
- *      physically cannot block the game.
- *   2. fly window     — same deal for the ▲/▼ column.
- *   3. panel window   — full-screen, added ONLY while the menu is open and
- *      REMOVED the moment it closes. "Forgot to stop absorbing touches" is
- *      structurally impossible: the absorber physically leaves the screen.
+ * The r24 overlay could kill game input the moment the menu opened. The cause
+ * was structural, not a typo:
  *
- * Windows are TYPE_APPLICATION_PANEL anchored to the activity token — they
- * sit above the game window by type; "slides under the game" is dead too.
+ *   * the menu window was MATCH_PARENT with NO FLAG_NOT_TOUCH_MODAL — i.e. a
+ *     full-screen, window-modal surface that swallowed EVERY touch on the
+ *     device for as long as it existed, and
+ *   * `attach()` early-returned when the same activity resumed, so if the
+ *     framework tore the sub-windows down (pause / background / rotation) the
+ *     overlay's Java references survived while the real windows did not — the
+ *     overlay could neither render nor be removed, and the game stayed deaf.
+ *
+ * The r25 rules that make that class of bug impossible:
+ *
+ *   1. NOTHING here is ever full-screen and nothing is ever modal. The chip is
+ *      ~96dp; the panel is a fixed ~320dp card. Every window carries
+ *      FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL, so a touch that does not land
+ *      ON a widget belongs to Minecraft. A leaked panel can only ever eat its
+ *      own rectangle — never the screen.
+ *   2. `attach()` ALWAYS rebuilds (no early return). Called on every
+ *      onActivityResumed after the framework may have destroyed our windows.
+ *   3. A 1 Hz watchdog compares the Java references against the real window
+ *      state: a panel that is not attached gets closed, a missing chip gets
+ *      re-added. The two historical bugs ("chip vanishes", "menu eats input")
+ *      are both observable and self-healing instead of silent.
+ *   4. Close paths are explicit and synchronous: the ✕ button, the chip, the
+ *      panic long-press. There is deliberately no tap-outside-to-close, because
+ *      that is what forced the old design to put a full-screen scrim on top of
+ *      the game (rule 1 beats the convenience).
+ *   5. The decor-view OnTouchListener is NOT installed any more (see
+ *      tools/minecraft-host-loader.smali): nothing of ours sits in the game's
+ *      own input path.
+ *
+ * Diagnostics stay on-screen on purpose ("touch #N last=(x,y)"): if a tap ever
+ * fails to register again, it must be visible on the device, not guessable.
+ *
+ * ABI: `attach(Activity)` is invoked by name from the loader smali and must
+ * keep this exact name and signature. Everything else here is private.
  */
 @SuppressLint("ClickableViewAccessibility")
 object EClientUi {
+
+    private const val TAG = "EClientUi"
+
+    // ── palette ───────────────────────────────────────────────────────────
+    private const val COL_CHIP_BG = 0xE6141A22.toInt()
+    private const val COL_PANEL_BG = 0xF210141A.toInt()
+    private const val COL_CARD_BG = 0xFF1A222C.toInt()
+    private const val COL_TEXT = 0xFFD7DEE7.toInt()
+    private const val COL_DIM = 0xFF8A96A3.toInt()
+    private const val COL_ACCENT = 0xFF4C9AFF.toInt()
+    private const val COL_GOOD = 0xFF3FB950.toInt()
+    private const val COL_WARN = 0xFFE3B341.toInt()
+
+    /** Modules the UI hides unless dev mode is on (long-press the title). */
+    private val DEV_ONLY = setOf("ECSDump")
 
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile private var wm: WindowManager? = null
     @Volatile private var activity: Activity? = null
 
-    @Volatile private var chipView: TextView? = null
+    @Volatile private var chip: TextView? = null
     @Volatile private var chipLp: WindowManager.LayoutParams? = null
 
-    @Volatile private var flyView: LinearLayout? = null
-    @Volatile private var flyLp: WindowManager.LayoutParams? = null
+    @Volatile private var panel: View? = null
+    @Volatile private var panelOpen = false
+    @Volatile private var devMode = false
 
-    @Volatile private var panelWin: FrameLayout? = null
-    @Volatile private var paneScroll: ScrollView? = null
+    // ── on-screen diagnostics (the input bug must stay visible) ───────────
+    @Volatile private var panelTouches = 0
+    @Volatile private var chipTouches = 0
+    @Volatile private var lastTouch = "-"
+    @Volatile private var statusLine: TextView? = null
 
-    // ▲/▼ hold state read by Fly/MotionFly on the game tick thread.
-    @Volatile var upHeld: Boolean = false; private set
-    @Volatile var downHeld: Boolean = false; private set
+    // ══════════════════════════════════════════════════════════════════════
+    // Lifecycle
+    // ══════════════════════════════════════════════════════════════════════
 
-    fun flyUpHeld() = upHeld
-    fun flyDownHeld() = downHeld
-
-    // ── entry ─────────────────────────────────────────────────────────
-
+    /**
+     * Called from EClientLoaderProvider.onActivityResumed (smali, by name).
+     * Always rebuilds — never early-returns. See the header for why.
+     */
     @JvmStatic
     fun attach(act: Activity) {
-        val w = act.windowManager ?: return
-        ModuleRegistry.init()
-        ModuleRegistry.bind(act)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            attachOnMain(act)
+        } else {
+            main.post { attachOnMain(act) }
+        }
+    }
 
-        if (activity === act && chipView != null) return // already attached here
-        detachAll() // rotation / new activity instance: old tokens are dead
-        activity = act
-        wm = w
+    private fun attachOnMain(act: Activity) {
+        try {
+            ModuleRegistry.init()
+            ModuleRegistry.bind(act)
 
-        addChipWindow()
-        addFlyWindow()
-
-        ModuleRegistry.onModulesChanged = {
-            main.post {
-                try {
-                    if (panelWin != null) { // menu open → live-rebuild content
-                        val container = panelWin ?: return@post
-                        container.removeAllViews()
-                        paneScroll = buildPane()
-                        container.addView(paneScroll)
-                    }
-                } catch (t: Throwable) {
-                    com.rubidiumclient.modules.NativeBridge.logLine("panel rebuild: $t")
-                }
+            val w = act.windowManager ?: run {
+                log("attach: no WindowManager")
+                return
             }
+
+            removeAllWindows()
+            activity = act
+            wm = w
+            panelOpen = false
+
+            addChip()
+            startWatchdog()
+
+            // Module state can change from anywhere (a switch, the native mirror,
+            // a module disabling itself like ECSDump does) — the open panel
+            // re-reads the truth instead of showing a stale switch.
+            ModuleRegistry.onModulesChanged = { rebuildPanel() }
+
+            log("attach ${act.javaClass.simpleName}: chip=${chip != null} panel=closed " +
+                "input=pass-through")
+        } catch (t: Throwable) {
+            log("attach failed: $t")
         }
-        setFlyButtonsVisible(ModuleRegistry.anyFlyButtonsVisible())
     }
 
-    private fun detachAll() {
-        val w = wm ?: return
-        fun remove(v: View?) {
-            try { if (v != null && v.parent != null) w.removeView(v) }
-            catch (_: Throwable) {}
+    /** Detach everything (activity paused/destroyed, or panic). Safe to repeat. */
+    @JvmStatic
+    fun detach() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            detachOnMain()
+        } else {
+            main.post { detachOnMain() }
         }
-        remove(chipView); chipView = null; chipLp = null
-        remove(flyView); flyView = null; flyLp = null
-        remove(panelWin); panelWin = null; paneScroll = null
-        upHeld = false; downHeld = false
     }
 
-    // ── colors / helpers ──────────────────────────────────────────────
+    private fun detachOnMain() {
+        main.removeCallbacks(watchdog)
+        removeAllWindows()
+        activity = null
+        log("detached")
+    }
+
+    private fun removeAllWindows() {
+        closePanel()
+        removeChip()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Window helpers
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun ctx(): Context =
+        activity ?: throw IllegalStateException("overlay not attached")
 
     private fun dp(v: Int): Int =
         (v * android.content.res.Resources.getSystem().displayMetrics.density).toInt()
 
+    private fun screenW() = ctx().resources.displayMetrics.widthPixels
+    private fun screenH() = ctx().resources.displayMetrics.heightPixels
+
     private fun rounded(color: Int, radiusDp: Float): GradientDrawable =
         GradientDrawable().apply {
             setColor(color)
-            cornerRadius = (radiusDp *
-                android.content.res.Resources.getSystem().displayMetrics.density)
+            cornerRadius = radiusDp *
+                android.content.res.Resources.getSystem().displayMetrics.density
         }
-
-    private fun ctx(): android.content.Context =
-        activity ?: throw IllegalStateException("not attached")
 
     private fun label(text: String, sp: Float, color: Int, bold: Boolean = false) =
         TextView(ctx()).apply {
             this.text = text
             textSize = sp
             setTextColor(color)
-            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+            if (bold) setTypeface(typeface, Typeface.BOLD)
         }
 
-    private fun uiPrefs() =
-        activity?.applicationContext?.getSharedPreferences("eclient_ui", 0)
-
-    private fun panelLp(): WindowManager.LayoutParams {
-        val a = activity!!
-        return WindowManager.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
-            // Modal within its area (whole screen): absorbs everything while
-            // open — closed = GONE = physically not there.
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply { token = a.window.attributes.token }
+    private fun toast(msg: String, long: Boolean = false) {
+        try {
+            Toast.makeText(ctx(), msg, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+        } catch (_: Throwable) {
+        }
     }
 
+    private fun log(line: String) {
+        NativeBridge.logLine("$TAG: $line")
+    }
+
+    /**
+     * The one WindowManager.LayoutParams recipe used by every widget window.
+     * NOT_FOCUSABLE  → keys/back stay with the game, we never take window focus.
+     * NOT_TOUCH_MODAL→ touches outside this widget are dispatched to the game.
+     */
     private fun widgetLp(x: Int, y: Int): WindowManager.LayoutParams {
-        val a = activity!!
+        val a = activity ?: throw IllegalStateException("overlay not attached")
         return WindowManager.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
-            // THE fix: only touches landing on this widget are consumed;
-            // everything else passes through to the game window behind.
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             token = a.window.attributes.token
@@ -174,361 +239,432 @@ object EClientUi {
         }
     }
 
-    private fun screenW() = ctx().resources.displayMetrics.widthPixels
-    private fun screenH() = ctx().resources.displayMetrics.heightPixels
+    private fun uiPrefs() =
+        activity?.applicationContext?.getSharedPreferences("eclient_ui", 0)
 
-    // ── window 1: the chip ────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════
+    // Window 1 — the chip (always present while attached)
+    // ══════════════════════════════════════════════════════════════════════
 
-    private fun addChipWindow() {
-        val p = uiPrefs()
-        val lp = widgetLp(
-            p?.getInt("chip_x", dp(12)) ?: dp(12),
-            p?.getInt("chip_y", dp(48)) ?: dp(48)
-        )
-        val chip = TextView(ctx()).apply {
-            text = "E-Client"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            gravity = Gravity.CENTER
-            background = rounded(0xCC1E2A38.toInt(), 14f)
-            alpha = 0.92f
-            isClickable = true
-            layoutParams = ViewGroup.LayoutParams(dp(96), dp(40))
-        }
-
-        var startX = 0
-        var startY = 0
-        var downRawX = 0f
-        var downRawY = 0f
-        var moved = false
-        var downAt = 0L
-        chip.setOnTouchListener { _, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = lp.x; startY = lp.y
-                    downRawX = ev.rawX; downRawY = ev.rawY
-                    moved = false
-                    downAt = System.currentTimeMillis()
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (ev.rawX - downRawX).toInt()
-                    val dy = (ev.rawY - downRawY).toInt()
-                    if (kotlin.math.abs(dx) + kotlin.math.abs(dy) > dp(6)) moved = true
-                    lp.x = (startX + dx).coerceIn(0, screenW() - dp(96).coerceAtMost(screenW()))
-                    lp.y = (startY + dy).coerceIn(0, screenH() - dp(40).coerceAtMost(screenH()))
-                    chip.alpha = 1f
-                    try { wm?.updateViewLayout(chip, lp) } catch (_: Throwable) {}
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    chip.alpha = 0.92f
-                    if (moved) {
-                        uiPrefs()?.edit()?.putInt("chip_x", lp.x)?.putInt("chip_y", lp.y)?.apply()
-                        android.widget.Toast.makeText(
-                            ctx(), "chip @ ${lp.x},${lp.y}",
-                            android.widget.Toast.LENGTH_SHORT).show()
-                    } else if (ev.actionMasked == MotionEvent.ACTION_UP) {
-                        if (System.currentTimeMillis() - downAt > 700L) {
-                            resetEverything() // PANIC recovery: long-press
-                        } else {
-                            togglePanel()
-                        }
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-        wm?.addView(chip, lp)
-        chipView = chip
-        chipLp = lp
-    }
-
-    /** Long-press-chip recovery: close the menu, send widgets to defaults,
-     *  release holds, and wipe saved positions. */
-    private fun resetEverything() {
+    private fun addChip() {
+        if (chip != null) return
         try {
-            closePanel()
-            upHeld = false; downHeld = false
-            uiPrefs()?.edit()
-                ?.putInt("chip_x", dp(12))?.putInt("chip_y", dp(48))
-                ?.putInt("fly_x", defaultFlyX())?.putInt("fly_y", defaultFlyY())
-                ?.apply()
-            chipLp?.let { lp ->
-                lp.x = dp(12); lp.y = dp(48)
-                chipView?.let { v -> wm?.updateViewLayout(v, lp) }
+            val p = uiPrefs()
+            val lp = widgetLp(
+                p?.getInt("chip_x", dp(12)) ?: dp(12),
+                p?.getInt("chip_y", dp(48)) ?: dp(48)
+            )
+            val v = TextView(ctx()).apply {
+                text = "E-Client"
+                textSize = 12f
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                background = rounded(COL_CHIP_BG, 12f)
+                alpha = 0.92f
+                layoutParams = ViewGroup.LayoutParams(dp(84), dp(34))
             }
-            flyLp?.let { lp ->
-                lp.x = defaultFlyX(); lp.y = defaultFlyY()
-                flyView?.let { v ->
-                    v.visibility = flyViewVisibility()
-                    try { wm?.updateViewLayout(v, lp) } catch (_: Throwable) {}
-                }
-            }
-            android.widget.Toast.makeText(
-                ctx(), "overlay reset", android.widget.Toast.LENGTH_SHORT).show()
-            com.rubidiumclient.modules.NativeBridge.logLine("overlay state reset")
-        } catch (t: Throwable) {
-            com.rubidiumclient.modules.NativeBridge.logLine("reset: $t")
-        }
-    }
 
-    // ── window 2: ▲/▼ fly buttons ─────────────────────────────────────
+            var downX = 0
+            var downY = 0
+            var downRawX = 0f
+            var downRawY = 0f
+            var moved = false
+            var downAt = 0L
 
-    private fun defaultFlyX() = screenW() - dp(76)
-    private fun defaultFlyY() = screenH() - dp(300)
-
-    private fun addFlyWindow() {
-        val p = uiPrefs()
-        val lp = widgetLp(
-            p?.getInt("fly_x", defaultFlyX()) ?: defaultFlyX(),
-            p?.getInt("fly_y", defaultFlyY()) ?: defaultFlyY()
-        )
-        val col = LinearLayout(ctx()).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            visibility = flyViewVisibility()
-        }
-        col.addView(flyButton("▲", 0xFF2ECC71.toInt()) { upHeld = it })
-        col.addView(flyButton("▼", 0xFFE74C3C.toInt()) { downHeld = it })
-        wm?.addView(col, lp)
-        flyView = col
-        flyLp = lp
-    }
-
-    private fun flyViewVisibility(): Int =
-        if (ModuleRegistry.anyFlyButtonsVisible()) View.VISIBLE else View.GONE
-
-    // Hold-still to fly vs drag-to-reposition on the same views: a touch
-    // that MOVES past the drag threshold becomes a window reposition drag
-    // (fly hold is cancelled for that gesture); a stationary press flies.
-    @Volatile private var flyDragRawX = 0f
-    @Volatile private var flyDragRawY = 0f
-    @Volatile private var flyDragging = false
-    @Volatile private var flyDragStartX = 0
-    @Volatile private var flyDragStartY = 0
-
-    private fun flyButton(glyph: String, colorDown: Int,
-                          onHeld: (Boolean) -> Unit): View {
-        val v = TextView(ctx()).apply {
-            text = glyph
-            textSize = 22f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x99202630.toInt())
-                setStroke(dp(2), Color.WHITE)
-            }
-            alpha = 0.85f
-            isClickable = true
-        }
-        v.layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply {
-            topMargin = dp(10)
-        }
-        v.setOnTouchListener { view, ev ->
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    flyDragRawX = ev.rawX
-                    flyDragRawY = ev.rawY
-                    flyDragStartX = flyLp?.x ?: 0
-                    flyDragStartY = flyLp?.y ?: 0
-                    flyDragging = false
-                    onHeld(true)
-                    (view.background as GradientDrawable).setColor(colorDown)
-                    view.alpha = 1f
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val ddx = ev.rawX - flyDragRawX
-                    val ddy = ev.rawY - flyDragRawY
-                    if (!flyDragging &&
-                        ddx * ddx + ddy * ddy > dp(14) * dp(14)) {
-                        flyDragging = true
-                        // The hold is cancelled mid-gesture — you're moving
-                        // the buttons, not flying.
-                        onHeld(false)
-                        (view.background as GradientDrawable).setColor(0x99202630.toInt())
-                        view.alpha = 0.85f
+            v.setOnTouchListener { _, ev ->
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = lp.x
+                        downY = lp.y
+                        downRawX = ev.rawX
+                        downRawY = ev.rawY
+                        moved = false
+                        downAt = System.currentTimeMillis()
+                        chipTouches++
+                        refreshStatus()
+                        v.alpha = 1f
+                        true
                     }
-                    if (flyDragging) {
-                        flyLp?.let { lp ->
-                            lp.x = (flyDragStartX + ddx.toInt())
-                                .coerceIn(0, screenW() - dp(64))
-                            lp.y = (flyDragStartY + ddy.toInt())
-                                .coerceIn(0, screenH() - dp(140))
-                            flyView?.let { fv ->
-                                try { wm?.updateViewLayout(fv, lp) }
-                                catch (_: Throwable) {}
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (ev.rawX - downRawX).toInt()
+                        val dy = (ev.rawY - downRawY).toInt()
+                        if (kotlin.math.abs(dx) + kotlin.math.abs(dy) > dp(6)) moved = true
+                        if (moved) {
+                            lp.x = (downX + dx).coerceIn(0, (screenW() - dp(84)).coerceAtLeast(0))
+                            lp.y = (downY + dy).coerceIn(0, (screenH() - dp(34)).coerceAtLeast(0))
+                            try {
+                                wm?.updateViewLayout(v, lp)
+                            } catch (t: Throwable) {
+                                log("chip move: $t")
                             }
                         }
+                        true
                     }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (flyDragging) {
-                        onHeld(false) // safety: no stale hold after a drag
-                        flyLp?.let { lp ->
-                            uiPrefs()?.edit()
-                                ?.putInt("fly_x", lp.x)?.putInt("fly_y", lp.y)?.apply()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.alpha = 0.92f
+                        if (moved) {
+                            uiPrefs()?.edit()?.putInt("chip_x", lp.x)?.putInt("chip_y", lp.y)?.apply()
+                        } else if (ev.actionMasked == MotionEvent.ACTION_UP) {
+                            if (System.currentTimeMillis() - downAt > 700L) {
+                                panic() // long press = get me out of anything
+                            } else {
+                                if (panelOpen) closePanel() else openPanel()
+                            }
                         }
-                        flyDragging = false
-                    } else {
-                        onHeld(false)
+                        true
                     }
-                    (view.background as GradientDrawable).setColor(0x99202630.toInt())
-                    view.alpha = 0.85f
-                    true
+                    else -> false
                 }
-                else -> false
             }
+
+            wm?.addView(v, lp)
+            chip = v
+            chipLp = lp
+        } catch (t: Throwable) {
+            log("addChip failed: $t")
+            chip = null
+            chipLp = null
         }
-        return v
     }
 
-    @JvmStatic
-    fun setFlyButtonsVisible(visible: Boolean) {
-        main.post {
-            flyView?.visibility = if (visible) View.VISIBLE else View.GONE
-            if (!visible) { upHeld = false; downHeld = false }
+    private fun removeChip() {
+        val c = chip ?: return
+        try {
+            if (c.parent != null) wm?.removeViewImmediate(c)
+        } catch (t: Throwable) {
+            log("removeChip: $t")
         }
+        chip = null
+        chipLp = null
     }
 
-    // ── window 3: the module panel (exists ONLY while open) ───────────
+    // ══════════════════════════════════════════════════════════════════════
+    // Window 2 — the panel (exists ONLY while open, and never full-screen)
+    // ══════════════════════════════════════════════════════════════════════
 
     private fun togglePanel() {
-        try {
-            if (panelWin != null) closePanel() else openPanel()
-        } catch (t: Throwable) {
-            com.rubidiumclient.modules.NativeBridge.logLine("panel toggle: $t")
-        }
+        if (panelOpen) closePanel() else openPanel()
     }
 
     private fun openPanel() {
-        if (panelWin != null) return
-        val container = FrameLayout(ctx()).apply {
-            // Tap anywhere outside the panel card = close.
-            isClickable = true
-            setOnClickListener { closePanel() }
+        if (panel != null) return
+        try {
+            val body = buildPanel()
+            val w = dp(320).coerceAtMost((screenW() * 0.86f).toInt())
+            val h = (screenH() * 0.62f).toInt().coerceAtMost(dp(560))
+            val lp = WindowManager.LayoutParams(
+                w,
+                h,
+                WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                token = activity?.window?.attributes?.token
+                gravity = Gravity.TOP or Gravity.START
+                x = dp(12)
+                y = dp(12)
+            }
+            wm?.addView(body, lp)
+            panel = body
+            panelOpen = true
+            log("panel opened ${w}x$h px (not modal: outside touches stay with the game)")
+        } catch (t: Throwable) {
+            panel = null
+            panelOpen = false
+            log("openPanel failed: $t")
+            toast("menu failed to open — see logcat")
         }
-        paneScroll = buildPane()
-        container.addView(paneScroll)
-        wm?.addView(container, panelLp())
-        panelWin = container
     }
 
     private fun closePanel() {
-        val p = panelWin ?: return
-        try { wm?.removeView(p) } catch (_: Throwable) {}
-        panelWin = null
-        paneScroll = null
+        val p = panel
+        panel = null
+        panelOpen = false
+        statusLine = null
+        if (p == null) return
+        try {
+            if (p.parent != null) wm?.removeViewImmediate(p)
+            log("panel closed")
+        } catch (t: Throwable) {
+            log("closePanel: $t")
+        }
     }
 
-    private fun buildPane(): ScrollView {
-        val pane = ScrollView(ctx()).apply {
-            background = rounded(0xE610141A.toInt(), 16f)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            clipToPadding = false
-            // Touches inside the card stay here — outside-close must not fire
-            // while the user is actually using the menu.
-            isClickable = true
+    /** Long-press the chip: close everything, reset positions, never leave input stuck. */
+    private fun panic() {
+        try {
+            closePanel()
+            uiPrefs()?.edit()
+                ?.putInt("chip_x", dp(12))?.putInt("chip_y", dp(48))
+                ?.apply()
+            chipLp?.let { lp ->
+                lp.x = dp(12)
+                lp.y = dp(48)
+                chip?.let { c -> wm?.updateViewLayout(c, lp) }
+            }
+            toast("overlay reset")
+            log("panic: overlay reset (panel closed, chip to default)")
+        } catch (t: Throwable) {
+            log("panic: $t")
         }
-        pane.layoutParams = FrameLayout.LayoutParams(
-            dp(340).coerceAtMost((screenW() * 0.88f).toInt()),
-            (screenH() * 0.72f).toInt(),
-            Gravity.CENTER
-        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Watchdog — make the two historical bugs impossible to reach silently
+    // ══════════════════════════════════════════════════════════════════════
+
+    private val watchdog = object : Runnable {
+        override fun run() {
+            try {
+                checkWindows()
+            } catch (_: Throwable) {
+            }
+            main.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun startWatchdog() {
+        main.removeCallbacks(watchdog)
+        main.postDelayed(watchdog, 1000L)
+    }
+
+    private fun checkWindows() {
+        val c = chip
+        if (c != null && !c.isAttachedToWindow) {
+            log("watchdog: chip fell off the window (framework teardown) → re-adding")
+            chip = null
+            chipLp = null
+            addChip()
+        } else if (c == null && activity != null) {
+            addChip()
+        }
+
+        val p = panel
+        if (p != null && !p.isAttachedToWindow) {
+            log("watchdog: panel fell off the window → dropping the reference")
+            panel = null
+            panelOpen = false
+            statusLine = null
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Panel content
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun refreshStatus() {
+        statusLine?.text = buildStatusText()
+    }
+
+    private fun buildStatusText(): String {
+        val patch = try {
+            NativeBridge.nativePatchStatus()
+        } catch (t: Throwable) {
+            "patch: ? ($t)"
+        }
+        return "touch #$panelTouches chip #$chipTouches last=$lastTouch\n$patch"
+    }
+
+    private fun buildPanel(): View {
+        val root = DiagScroll(ctx()) { ev ->
+            panelTouches++
+            lastTouch = "${touchName(ev)} ${ev.x.toInt()},${ev.y.toInt()}"
+            refreshStatus()
+        }
+        root.background = rounded(COL_PANEL_BG, 14f)
+        root.setPadding(dp(12), dp(10), dp(12), dp(10))
+        root.clipToPadding = false
+        root.isClickable = true
 
         val col = LinearLayout(ctx()).apply { orientation = LinearLayout.VERTICAL }
 
-        // Header: title + explicit ✕ close button.
-        val header = LinearLayout(ctx()).apply {
+        // ── header ────────────────────────────────────────────────────────
+        val head = LinearLayout(ctx()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(label("E-Client modules", 17f, Color.WHITE, bold = true).apply {
-            layoutParams = LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        header.addView(TextView(ctx()).apply {
-            text = "✕"
-            textSize = 20f
-            setTextColor(0xFFE3B341.toInt())
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
+        val title = label("E-Client", 16f, Color.WHITE, bold = true).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        title.setOnLongClickListener {
+            devMode = !devMode
+            toast(if (devMode) "dev modules shown" else "dev modules hidden")
+            rebuildPanel()
+            true
+        }
+        head.addView(title)
+        head.addView(label("✕", 18f, COL_WARN, bold = true).apply {
+            setPadding(dp(10), dp(2), dp(6), dp(4))
             isClickable = true
-            setOnClickListener { togglePanel() }
+            setOnClickListener { closePanel() }
         })
-        col.addView(header)
-        col.addView(label("Tap outside or ✕ to close · long-press chip = reset overlay",
-            11f, 0xFF8E99A5.toInt()))
+        col.addView(head)
 
-        val order = listOf("Combat", "Movement", "Visual", "Player", "Misc")
-        for (cat in order) {
-            val mods = ModuleRegistry.all().filter { it.category == cat }
-            if (mods.isEmpty()) continue
-            col.addView(label(cat.uppercase(), 12f, 0xFF58A6FF.toInt(), bold = true).apply {
-                setPadding(0, dp(14), 0, dp(4))
-            })
-            for (m in mods) col.addView(moduleRow(m))
+        col.addView(label("tap ✕ or the chip to close · tap outside = game", 10f, COL_DIM))
+
+        statusLine = label(buildStatusText(), 10f, COL_ACCENT)
+        col.addView(statusLine)
+
+        // ── native (C++) modules ──────────────────────────────────────────
+        val natives = nativeModules()
+        if (natives.isNotEmpty()) {
+            col.addView(sectionLabel("NATIVE"))
+            for (m in natives) col.addView(nativeRow(m))
         }
 
-        col.addView(label("Native engine stays loaded (tick + memory + patches). " +
-            "Kotlin owns the modules & this menu.", 10f, 0xFF626C77.toInt()).apply {
-            setPadding(0, dp(16), 0, 0)
-        })
+        // ── Kotlin modules ────────────────────────────────────────────────
+        val kotlin = ModuleRegistry.all()
+        if (kotlin.isNotEmpty()) {
+            col.addView(sectionLabel("MODULES"))
+            for (m in kotlin) col.addView(kotlinRow(m))
+        }
 
-        pane.addView(col)
-        return pane
+        root.addView(col)
+        return root
     }
 
-    private fun moduleRow(m: KotlinModule): View {
+    private fun sectionLabel(text: String) =
+        label(text, 11f, COL_ACCENT, bold = true).apply { setPadding(0, dp(12), 0, dp(2)) }
+
+    /**
+     * Rebuild the list in place. Always deferred to the next main-loop pass:
+     * this can be triggered from inside a Switch listener or from the native
+     * tick thread (a module disabling itself), and tearing the view tree down
+     * mid-dispatch is how "the switch sometimes doesn't react" bugs happen.
+     */
+    private fun rebuildPanel() {
+        if (!panelOpen) return
+        main.post {
+            if (!panelOpen) return@post
+            closePanel()
+            openPanel()
+        }
+    }
+
+    // ── native module rows ────────────────────────────────────────────────
+
+    private data class NativeModule(
+        val name: String,
+        val category: String,
+        val enabled: Boolean,
+        val memoryBacked: Boolean,
+        val desc: String
+    )
+
+    private fun nativeModules(): List<NativeModule> {
+        val raw = try {
+            NativeBridge.nativeListModules()
+        } catch (t: Throwable) {
+            log("nativeListModules failed: $t")
+            return emptyList()
+        }
+        val out = ArrayList<NativeModule>()
+        for (line in raw.split('\n')) {
+            if (line.isBlank()) continue
+            val f = line.split('\t')
+            if (f.size < 5) continue
+            val name = f[0]
+            if (!devMode && name in DEV_ONLY) continue
+            out.add(
+                NativeModule(
+                    name = name,
+                    category = f[1],
+                    enabled = f[2] == "1",
+                    memoryBacked = f[3] == "1",
+                    desc = f[4]
+                )
+            )
+        }
+        return out
+    }
+
+    private fun nativeRow(m: NativeModule): View {
         val wrap = LinearLayout(ctx()).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, dp(8))
+            setPadding(0, dp(7), 0, dp(7))
         }
-
-        val topRow = LinearLayout(ctx()).apply {
+        val row = LinearLayout(ctx()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         val texts = LinearLayout(ctx()).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        texts.addView(label(m.name + " [Kotlin]", 15f, Color.WHITE, bold = true))
-        texts.addView(label(m.description, 12f, 0xFF9AA5B1.toInt()))
-        m.statusHint()?.let { texts.addView(label(it, 11f, 0xFFE3B341.toInt())) }
-        topRow.addView(texts)
+        texts.addView(label(m.name, 14f, COL_TEXT, bold = true))
+        texts.addView(label(m.desc, 11f, COL_DIM))
+        if (m.memoryBacked) texts.addView(label("memory patch", 10f, COL_DIM))
+        row.addView(texts)
 
-        val settingsCol = LinearLayout(ctx()).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = if (m.isEnabled && m.settings.isNotEmpty()) View.VISIBLE else View.GONE
-            setPadding(dp(6), 0, 0, 0)
+        val sw = Switch(ctx()).apply {
+            isChecked = m.enabled
+            minWidth = dp(48)
         }
-        for (s in m.settings) settingsCol.addView(settingRow(s))
-
-        val toggle = Switch(ctx()).apply {
-            isChecked = m.isEnabled
-            minWidth = dp(52)
-        }
-        toggle.setOnCheckedChangeListener { _, checked ->
-            try {
-                ModuleRegistry.setModuleEnabled(m, checked)
-                toggle.isChecked = m.isEnabled
-                settingsCol.visibility =
-                    if (m.isEnabled && m.settings.isNotEmpty()) View.VISIBLE else View.GONE
+        sw.setOnCheckedChangeListener { _, checked ->
+            val ok = try {
+                NativeBridge.nativeSetModuleEnabled(m.name, checked)
             } catch (t: Throwable) {
-                com.rubidiumclient.modules.NativeBridge.logLine("toggle ${m.name}: $t")
+                log("toggle ${m.name}: $t")
+                false
+            }
+            if (!ok) {
+                log("toggle rejected: ${m.name} (patch profile not validated?)")
+                sw.isChecked = m.enabled // keep showing the truth
+                toast("${m.name}: refused — patch profile not validated")
+            } else {
+                rebuildPanel()
             }
         }
-        topRow.addView(toggle)
-        wrap.addView(topRow)
+        row.addView(sw)
+        wrap.addView(row)
+        return wrap
+    }
 
-        if (m.settings.isNotEmpty()) wrap.addView(settingsCol)
+    // ── Kotlin module rows ────────────────────────────────────────────────
+
+    private fun kotlinRow(m: KotlinModule): View {
+        val wrap = LinearLayout(ctx()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(7), 0, dp(7))
+        }
+        val row = LinearLayout(ctx()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val texts = LinearLayout(ctx()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        texts.addView(label(m.name, 14f, COL_TEXT, bold = true))
+        texts.addView(label(m.description, 11f, COL_DIM))
+        m.statusHint()?.let { texts.addView(label(it, 10f, COL_WARN)) }
+        row.addView(texts)
+
+        val sw = Switch(ctx()).apply {
+            isChecked = m.isEnabled
+            minWidth = dp(48)
+        }
+        sw.setOnCheckedChangeListener { _, checked ->
+            try {
+                ModuleRegistry.setModuleEnabled(m, checked)
+            } catch (t: Throwable) {
+                log("toggle ${m.name}: $t")
+            }
+            rebuildPanel()
+        }
+        row.addView(sw)
+        wrap.addView(row)
+
+        if (m.isEnabled && m.settings.isNotEmpty()) {
+            val settingsCol = LinearLayout(ctx()).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(6), dp(2), 0, dp(2))
+            }
+            for (s in m.settings) settingsCol.addView(settingRow(s))
+            wrap.addView(settingsCol)
+        }
         return wrap
     }
 
@@ -536,102 +672,105 @@ object EClientUi {
         val row = LinearLayout(ctx()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(4))
+            setPadding(0, dp(3), 0, dp(3))
         }
+        val nameTv = label(s.label, 12f, COL_TEXT).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            if (Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) tooltipText = s.desc
+        }
+        row.addView(nameTv)
+
         when (s) {
-            is BoolSetting -> {
-                row.addView(label(s.label, 13f, 0xFFD0D7DF.toInt()).apply {
-                    layoutParams = LinearLayout.LayoutParams(0,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    if (android.os.Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) {
-                        tooltipText = s.desc
-                    }
-                })
-                row.addView(Switch(ctx()).apply {
-                    isChecked = s.value
-                    setOnCheckedChangeListener { _, c ->
-                        s.value = c; ModuleRegistry.savePrefs()
-                    }
-                })
-            }
+            is BoolSetting -> row.addView(Switch(ctx()).apply {
+                isChecked = s.value
+                setOnCheckedChangeListener { _, c ->
+                    s.value = c
+                    ModuleRegistry.savePrefs()
+                }
+            })
+
             is FloatSetting -> {
-                val valueTv = label(formatFloat(s.value), 12f, 0xFF58A6FF.toInt())
-                row.addView(label(s.label, 13f, 0xFFD0D7DF.toInt()).apply {
-                    layoutParams = LinearLayout.LayoutParams(0,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    if (android.os.Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) {
-                        tooltipText = s.desc
-                    }
-                })
-                row.addView(valueTv)
+                val tv = label(fmt(s.value), 11f, COL_ACCENT)
+                row.addView(tv)
                 row.addView(SeekBar(ctx()).apply {
                     max = 1000
                     progress = (((s.value - s.min) / (s.max - s.min)) * 1000f).toInt()
-                    layoutParams = LinearLayout.LayoutParams(dp(120),
-                        ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) }
+                        .coerceIn(0, 1000)
+                    layoutParams = LinearLayout.LayoutParams(dp(110), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { leftMargin = dp(6) }
                     setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                         override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                             if (!fromUser) return
                             s.value = s.min + (p / 1000f) * (s.max - s.min)
-                            valueTv.text = formatFloat(s.value)
+                            tv.text = fmt(s.value)
                         }
                         override fun onStartTrackingTouch(sb: SeekBar?) {}
-                        override fun onStopTrackingTouch(sb: SeekBar?) = ModuleRegistry.savePrefs()
+                        override fun onStopTrackingTouch(sb: SeekBar?) {
+                            ModuleRegistry.savePrefs()
+                        }
                     })
                 })
             }
+
             is IntSetting -> {
-                val valueTv = label(s.value.toString(), 12f, 0xFF58A6FF.toInt())
-                row.addView(label(s.label, 13f, 0xFFD0D7DF.toInt()).apply {
-                    layoutParams = LinearLayout.LayoutParams(0,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    if (android.os.Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) {
-                        tooltipText = s.desc
-                    }
-                })
-                row.addView(valueTv)
+                val tv = label(s.value.toString(), 11f, COL_ACCENT)
+                row.addView(tv)
                 row.addView(SeekBar(ctx()).apply {
-                    max = s.max - s.min
-                    progress = s.value - s.min
-                    layoutParams = LinearLayout.LayoutParams(dp(120),
-                        ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) }
+                    max = (s.max - s.min).coerceAtLeast(1)
+                    progress = (s.value - s.min).coerceIn(0, max)
+                    layoutParams = LinearLayout.LayoutParams(dp(110), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { leftMargin = dp(6) }
                     setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                         override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                             if (!fromUser) return
                             s.value = s.min + p
-                            valueTv.text = s.value.toString()
+                            tv.text = s.value.toString()
                         }
                         override fun onStartTrackingTouch(sb: SeekBar?) {}
-                        override fun onStopTrackingTouch(sb: SeekBar?) = ModuleRegistry.savePrefs()
+                        override fun onStopTrackingTouch(sb: SeekBar?) {
+                            ModuleRegistry.savePrefs()
+                        }
                     })
                 })
             }
-            is EnumSetting -> {
-                row.addView(label(s.label, 13f, 0xFFD0D7DF.toInt()).apply {
-                    layoutParams = LinearLayout.LayoutParams(0,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    if (android.os.Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) {
-                        tooltipText = s.desc
-                    }
-                })
-                row.addView(TextView(ctx()).apply {
+
+            is EnumSetting -> row.addView(label(s.value, 12f, COL_ACCENT).apply {
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = rounded(COL_CARD_BG, 6f)
+                isClickable = true
+                setOnClickListener {
+                    s.index = (s.index + 1) % s.options.size
                     text = s.value
-                    textSize = 13f
-                    setTextColor(0xFF58A6FF.toInt())
-                    setPadding(dp(10), dp(6), dp(10), dp(6))
-                    background = rounded(0xFF1C2733.toInt(), 8f)
-                    isClickable = true
-                    setOnClickListener {
-                        s.index = (s.index + 1) % s.options.size
-                        text = s.value
-                        ModuleRegistry.savePrefs()
-                    }
-                })
-            }
+                    ModuleRegistry.savePrefs()
+                }
+            })
         }
         return row
     }
 
-    private fun formatFloat(v: Float): String =
+    private fun fmt(v: Float): String =
         if (kotlin.math.abs(v) >= 10f) "%.1f".format(v) else "%.2f".format(v)
+
+    private fun touchName(ev: MotionEvent): String = when (ev.actionMasked) {
+        MotionEvent.ACTION_DOWN -> "down"
+        MotionEvent.ACTION_UP -> "up"
+        MotionEvent.ACTION_MOVE -> "move"
+        MotionEvent.ACTION_CANCEL -> "cancel"
+        else -> "ev${ev.actionMasked}"
+    }
+}
+
+/**
+ * A ScrollView that reports every touch that reaches the panel, so the on-screen
+ * diagnostic counts real deliveries instead of assuming them. It never consumes
+ * anything itself — children and scrolling behave exactly as before.
+ */
+private class DiagScroll(
+    context: Context,
+    private val onAnyTouch: (MotionEvent) -> Unit
+) : ScrollView(context) {
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        onAnyTouch(ev)
+        return super.dispatchTouchEvent(ev)
+    }
 }

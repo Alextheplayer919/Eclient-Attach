@@ -23,7 +23,10 @@
 
 # -----------------------------------------------------------------------
 # Native entry points, resolved BY NAME from libeclient_host.so.
-# PUBLIC: nativeGuiTouch is called cross-class from EClientTouchListener.
+# Since r25 the decor-view touch listener is no longer installed (the Views
+# overlay owns its own windows), so nativeGuiTouch is retained only to keep the
+# touch ABI and the patcher's listener checks intact. nativeTouchReady IS live:
+# it is the KotlinBridge bind point.
 # -----------------------------------------------------------------------
 
 .method public static native nativeGuiTouch(IIFF)Z
@@ -57,35 +60,33 @@
 .end method
 
 # -----------------------------------------------------------------------
-# On each resumed activity, install the decor-view touch listener.
+# On each resumed activity: bind the native bridge, then (re)attach the UI.
+#
+# r25: the decor-view OnTouchListener is INTENTIONALLY NOT INSTALLED any more.
+# It sat directly in the game's own input dispatch path and always returned
+# false; the Views overlay owns its touches through its own WindowManager
+# windows, so nothing of ours belongs in that path. The listener class and the
+# nativeGuiTouch export are still shipped/kept — the touch ABI is unchanged,
+# it is simply never wired in.
+#
+# nativeTouchReady() MUST stay: it is the KotlinBridge bind point
+# (KotlinBridge::bind) — without it no Kotlin module ever ticks.
 # -----------------------------------------------------------------------
 
 .method public onActivityResumed(Landroid/app/Activity;)V
-    .locals 2
-
-    invoke-virtual {p1}, Landroid/app/Activity;->getWindow()Landroid/view/Window;
-    move-result-object v0
-    if-eqz v0, :cond_0
-
-    invoke-virtual {v0}, Landroid/view/Window;->getDecorView()Landroid/view/View;
-    move-result-object v0
-    if-eqz v0, :cond_0
-
-    new-instance v1, Lcom/rubidiumclient/host/EClientTouchListener;
-    invoke-direct {v1}, Lcom/rubidiumclient/host/EClientTouchListener;-><init>()V
-    invoke-virtual {v0, v1}, Landroid/view/View;->setOnTouchListener(Landroid/view/View$OnTouchListener;)V
+    .locals 0
 
     invoke-static {}, Lcom/rubidiumclient/host/EClientLoaderProvider;->nativeTouchReady()V
 
-    # Kotlin module layer: register Kotlin modules (idempotent; class lives
-    # in classes2.dex — injected as smali_classes2 by the patcher).
+    # Kotlin module layer: register modules (idempotent; the class lives in the
+    # injected classesN.dex).
     invoke-static {}, Lcom/rubidiumclient/modules/ModuleRegistry;->init()V
 
-    # Kotlin-first UI: attach the Android-Views overlay (menu + fly buttons)
-    # to this activity's decor view. Replaces the old ImGui/GL overlay.
+    # Kotlin Views overlay (chip + panel). attach() ALWAYS rebuilds: the
+    # framework tears sub-windows down on pause/rotation, and a stale reference
+    # is how the overlay used to vanish or swallow game input.
     invoke-static {p1}, Lcom/rubidiumclient/modules/ui/EClientUi;->attach(Landroid/app/Activity;)V
 
-    :cond_0
     return-void
 .end method
 

@@ -1,13 +1,16 @@
 package com.rubidiumclient.modules
 
 /**
- * ═══ E-Client module framework (Kotlin-first, module-manager lives HERE) ═══
+ * ═══ E-Client module framework (Kotlin-first, module manager lives HERE) ═══
  *
  * Every user-facing module is a [KotlinModule] with self-declared [KSetting]
- * entries. The native C++ side is now only the engine: tick hook, memory
- * primitives (NativeBridge), patch profile, and one JNI dispatch per tick.
- * The in-game UI (menu + fly buttons) is the Android-Views overlay in
- * ui/EClientUi.kt — no ImGui, no GL interference (big FPS win).
+ * entries. The native C++ side is the engine only: tick hook, memory
+ * primitives (NativeBridge), the patch profile, and one JNI dispatch per tick.
+ * The in-game UI is the Android-Views overlay in ui/EClientUi.kt.
+ *
+ * r25 scope: PvP only. Fly/MotionFly and the visual patch modules were removed
+ * (the C++ ModuleManager owns what remains of the native side); the fly-button
+ * plumbing went with them.
  */
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -44,7 +47,7 @@ abstract class KotlinModule(
 ) {
     @Volatile var isEnabled: Boolean = false
 
-    /** Self-declared settings, rendered as sliders/toggles/cyclers in the UI. */
+    /** Self-declared settings, rendered under the module in the UI. */
     val settings = mutableListOf<KSetting>()
 
     protected fun float(key: String, label: String, def: Float, min: Float,
@@ -62,12 +65,12 @@ abstract class KotlinModule(
                        def: Int, desc: String = "") =
         EnumSetting(key, label, options, def, desc).also { settings += it }
 
-    /** Optional verbose hint shown under the module in the UI. */
+    /**
+     * Optional one-line truth shown under the module in the UI. Modules whose
+     * memory is not derived yet use this to say so out loud — a half-finished
+     * feature must be visibly pending, never silently broken.
+     */
     open fun statusHint(): String? = null
-
-    // Categories that can ever be held via the GUI fly buttons (drives the
-    // ▲/▼ button visibility in the overlay).
-    open val usesFlyButtons: Boolean get() = false
 
     open fun onEnable() {}
     open fun onDisable() {}

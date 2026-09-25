@@ -61,13 +61,20 @@ ModuleManager& ModuleManager::instance() {
     return mgr;
 }
 
+// ── Module surface (r25): PvP ONLY ─────────────────────────────────────────
+// What used to be here is gone on purpose, code included: KillAura (the crude
+// 4-block one), Speed, Fly, MotionFly, Step, AutoClickMine, ESP, Noclip, the
+// drown patches, SlowDownTriggers, NoEmoteCooldown and every visual patch.
+//
+// PatchManager still validates ALL 18 byte sites. That validation is the
+// integrity gate for the binary we patch and is deliberately untouched — the
+// toggles above are simply no longer exposed, so a hidden patch can never be
+// toggled by accident, but a wrong binary still fails closed at boot.
 ModuleManager::ModuleManager() : modules_{
-    // Combat
-    {"KillAura", "Nearest attackable actor within 4 blocks", "Combat", false, false, {}},
-
+    // ── Combat ────────────────────────────────────────────────────────────
     // KillAura2: full Melody (1.20.51) KillAura port. Settings match the
     // Melody module 1:1; the two that need memory we have not discovered yet
-    // (see tooltip notes) fail inert instead of degrading the rest.
+    // fail inert instead of degrading the rest.
     {"KillAura2", "Melody KillAura port — rotation math, delay, single/multi, A/B vs KillAura", "Combat", false, false, {
         Setting::real("Range", 3.0f, 1.0f, 12.0f,
             "Melody Range slider (their min was 3.0; 1.0 left available)"),
@@ -79,7 +86,7 @@ ModuleManager::ModuleManager() : modules_{
         Setting::choice("Rotation", {"None", "Silent", "Strafe"}, 0,
             "Melody Fruit rotations (yaw/pitch math IS ported and used).\n"
             "Silent/Strafe need the rotation component address, which the\n"
-            "ECSDump debug module is there to discover — until then they\n"
+            "ECSDump dev module is there to discover — until then they\n"
             "behave like None."),
         Setting::choice("Switch", {"None", "Full", "Silent"}, 0,
             "Melody weapon-switch mode. Needs inventory access (still being\n"
@@ -94,113 +101,35 @@ ModuleManager::ModuleManager() : modules_{
             "Only attack actors whose entity type id matches the local\n"
             "player's own (the same classification melody called isPlayer)."),
     }},
-    {"CriticalHit", "Attack-state hook; pending verification", "Combat", false, false, {}},
-    {"AutoClickMine", "Skip the automatic mining cooldown routine", "Combat", false, true, {}},
+    {"CriticalHit", "Crit timing hook — registered, pending verification", "Combat", false, false, {}},
 
-    // Movement
-    {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", false, false, {}},
-    // Fly — E-Client's OWN fly (built from scratch, no module ports).
-    // On-screen ▲/▼ hold buttons drive the vertical: hold ▲ = ascend at
-    // V-Speed, hold ▼ = descend, release = true hover (velocity.y pinned to
-    // exactly 0.0 — no glide creep, so no periodic correction/lagback).
-    // Button touches are consumed at our own view-layer injection point, so
-    // they never spin the camera; two-thumb flying (stick + ▲ + camera with a
-    // third finger) works because the pipeline is multi-pointer.
-    // Horizontal: velocity-free accel-residue direction projected at H-Speed.
-    {"Fly", "E-Client fly — hold ▲ to rise, release to hover, ▼ to sink", "Movement", false, false, {
-        Setting::real("H-Speed", 1.0f, 0.2f, 3.0f,
-            "Horizontal fly speed (blocks/tick, 0.2–3.0).\n"
-            "Steer with the movement stick as usual."),
-        Setting::real("V-Speed", 0.5f, 0.2f, 2.0f,
-            "Vertical fly speed while holding ▲ or ▼\n"
-            "(blocks/tick, 0.2–2.0). Released = hover at exactly 0."),
-        Setting::boolean("FlyButtons", true,
-            "Show the on-screen ▲/▼ fly buttons while Fly is on.\n"
-            "Button touches are consumed before the game sees them,\n"
-            "so they never move the camera. Turn off to hide the buttons\n"
-            "(vertical then pins to hover wherever you are)."),
-        Setting::choice("WriteMode", {"Velocity", "Position"}, 0,
-            "Velocity writes the velocity field (normal); Position moves\n"
-            "pos/prevPos directly — fallback for servers that overwrite\n"
-            "client velocity."),
-    }},
-    // MotionFly — Kotlin-language module (dex-compiled into the APK, runs
-    // through the KotlinBridge). LeHu-style speeds, driven by the SAME ▲/▼
-    // GUI buttons as the C++ Fly. Fly ⇄ MotionFly are mutually exclusive so
-    // they can never fight over the velocity field.
-    {"MotionFly", "LeHu-style motion fly — KOTLIN module (see kotlin-modules/)", "Movement", false, false, {
-        Setting::real("H-BPS", 46.0f, 1.0f, 100.0f,
-            "LeHu 'H Speed BPS' (blocks/second, clamped to sqrt(5.99)/tick)."),
-        Setting::real("Up-BPS", 19.8f, 1.0f, 60.0f,
-            "LeHu 'Up Speed BPS' while holding ▲."),
-        Setting::real("Down-BPS", 46.0f, 1.0f, 60.0f,
-            "LeHu 'Down Speed BPS' while holding ▼."),
-        Setting::real("Glide", -0.02f, -0.3f, 0.0f,
-            "LeHu 'Glide' — idle vertical speed when no button is held\n"
-            "(0 = pin-hover like the C++ Fly)."),
-        Setting::real("Up-H-Factor", 0.55f, 0.1f, 1.0f,
-            "LeHu 'Up H Factor' — horizontal speed multiplier while rising."),
-        Setting::real("Down-H-Factor", 0.55f, 0.1f, 1.0f,
-            "LeHu 'Down H Factor' — multiplier while sinking."),
-        Setting::boolean("FlyButtons", true,
-            "Show the on-screen ▲/▼ buttons (shared with the C++ Fly)."),
-    }, true},
-    {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", false, false, {}},
-    {"Step", "Raise the player auto-step height", "Movement", false, false, {}},
-    {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
-    {"Noclip", "Disable solid collision response", "Movement", false, true, {}},
+    // ── Movement ──────────────────────────────────────────────────────────
+    // REWRITTEN (r25). The old version forced SetSprinting every tick, which
+    // fought the item-use tick and broke gapples. The rewrite only re-asserts
+    // sprint when the player is provably NOT using an item — so it stays inert
+    // until the item-use state is derived (fail-closed, never breaks eating).
+    {"AlwaysSprint", "Keeps sprint active without fighting item use — PENDING item-use offset, inert until then",
+        "Movement", false, false, {}},
     {"AntiKnockback", "Suppress motion interpolation used by knockback", "Movement", false, true, {}},
-    {"NoWaterDrown", "Disable water drowning/gravity hook", "Movement", false, true, {}},
-    {"NoLavaDrown", "Disable lava drowning/gravity hook", "Movement", false, true, {}},
-    {"SlowDownTriggers", "Disable block movement slowdown trigger", "Movement", false, true, {}},
+    {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
 
-    // Visual
-    {"FullBright", "Force maximum brightness return value", "Visual", false, true, {}},
-    {"NoHurtCam", "Disable hurt camera shake", "Visual", false, true, {}},
-    {"NoBlur", "Disable fullscreen blur effects", "Visual", false, true, {}},
-    {"NoCaveVignette", "Disable the vignette renderer", "Visual", false, true, {}},
-    {"NoCamDistortion", "Disable camera portal distortion", "Visual", false, true, {}},
-    {"NoBoatRotation", "Disable vehicle camera rotation", "Visual", false, true, {}},
-    {"NoCamSleep", "Disable camera sleep fade", "Visual", false, true, {}},
-    {"PlaceCamera", "Disable camera blend placement step", "Visual", false, true, {}},
-    {"XrayCameraThird", "Disable third-person camera avoidance", "Visual", false, true, {}},
-    {"ESP", "Actor enumeration + world-to-screen renderer; pending verification", "Visual", false, false, {}},
-
-    // Player / Misc
-    {"NoEmoteCooldown", "Remove the emote cooldown gate", "Player", false, true, {}},
-
-    // Misc / debug
-    {"ECSDump", "Debug: ECS component deltas for the local player (2 snapshots, ~2s).\nWritten to ALL reachable spots: Download/EClient/ecsdump.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", false, false, {}},
-    {"FlyDebug", "Debug: per-tick fly telemetry (240 ticks, self-disables).\nWritten to ALL reachable spots: Download/EClient/flydebug.txt AND the\nMC folder Android/data/com.mojang.minecraftpe/files/EClient/", "Misc", false, false, {}},
+    // ── Dev (hidden in the UI unless dev mode is on) ──────────────────────
+    {"ECSDump", "Dev: ECS component deltas for the local player (2 snapshots, ~2s). Used to derive the rotation / hitbox / item-use components.", "Misc", false, false, {}},
 } {}
 
 const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
 
 bool ModuleManager::setEnabled(const std::string& name, bool enabled) {
     std::lock_guard lock(mutex_);
-    // Fly-family exclusivity: these share the velocity field AND the ▲/▼
-    // buttons, so only one may ever be on. Add new pairs here as needed.
-    static const char* const kExclusivePairs[][2] = {
-        {"Fly", "MotionFly"},
-    };
+    // NOTE: the Fly ⇄ MotionFly exclusivity pair lived here. Both modules were
+    // removed from the product (r25 is PvP-only). If two future modules must
+    // never run together, re-add the pair HERE *and* in the Kotlin
+    // ModuleRegistry — leaving it in only one of the two is how the old
+    // two-registry drift started.
     for (auto& module : modules_) {
         if (module.name != name) continue;
         if (module.memoryBacked) {
             if (!profile::PatchManager::instance().set(name, enabled)) return false;
-        }
-        if (enabled) {
-            for (const auto& pair : kExclusivePairs) {
-                std::string other;
-                if (module.name == pair[0]) other = pair[1];
-                else if (module.name == pair[1]) other = pair[0];
-                if (other.empty()) continue;
-                for (auto& o : modules_) {
-                    if (o.name != other || !o.enabled) continue;
-                    if (o.memoryBacked) profile::PatchManager::instance().set(other, false);
-                    o.enabled = false;
-                    if (o.kotlin) kotlinbridge::setModuleEnabled(other.c_str(), false);
-                }
-            }
         }
         module.enabled = enabled;
         if (module.kotlin) kotlinbridge::setModuleEnabled(name.c_str(), enabled);

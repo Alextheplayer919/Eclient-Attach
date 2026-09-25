@@ -88,6 +88,22 @@ inline constexpr std::uint64_t EntityIdField = 0x18;
 // comparing against the local player's own id instead of hardcoding 319.
 
 // ---------------------------------------------------------------------------
+// PvP build (r25) — PENDING DERIVATION.
+//
+// Every entry here is a SEAM, not a guess. Consumers MUST read the zero as
+// "feature not unlocked" and fail inert, exactly like the ECS component hashes
+// below. Nothing here is filled in until it has instruction-level evidence from
+// the SHA-verified libminecraftpe.so.
+// ---------------------------------------------------------------------------
+
+// AlwaysSprint guard: the actor's "item in use" state. Re-forcing sprint while
+// an item is in use is what broke gapples, so AlwaysSprint refuses to act until
+// this is derived. The shape (actor flag word vs ECS component element) gets
+// pinned here when the evidence lands.
+inline constexpr std::uint64_t UsingItemFlagOffset = 0; // 0 = underived
+inline constexpr std::uint32_t UsingItemFlagMask = 0;   // 0 = underived
+
+// ---------------------------------------------------------------------------
 // ECS component identities discovered ON DEVICE via the ECSDump debug module.
 // All zero until the pool hash + element stride + field offsets have been
 // confirmed against a live game; module code must treat hash==0 as "feature
