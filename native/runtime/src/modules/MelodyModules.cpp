@@ -7,6 +7,8 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -349,6 +351,23 @@ void tickFly(void* player) {
     }
 
     if (!std::isfinite(outX) || !std::isfinite(outY) || !std::isfinite(outZ)) return;
+
+    const int writeMode = mgr().enumSetting("Fly", "WriteMode", 0);
+    if (writeMode == 1) {
+        // Position mode: move the state-vector position (and prevPos by the
+        // same delta so render interpolation stays clean), zero velocity.
+        // Fallback for servers that overwrite client velocity every tick.
+        if (auto* sv = static_cast<float*>(
+                *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField))) {
+            sv[0] += outX; sv[1] += outY; sv[2] += outZ; // pos     @+0x00
+            sv[3] += outX; sv[4] += outY; sv[5] += outZ; // prevPos @+0x0C
+        }
+        vel->x = 0.0f; vel->y = 0.0f; vel->z = 0.0f;
+        g_flyPrevOut = {0.0f, 0.0f, 0.0f};
+        g_lastFlyPos = {pos.x + outX, pos.y + outY, pos.z + outZ};
+        return;
+    }
+
     vel->x = outX;
     vel->y = outY;
     vel->z = outZ;
@@ -481,12 +500,100 @@ void tickEcsDump(void* player) {
     }
 }
 
+// ============================================================================
+// FlyDebug — per-tick telemetry to answer *why* the fly misbehaves.
+// Writes 240 ticks (~12 s) of raw velocity in / fly write out / re-read
+// verify / resulting position to logcat AND to
+//   /sdcard/Android/data/com.mojang.minecraftpe/files/flydebug.txt
+// so it can be pulled with any file manager. Self-disables when done;
+// re-enable for another window.
+// ============================================================================
+
+constexpr const char* kFlyDebugPath =
+    "/sdcard/Android/data/com.mojang.minecraftpe/files/flydebug.txt";
+constexpr long kFlyDebugTicks = 240;
+
+long g_debugLeft = 0;
+bool g_debugWasFly = false;
+std::uint64_t g_debugFile = 0; // FILE* as uintptr to avoid <cstdio> FILE leak
+Vec3 g_debugPreVel{}, g_debugPrePos{};
+bool g_debugHavePre = false;
+
+void flyDebugLine(const char* fmt, ...) {
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    __android_log_print(ANDROID_LOG_INFO, TAG, "%s", buf);
+    if (g_debugFile) {
+        auto* f = reinterpret_cast<FILE*>(g_debugFile);
+        std::fprintf(f, "%s\n", buf);
+        std::fflush(f);
+    }
+}
+
+void tickFlyDebugPre(void* player) {
+    if (g_debugLeft <= 0) {
+        g_debugLeft = kFlyDebugTicks;
+        // Fresh file each capture.
+        FILE* f = std::fopen(kFlyDebugPath, "w");
+        if (f) g_debugFile = reinterpret_cast<std::uintptr_t>(f);
+        flyDebugLine("FLD-BEGIN tick=%ld mode=%d write=%d h=%.1f glide=%.3f up=%.1f",
+                     g_tick,
+                     mgr().enumSetting("Fly", "VerticalMode", 2),
+                     mgr().enumSetting("Fly", "WriteMode", 0),
+                     mgr().floatSetting("Fly", "HSpeed BPS", 12.0f),
+                     mgr().floatSetting("Fly", "Glide", -0.02f),
+                     mgr().floatSetting("Fly", "UpSpeed BPS", 10.0f));
+        if (!g_debugFile) flyDebugLine("FLD-WARN flydebug.txt not writable — logcat only");
+        g_debugWasFly = mgr().enabled("Fly");
+    }
+    Vec3* vel = velocityPtr(player);
+    Vec3 pos{};
+    getPosition(player, pos);
+    if (vel) g_debugPreVel = *vel;
+    g_debugPrePos = pos;
+    g_debugHavePre = vel != nullptr;
+
+    const bool flyNow = mgr().enabled("Fly");
+    if (flyNow != g_debugWasFly) {
+        flyDebugLine("FLD-TOGGLE fly=%s t=%ld", flyNow ? "ON" : "off", g_tick);
+        g_debugWasFly = flyNow;
+    }
+}
+
+void tickFlyDebugPost(void* player) {
+    if (g_debugLeft <= 0) return;
+    Vec3* vel = velocityPtr(player);
+    Vec3 pos{};
+    getPosition(player, pos);
+    void* sv = vel ? *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField)
+                   : nullptr;
+    flyDebugLine("FLD t=%ld pre=(%.3f,%.3f,%.3f) out=(%.3f,%.3f,%.3f) post=(%.3f,%.3f,%.3f) pos=(%.2f,%.2f,%.2f) sv=%p",
+                 g_tick,
+                 g_debugPreVel.x, g_debugPreVel.y, g_debugPreVel.z,
+                 g_flyPrevOut.x, g_flyPrevOut.y, g_flyPrevOut.z,
+                 vel ? vel->x : 0.f, vel ? vel->y : 0.f, vel ? vel->z : 0.f,
+                 pos.x, pos.y, pos.z, sv);
+    if (--g_debugLeft <= 0) {
+        flyDebugLine("FLD-END — send flydebug.txt (logcat tag EClientMelody)");
+        if (g_debugFile) {
+            std::fclose(reinterpret_cast<FILE*>(g_debugFile));
+            g_debugFile = 0;
+        }
+        mgr().setEnabled("FlyDebug", false);
+    }
+}
+
 void resetState() {
     g_hurtState.clear();
     g_attackTimer = 0;
     g_dumpProbes.clear();
     g_dumpStartTick = -1;
     g_dumped = false;
+    g_debugLeft = 0;
+    g_debugHavePre = false;
 }
 
 } // namespace
@@ -514,6 +621,8 @@ void onNormalTick(void* localPlayer) {
     // Prune hurt-state map of stale pointers occasionally.
     if ((g_tick & 0x3FF) == 0 && g_hurtState.size() > 512) g_hurtState.clear();
 
+    const bool debug = mgr().enabled("FlyDebug");
+    if (debug) tickFlyDebugPre(localPlayer);
     if (mgr().enabled("KillAura2")) tickKillAura2(localPlayer);
     if (mgr().enabled("Fly")) {
         tickFly(localPlayer);
@@ -522,6 +631,7 @@ void onNormalTick(void* localPlayer) {
         g_jetSustainTicks = 0;
         g_flyPrevOut = {0.0f, 0.0f, 0.0f};
     }
+    if (debug) tickFlyDebugPost(localPlayer);
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
 }
 

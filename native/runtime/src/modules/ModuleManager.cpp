@@ -117,6 +117,11 @@ ModuleManager::ModuleManager() : modules_{
             "Jetpack (default): glide down gently, tap JUMP to climb.\n"
             "Hold-jump/hold-sneak verticals unlock after ECS input-flag\n"
             "discovery (run ECSDump while spamming jump+sneak!)."),
+        Setting::choice("WriteMode", {"Velocity", "Position"}, 0,
+            "Velocity: fly writes the velocity field (default).\n"
+            "Position: fly moves the position field directly + zeroes\n"
+            "velocity — fallback if the server/game ignores or overwrites\n"
+            "velocity writes (check flydebug.txt if unsure)."),
     }},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false, {}},
     {"Step", "Raise the player auto-step height", "Movement", true, false, {}},
