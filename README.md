@@ -51,9 +51,17 @@ A per-tick decision system, not a script: it watches every nearby player
 engagement by backing off (people charge straight in), rates each movement
 pattern ("WASD combination") per situation, forces a different pattern after a
 miss streak, and turns KillAura2 on by itself when it starts taking non-stop
-hits. Scores persist across restarts. Turning the player toward the target is
-the one thing still waiting on the rotation component — it shows the aim error
-instead of pretending. Full design: `docs/PVP_BOT.md`.
+hits. Scores persist across restarts. Full design: `docs/PVP_BOT.md`.
+
+Movement is **the game's own walking**, not a motion hack: the bot writes the
+same input state the joystick writes (`MoveInputComponent`) and the engine does
+speed, friction, collision, sprint rules and animation itself. Two derived facts
+are still missing before that can run — the layout of that component's element,
+and the player's yaw (input is camera-relative) — so until they land the bot
+stands still and says so in the panel instead of moving badly. The hashes for
+those components are already derived and verified offline
+(`tools/entt_hash.py`), so the remaining discovery is a single targeted ECSDump
+run rather than a search.
 
 ## UI and input (r26)
 

@@ -71,6 +71,22 @@ returns without installing the swap hook, so none of the ImGui code below runs.*
   velocity (that is how Human-override works at all).
 - `botRotationAvailable()` must return false while `ActorRotationComponentHash`
   is 0. Never let the bot claim it can aim.
+- **Movement is input-based walking, never a velocity write.** `botWalk` writes
+  the joystick's own state (`MoveInputComponent`) and lets the engine move the
+  player. Do not reintroduce the fly-style velocity write for the bot: it fights
+  the engine every tick, animates nothing and cannot respect water/ice/ladders.
+  If walking is unavailable the bot stands still and reports why — a bot that
+  moves badly is worse than a bot that does not move.
+- **A component hash alone is never enough to touch an element.** The rotation
+  write indexes `block + inBlock*stride + yawOffset`, so a derived hash with an
+  underived stride would write into the component block itself. All layout
+  constants must be non-zero together (`rotationWritable()`), and reads are
+  gated the same way (`botPlayerYaw` returns NaN rather than a wrong angle).
+- Component hashes are FNV-1a 32 of the plain type name (`tools/entt_hash.py`
+  reproduces them, including the negative result for `ItemInUseComponent`).
+  When adding one, verify it against the SHA-pinned binary and record the hit
+  count — a name that yields zero hits means the component is not instantiated
+  under that name, and guessing variants is not a derivation.
 
 - Every overlay window is a `TYPE_APPLICATION_PANEL` sub-window with
   `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`, and **no window is ever

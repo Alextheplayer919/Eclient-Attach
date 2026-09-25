@@ -54,6 +54,11 @@ bool botAimAt(void* player, int index, float* outYawPitch);
 // out[9]=ticks since the last damage event (-1 = never).
 bool botSelf(void* player, float* outSelf);
 
+// The player's current yaw in degrees, or NaN when the rotation element layout
+// is not derived yet. Walking needs it: joystick input is camera-relative, so
+// world-space intent cannot be turned into input axes without it.
+float botPlayerYaw(void* player);
+
 // Whether aim can actually be APPLIED (ActorRotationComponent derived).
 // False today — the bot computes the aim it needs but cannot turn the player
 // yet; callers must show that instead of pretending to aim.

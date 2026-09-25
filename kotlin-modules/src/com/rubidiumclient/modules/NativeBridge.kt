@@ -84,12 +84,25 @@ object NativeBridge {
     external fun botAim(index: Int, out: FloatArray): Boolean
 
     /**
-     * Move by writing velocity (the mechanism Fly proved; ~0.28 blocks/tick is
-     * vanilla sprint). The direction is WORLD space, so the bot can strafe and
-     * retreat regardless of where the player is looking. Y is preserved unless
-     * `jump` and the player is on the ground.
+     * WALK — the game's own movement, not a velocity hack.
+     *
+     * Writes the same input state the on-screen joystick writes (the
+     * MoveInputComponent element) and lets the engine do everything else:
+     * speed, friction, collision, sprint rules, animations, footsteps.
+     * dirX/dirZ are WORLD space and get rotated into the camera-relative input
+     * axes with the player's current yaw.
+     *
+     * Returns false while the input element layout is not derived yet — the
+     * deliberate failure mode: the bot then does not move at all instead of
+     * moving badly. See botWalkStatus() for what is missing.
      */
-    external fun botMove(dirX: Float, dirZ: Float, speed: Float, jump: Boolean): Boolean
+    external fun botWalk(dirX: Float, dirZ: Float, jump: Boolean, sneak: Boolean): Boolean
+
+    /**
+     * Short, honest description of what walking is waiting for, e.g.
+     * "walk: pool OK, element layout not derived". Call during a tick.
+     */
+    external fun botWalkStatus(): String
 
     /**
      * Self state: [0..2] pos, [3..5] velocity, [6] health, [7] damaged within

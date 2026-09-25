@@ -104,15 +104,71 @@ inline constexpr std::uint64_t UsingItemFlagOffset = 0; // 0 = underived
 inline constexpr std::uint32_t UsingItemFlagMask = 0;   // 0 = underived
 
 // ---------------------------------------------------------------------------
-// ECS component identities discovered ON DEVICE via the ECSDump debug module.
-// All zero until the pool hash + element stride + field offsets have been
-// confirmed against a live game; module code must treat hash==0 as "feature
-// not unlocked" and fail inert (Melody Rotation/Switch modes, Hitbox, etc.).
+// ECS COMPONENT HASHES (r28) — DERIVED, NOT GUESSED.
+//
+// METHOD (see tools/entt_hash.py, which reproduces this offline):
+// enTT gives every component a pool id = FNV-1a 32 over the component's PLAIN
+// TYPE NAME (the same spelling that appears inside the game's own mangled
+// names, e.g. `N4entt13basic_storageI22ActorRotationComponent...`).
+//
+// VERIFICATION against the shipped, SHA-pinned libminecraftpe.so:
+//   * FNV1a("ActorRotationComponent") == 0x75df36b7 occurs 38 times.
+//     A 4-byte value of that length in a 280 MB image is expected to occur
+//     ~0.06 times by chance, so the match is not coincidence.
+//   * Control: FNV1a("struct ActorRotationComponent") == 0xdc1e21ce occurs ZERO
+//     times, i.e. the name used really is the plain type name.
+//   * The constants sit in .rodata inside the component-hash lists that belong
+//     to the game's strict-system expressions, next to the mangled names of the
+//     systems that read/write those very components (ActorHeadRotation 0xbabe7211
+//     appears immediately beside ActorRotation 0x75df36b7 in one such list).
+//
+// So the POOL a component lives in is now a solved lookup. What is still NOT
+// solved is the ELEMENT layout inside that pool (stride + field offsets); those
+// stay 0 and every consumer must keep failing inert until ECSDump has pinned
+// them on a device (rotate the view / walk around and read the deltas).
 // ---------------------------------------------------------------------------
-inline constexpr std::uint32_t ActorRotationComponentHash = 0; // rotation {Vec2 yaw/pitch, old}
+inline constexpr std::uint32_t ActorRotationComponentHash = 0x75df36b7;     // rotation {Vec2 yaw/pitch, ...}
+inline constexpr std::uint32_t ActorHeadRotationComponentHash = 0xbabe7211; // head/aim rotation
+inline constexpr std::uint32_t MobHurtTimeComponentHash = 0xd7a3585c;       // 0.5 s damage immunity
+inline constexpr std::uint32_t MoveInputComponentHash = 0x018b1887;         // the joystick's own state
+inline constexpr std::uint32_t RawMoveInputComponentHash = 0x3613e513;      // raw (pre-deadzone) input
+inline constexpr std::uint32_t HitboxComponentHash = 0x9b97c2b2;            // hitbox width/height
+// Negative result worth keeping: FNV1a("ItemInUseComponent") == 0x05b90aef
+// occurs ZERO times, i.e. no storage is instantiated under that name. The
+// item-use state AlwaysSprint waits for therefore lives somewhere else (an
+// actor flag word, or a differently named component) — do not "fix" this by
+// trying name variants; it needs evidence.
+
+// Element layout — STILL UNDERIVED. Never set one of these without the others:
+// the KillAura2 rotation write indexes block + inBlock*stride + yawOffset, so a
+// non-zero hash with a zero stride would write into the component block itself.
 inline constexpr std::uint64_t ActorRotationStride = 0;        // element stride in pool block
 inline constexpr std::uint64_t ActorRotationYawOffset = 0;     // offset of Vec2 yaw inside element
-inline constexpr std::uint64_t HitboxComponentHash = 0;        // hitbox (width/height floats)
 inline constexpr std::uint64_t HitboxStride = 0;
 inline constexpr std::uint64_t HitboxWidthOffset = 0;
+
+// ---------------------------------------------------------------------------
+// MOVEMENT INPUT (r28) — SEAM, underived.
+//
+// The bot walks by writing the SAME input state the on-screen joystick writes
+// and letting the engine do the rest: speed, friction, collision, sprint
+// rules, animations, footsteps. That is unmodified player walking, and it is
+// what the product wants — the previous approach (writing the state vector's
+// velocity, i.e. the fly mechanism) fought the engine every tick, produced no
+// walk animation and could not respect the engine's own rules. It is deleted.
+//
+// Dependencies, both required before `walking` can be true:
+//   * the MoveInputComponent element layout (below), and
+//   * the player's current yaw (ActorRotationComponent layout), because input
+//     is camera-relative while the bot thinks in target-relative terms.
+// Until both are derived, movement is INERT and the bot says so.
+// ---------------------------------------------------------------------------
+inline constexpr std::uint64_t MoveInputElementStride = 0; // element stride in the pool block
+inline constexpr std::uint64_t MoveInputVecOffset = 0;   // 2 floats (forward/strafe) in the element
+inline constexpr std::uint64_t MoveInputFlagOffset = 0;  // flags byte/word in the element (0 = none found yet)
+inline constexpr std::uint32_t MoveInputJumpBit = 0;     // bit masks, meaningful only with the offset
+inline constexpr std::uint32_t MoveInputSneakBit = 0;
+inline constexpr std::uint32_t MoveInputSprintBit = 0;
+inline constexpr int MoveInputForwardSign = 0;           // +1/-1 axis convention (0 = not pinned)
+inline constexpr int MoveInputStrafeSign = 0;
 }

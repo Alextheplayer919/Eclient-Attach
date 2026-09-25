@@ -11,6 +11,8 @@
 #include <mutex>
 #include <vector>
 
+#include "memory/ComponentWalk.h"
+#include "memory/NativeMemory.h"
 #include "modules/FlyInput.h"
 #include "modules/MelodyModules.h"
 #include "modules/ModuleManager.h"
@@ -448,34 +450,130 @@ JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botSelf(
     return JNI_TRUE;
 }
 
-// Movement: velocity write (the mechanism Fly proved) through the SAME
-// g_prevOut bookkeeping as setVelocity, so getWorldInputDir keeps reporting the
-// HUMAN's own movement and not the bot's. The bot uses that to yield while the
-// player is steering by hand.
-JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botMove(
-    JNIEnv* /*env*/, jobject /*self*/, jfloat dirX, jfloat dirZ, jfloat speed, jboolean jump) {
-    using namespace eclient_runtime::kotlinbridge;
-    void* player = g_player.load();
-    Vec3* vel = velocityPtr(player);
-    if (!vel) return JNI_FALSE;
-    if (!std::isfinite(dirX) || !std::isfinite(dirZ) || !std::isfinite(speed)) return JNI_FALSE;
-    if (!std::isfinite(vel->y)) return JNI_FALSE;
+// ════════════════════════════════════════════════════════════════════════════
+// WALKING (r28) — the game's own movement, not a velocity hack.
+//
+// The bot writes the SAME input state the on-screen joystick writes and lets
+// the engine do everything else: speed, friction, collision, sprint rules,
+// animations, footsteps, knockback. No motion is synthesised.
+//
+// Why the previous version was wrong (deleted on purpose): writing the state
+// vector's velocity is the FLY mechanism — it fights the engine's own
+// acceleration every tick, produces no walk animation, and cannot respect the
+// engine's rules (water, ice, ladders, sneaking). "Walk like a player" is both
+// simpler and strictly more capable.
+//
+// Requires two derived facts, and is INERT without both:
+//   1. the MoveInputComponent element layout (MoveInputVecOffset ...), and
+//   2. the player's current yaw (ActorRotation* layout), because joystick input
+//      is camera-relative while the bot plans in target-relative terms.
+// botWalkStatus() reports exactly which one is missing, in the UI.
+// ════════════════════════════════════════════════════════════════════════════
 
-    const float len = std::sqrt(dirX * dirX + dirZ * dirZ);
-    float nx = 0.0f, nz = 0.0f;
-    if (len > 1.0e-4f) { nx = dirX / len; nz = dirZ / len; }
-    // 0.35 hard ceiling: vanilla sprint is ~0.28 blocks/tick.
-    const float s = std::clamp(speed, 0.0f, 0.35f);
+namespace {
 
-    float vy = vel->y;
-    if (jump == JNI_TRUE && std::fabs(vy) < 0.05f) vy = 0.42f; // vanilla jump impulse
+// Resolve the local player's MoveInputComponent element. Read-only and guarded:
+// used both by the writer and by the status reporter, so a wrong guess shows up
+// as "pool not found" instead of a crash.
+bool moveInputElement(std::uintptr_t& outElement, std::string& why) {
+    using namespace eclient_runtime::profile::mc_1_21_111;
+    void* player = eclient_runtime::kotlinbridge::g_player.load();
+    if (!player) { why = "no tick context"; return false; }
+    if (MoveInputComponentHash == 0) { why = "component hash unknown"; return false; }
 
-    vel->x = nx * s;
-    vel->z = nz * s;
-    vel->y = vy;
-    g_prevOut = {vel->x, vel->y, vel->z};
-    g_havePrevOut = true;
-    return JNI_TRUE;
+    const std::uintptr_t p = reinterpret_cast<std::uintptr_t>(player);
+    std::uintptr_t registry = 0;
+    if (!eclient_runtime::memory::NativeMemory::instance().read(
+            p + EcsRegistryField, &registry, sizeof(registry)) || !registry) {
+        why = "no ECS registry";
+        return false;
+    }
+    std::uintptr_t pool = 0;
+    for (const auto& d : eclient_runtime::ecs::listPools(p)) {
+        if (d.typeHash == MoveInputComponentHash) { pool = d.pool; break; }
+    }
+    if (!pool) { why = "pool not in registry"; return false; }
+
+    std::uint32_t eid = 0;
+    if (!eclient_runtime::memory::NativeMemory::instance().read(
+            p + EntityIdField, &eid, sizeof(eid))) {
+        why = "no entity id";
+        return false;
+    }
+    const auto el = eclient_runtime::ecs::resolveElement(pool, eid);
+    if (!el.valid) { why = "element not resolved"; return false; }
+    outElement = el.block + el.inBlock * MoveInputElementStride;
+    return true;
 }
 
+} // namespace
+
+// Short, honest status for the UI: what walking is waiting for.
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_botWalkStatus(
+    JNIEnv* env, jobject /*self*/) {
+    using namespace eclient_runtime::profile::mc_1_21_111;
+    void* player = eclient_runtime::kotlinbridge::g_player.load();
+    if (!player) return env->NewStringUTF("walk: idle (no tick)");
+
+    if (MoveInputVecOffset == 0) {
+        // Pool is findable (hash known); the element LAYOUT is the missing piece.
+        std::uintptr_t element = 0; std::string why;
+        if (moveInputElement(element, why)) {
+            return env->NewStringUTF("walk: pool OK, element layout not derived");
+        }
+        return env->NewStringUTF(("walk: input pool unavailable (" + why + ")").c_str());
+    }
+    if (ActorRotationStride == 0 || ActorRotationYawOffset == 0) {
+        return env->NewStringUTF("walk: needs player yaw (rotation layout not derived)");
+    }
+    return env->NewStringUTF("walk: ready");
+}
+
+// Walk using the engine's own movement. dirX/dirZ are WORLD space; they are
+// rotated into camera-local input axes with the player's current yaw, because
+// that is the frame the joystick state lives in.
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botWalk(
+    JNIEnv* /*env*/, jobject /*self*/, jfloat dirX, jfloat dirZ, jboolean jump, jboolean sneak) {
+    using namespace eclient_runtime::profile::mc_1_21_111;
+    if (!std::isfinite(dirX) || !std::isfinite(dirZ)) return JNI_FALSE;
+    if (MoveInputVecOffset == 0 || MoveInputForwardSign == 0 || MoveInputStrafeSign == 0) {
+        return JNI_FALSE; // layout not derived — fail inert, never guess
+    }
+
+    std::uintptr_t element = 0; std::string why;
+    if (!moveInputElement(element, why)) return JNI_FALSE;
+
+    // The yaw the input is relative to. Without it the local axes are unknown,
+    // so we refuse rather than walk in a random direction.
+    const float yawDeg =
+        eclient_runtime::modules::melody::botPlayerYaw(eclient_runtime::kotlinbridge::g_player.load());
+    if (!std::isfinite(yawDeg)) return JNI_FALSE;
+
+    const float yaw = yawDeg * 3.14159265358979323846f / 180.0f;
+    // Bedrock yaw convention (matches getRotations: yaw = atan2(dz,dx)*RAD2DEG - 90)
+    //   forward = (-sin yaw, cos yaw)      right = (-forwardZ, forwardX)
+    const float fx = -std::sin(yaw), fz = std::cos(yaw);
+    const float rx = -fz, rz = fx;
+
+    float forward = dirX * fx + dirZ * fz;
+    float strafe = dirX * rx + dirZ * rz;
+    const float len = std::sqrt(dirX * dirX + dirZ * dirZ);
+    if (len > 1.0f) { forward /= len; strafe /= len; } // joystick is a unit vector
+
+    auto* vec = reinterpret_cast<float*>(element + MoveInputVecOffset);
+    vec[0] = (MoveInputForwardSign < 0 ? -forward : forward);
+    vec[1] = (MoveInputStrafeSign < 0 ? -strafe : strafe);
+
+    if (MoveInputFlagOffset != 0) {
+        auto* flags = reinterpret_cast<std::uint32_t*>(element + MoveInputFlagOffset);
+        std::uint32_t v = *flags;
+        const std::uint32_t mask = MoveInputJumpBit | MoveInputSneakBit | MoveInputSprintBit;
+        v &= ~mask;
+        if (jump == JNI_TRUE && MoveInputJumpBit) v |= MoveInputJumpBit;
+        if (sneak == JNI_TRUE && MoveInputSneakBit) v |= MoveInputSneakBit;
+        if (MoveInputSprintBit) v |= MoveInputSprintBit; // walking forward = sprint
+        *flags = v;
+    }
+    return JNI_TRUE;
+}
 } // extern "C"

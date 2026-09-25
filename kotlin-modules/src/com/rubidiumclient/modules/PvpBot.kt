@@ -88,8 +88,6 @@ class PvpBot : KotlinModule(
         "Three misses in a row ends that WASD combination.")
     private val minTrials = int("MinTrials", "Honest tries per pattern", 3, 1, 10,
         "Each pattern is tried this often per situation before its score counts.")
-    private val speed = float("Speed", "Move speed", 0.28f, 0.05f, 0.35f,
-        "0.28 blocks/tick is vanilla sprint; the native side caps at 0.35.")
     private val humanOverride = bool("HumanOverride", "Yield while you steer", true,
         "While you are moving by hand the bot stops steering and only decides attacks.")
     private val waitIFrames = bool("WaitIFrames", "Don't swing into i-frames", true,
@@ -173,6 +171,9 @@ class PvpBot : KotlinModule(
     private var killedAuraWasOn = false
     private var lastStatus = "idle"
     private val aimApplies: Boolean by lazy { NativeBridge.botRotationAvailable() }
+    private var walkBlocked = false
+    private var walkStatus = "walk: ?"
+    private var walkStatusTick = -1000L
 
     // ── learning: bucket|combo -> score / trials ──────────────────────────
     private val scores = HashMap<String, Float>()
@@ -319,6 +320,15 @@ class PvpBot : KotlinModule(
             openingUntil = tick + openerTicks.value
             log("engage entity=$entity d=${"%.2f".format(dist)} hp=$tHealth" +
                 " (opener: backpedal ${openerTicks.value}t)")
+        }
+
+        // Movement availability is a native fact that only changes when the
+        // offsets do; sampling it 1x/s keeps the panel honest without paying a
+        // JNI string call every tick.
+        if (tick - walkStatusTick >= 20) {
+            walkStatusTick = tick
+            walkStatus = try { NativeBridge.botWalkStatus() } catch (t: Throwable) { "walk: ?" }
+            walkBlocked = false
         }
 
         // 4) PATTERN SELECTION — opener first, then forced switch on a miss
@@ -500,7 +510,11 @@ class PvpBot : KotlinModule(
             // keeps doing what it is good at (timing the swing).
             return
         }
-        NativeBridge.botMove(mx, mz, speed.value, jump)
+        // WALKING, not flying: this writes the joystick's own input state and
+        // the engine moves the player exactly as it moves you. It returns false
+        // while the input element layout is underived — then the bot stands
+        // still rather than moving badly, and the status line says why.
+        if (!NativeBridge.botWalk(mx, mz, jump, false)) walkBlocked = true
     }
 
     private fun checkEscalation(hurtIn5s: Int) {
@@ -535,9 +549,10 @@ class PvpBot : KotlinModule(
         val acc = if (total > 0) (100 * hits / total) else 0
         val aim = if (aimApplies) "aim ${"%.0f".format(aimErr)}°"
                   else "aim manual (Δ${"%.0f".format(if (aimErr < 0) 0f else aimErr)}°)"
+        val move = if (walkBlocked) "STANDING ($walkStatus)" else "walking"
         return "FIGHT d=${"%.1f".format(dist)} me=$myHealth them=$tHealth " +
             "$bucket ${c.id}\n" +
-            "hits $hits/$total ($acc%) miss-streak=$missStreak " +
-            (if (escalated) "| KillAura ENGAGED ($hurtIn5s/5s)" else "| $aim")
+            "hits $hits/$total ($acc%) miss-streak=$missStreak | $move | " +
+            (if (escalated) "KillAura ENGAGED ($hurtIn5s/5s)" else aim)
     }
 }

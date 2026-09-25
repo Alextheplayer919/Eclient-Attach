@@ -17,6 +17,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <limits>
 #include <vector>
 
 // ============================================================================
@@ -213,6 +214,15 @@ bool killauraTargetValid(void* player, void* actor, const Vec3& myPos, float ran
     return (dx * dx + dy * dy + dz * dz) <= range * range;
 }
 
+// The rotation element may only be touched when the pool is known AND the
+// element layout is pinned. The hash alone is NOT enough: the write below
+// indexes block + inBlock*stride + yawOffset, so a non-zero hash with a zero
+// stride would write into the component block itself.
+bool rotationWritable() {
+    return ActorRotationComponentHash != 0 && ActorRotationStride != 0 &&
+           ActorRotationYawOffset != 0;
+}
+
 // KillAura2 tick. Settings (Melody parity) are read through ModuleManager:
 //   Range 1..12 / WallRange 0..12 / Mode Single|Multi
 //   Rotation None|Silent|Strafe / Switch None|Full|Silent / Hurttime / Delay 0..20
@@ -272,7 +282,7 @@ void tickKillAura2(void* player) {
         // until ECSDump discovers it they intentionally fail inert.
         const Rot rot = getRotations(myPos, targetPos);
         (void)rot;
-        if (rotationMode != 0 && ActorRotationComponentHash != 0) {
+        if (rotationMode != 0 && rotationWritable()) {
             using namespace eclient_runtime::ecs;
             const ElementInfo el = resolveElement(
                 [player]() -> std::uintptr_t {
@@ -324,6 +334,21 @@ long g_dumpStartTick = -1;
 bool g_dumped = false;
 debugfiles::PublicLog g_ecsLog;
 
+// Human name for a pool hash we have derived offline. Purely a label: it makes
+// the on-device dump readable and turns "which of the 160 pools is rotation?"
+// into a lookup. Unknown hashes print as-is; that is fine.
+const char* componentName(std::uint32_t hash) {
+    switch (hash) {
+        case ActorRotationComponentHash: return "ActorRotationComponent";
+        case ActorHeadRotationComponentHash: return "ActorHeadRotationComponent";
+        case MobHurtTimeComponentHash: return "MobHurtTimeComponent";
+        case MoveInputComponentHash: return "MoveInputComponent";
+        case RawMoveInputComponentHash: return "RawMoveInputComponent";
+        case HitboxComponentHash: return "HitboxComponent";
+        default: return nullptr;
+    }
+}
+
 void ecsLogLine(const std::string& line) {
     __android_log_print(ANDROID_LOG_INFO, TAG, "%s", line.c_str());
     g_ecsLog.write(line.c_str());
@@ -369,10 +394,12 @@ void dumpSnapshot(bool second) {
 
         std::string line;
         char chunk[192];
+        const char* known = componentName(probe.hash);
         std::snprintf(chunk, sizeof(chunk),
-                      "ECS-%s hash=0x%08x %s\n  before:",
+                      "ECS-%s hash=0x%08x%s%s %s\n  before:",
                       floatChanged ? "DELTA" : "FLAG",
-                      probe.hash, E::describe(probe.el).c_str());
+                      probe.hash, known ? " " : "", known ? known : "",
+                      E::describe(probe.el).c_str());
         line += chunk;
         for (int i = 0; i < kProbeFloats; ++i) {
             std::snprintf(chunk, sizeof(chunk), " %.3g", probe.before[i]);
@@ -548,30 +575,6 @@ bool botAimAt(void* player, int index, float* outYawPitch) {
     return true;
 }
 
-bool botMove(void* player, float dirX, float dirZ, float speed, bool jump) {
-    if (!player) return false;
-    Vec3* vel = velocityPtr(player);
-    if (!vel) return false;
-    if (!std::isfinite(dirX) || !std::isfinite(dirZ) || !std::isfinite(speed)) return false;
-    if (!std::isfinite(vel->y)) return false;
-
-    const float len = std::sqrt(dirX * dirX + dirZ * dirZ);
-    float nx = 0.0f, nz = 0.0f;
-    if (len > 1.0e-4f) { nx = dirX / len; nz = dirZ / len; }
-
-    // 0.35 is a hard ceiling: vanilla sprint is ~0.28 blocks/tick, so this
-    // allows a little bias but nothing that reads as a speed hack.
-    const float s = std::clamp(speed, 0.0f, 0.35f);
-
-    float vy = vel->y;
-    if (jump && std::fabs(vy) < 0.05f) vy = 0.42f; // vanilla jump impulse
-
-    vel->x = nx * s;
-    vel->z = nz * s;
-    vel->y = vy;
-    return true;
-}
-
 bool botSelf(void* player, float* outSelf) {
     if (!player || !outSelf || !getHealth) return false;
     Vec3 pos{}, vel{};
@@ -603,7 +606,39 @@ bool botSelf(void* player, float* outSelf) {
     return true;
 }
 
-bool botRotationAvailable() { return ActorRotationComponentHash != 0; }
+bool botRotationAvailable() { return rotationWritable(); }
+
+// The local player's rotation element address, or 0 when unavailable. Same
+// guarded resolution the rotation write uses (pool by hash, element by entity
+// id) — one path, so a wrong hash shows up identically in both.
+std::uintptr_t rotationElement(void* player) {
+    if (!player || !rotationWritable()) return 0;
+    const std::uintptr_t p = reinterpret_cast<std::uintptr_t>(player);
+    std::uintptr_t pool = 0;
+    for (const auto& d : ecs::listPools(p)) {
+        if (d.typeHash == ActorRotationComponentHash) { pool = d.pool; break; }
+    }
+    if (!pool) return 0;
+    const ecs::ElementInfo el = ecs::resolveElement(pool, entityIdOf(player));
+    if (!el.valid) return 0;
+    return el.block + el.inBlock * ActorRotationStride + ActorRotationYawOffset;
+}
+
+// Yaw in degrees, or NaN when it cannot be read. Reading is as constrained as
+// writing: without the stride and the yaw offset we would not know where the
+// field is, and a wrong read would silently steer the bot somewhere else.
+float botPlayerYaw(void* player) {
+    const std::uintptr_t el = rotationElement(player);
+    if (!el) return std::numeric_limits<float>::quiet_NaN();
+    float yaw = 0.0f;
+    if (!memory::NativeMemory::instance().read(el, &yaw, sizeof(yaw))) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    if (!std::isfinite(yaw) || std::fabs(yaw) > 3600.0f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return yaw;
+}
 
 bool initialize(std::uintptr_t minecraftBase) {
     if (minecraftBase == 0) return false;

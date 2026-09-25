@@ -30,7 +30,42 @@ never act on an actor the module itself would refuse to attack.
 hands-off. That is deliberate: a stuck "walk forward" is the worst failure mode
 an automation can have, so idleness is the safe state.
 
-## 2. What it was taught (the priors)
+## 2. Walking (r28) — the engine moves, the bot only asks
+
+Movement is **not** a motion hack: `botWalk(dirX, dirZ, jump, sneak)` writes the
+input state the joystick writes and lets vanilla movement happen. That is why
+walking is the right mechanism and velocity writes were not:
+
+| velocity write (removed) | input write (now) |
+|---|---|
+| fights the engine's own acceleration every tick | the engine *is* the mover |
+| no walk animation, no footsteps, no bob | full animation set, for free |
+| ignores water / ice / ladders / sneaking rules | all of them work, because it is the normal path |
+| synthesises motion | synthesises *intent* |
+
+`botWalkStatus()` reports what walking is waiting for, in the UI:
+
+```
+walk: ready                                     ← everything derived
+walk: needs player yaw (rotation layout …)      ← input layout done, yaw missing
+walk: pool OK, element layout not derived       ← the pool hash resolves (r28 state)
+walk: input pool unavailable (no ECS registry)  ← world not ready / hash wrong
+```
+
+The pool hash for `MoveInputComponent` (0x018b1887) is already derived and
+verified offline (see `tools/entt_hash.py`), which is why the third line above
+is the expected state today: the bot can *find* the component and reports that
+plainly, it just cannot write bytes inside an element whose layout is unknown.
+
+**Discovery procedure** (one device run, no guessing which of 160 pools):
+long-press the panel title → dev mode → enable **ECSDump**, then *walk around
+while the two snapshots are taken*. The dump now labels known pools by name, so
+the log shows `ECS-DELTA hash=0x018b1887 MoveInputComponent` with before/after
+values — the changing pair is the move vector, the changing bits are the flags.
+Do the same while rotating the view to pin `ActorRotationComponent`'s stride and
+yaw/pitch offsets, which is what unlocks aim and steering together.
+
+## 3. What it was taught (the priors)
 
 It starts opinionated, not blank:
 
@@ -43,7 +78,7 @@ It starts opinionated, not blank:
 | **Sword cadence, not spam** (12 ticks) | Attacks land on cooldown. |
 | **Hold still is rated worst** | Standing there is how you get comboed. |
 
-## 3. The movement patterns ("WASD combinations")
+## 4. The movement patterns ("WASD combinations")
 
 Weights are in the **target's** frame, so patterns are camera-independent:
 
@@ -57,7 +92,7 @@ Weights are in the **target's** frame, so patterns are camera-independent:
 | `advance` | straight charge | −0.4 |
 | `hold` | stand still (never chosen by scoring) | −2.0 |
 
-## 4. How it learns
+## 5. How it learns
 
 Every swing is an experiment. The situation is bucketed — **distance band ×
 target moving/standing × my health band** → e.g. `d1m h2` — and the pattern is
@@ -83,7 +118,7 @@ Rules on top:
 Persistence: `eclient_bot` SharedPreferences (`s|<bucket>|<combo>` scores,
 `t|…` trial counts, lifetime hits/misses). Sweep `Reset` in the panel to erase.
 
-## 5. Escalation (auto-KillAura)
+## 6. Escalation (auto-KillAura)
 
 If the bot starts **getting hit non-stop** — `Escalate-hits` damage events
 (default 3) inside the native 5-second window — it turns **KillAura2 on by
@@ -95,21 +130,26 @@ spacing lost the fight, so that is the moment to stop being polite about aim.
 The damage timeline is native (`botSelf`: events in the last 5 s + ticks since
 the last one) because it has to be measured on the game tick, not sampled.
 
-## 6. What it cannot do yet — said out loud, never faked
+## 7. What it cannot do yet — said out loud, never faked
 
 | gap | state |
 |---|---|
 | **Turning the player** | `ActorRotationComponent` underived → `botRotationAvailable()` is `false`, the bot computes the needed yaw/pitch and shows the **aim error** in the panel, but you still have to keep the target roughly in front. The seam is ready: when the offsets land, aim starts applying with no other change. |
 | **Line of sight** | not ported; it will swing through a wall if the target is in range (KillAura2 has the same note). |
 | **Eating / item use** | `UsingItemFlagOffset` underived, so the bot cannot pause for a gapple. Don't run it while eating. |
-| **Movement mechanism** | it writes the state-vector velocity (the mechanism Fly proved, capped at 0.35 blocks/tick ≈ sprint). It is not input injection — if you steer by hand, `Human-override` makes the bot yield movement to you and keep timing the swing. |
+| **Movement mechanism** | it WALKS: it writes the same input state the on-screen joystick writes (`MoveInputComponent`) and the engine does the rest — speed, friction, collision, sprint rules, animations, footsteps. **This is blocked on one derived fact**: the layout of that component's element (stride + the two floats + flag bits), so today the bot stands still and the panel says so. The previous velocity-write approach (the fly mechanism) was deleted on the user's call: it fought the engine every tick, produced no walk animation and could not respect water/ice/ladders. |
+| **Player yaw for steering** | joystick input is camera-relative, so turning world-space intent into input axes needs the player's yaw — which comes from the same rotation component that aim waits on. Same derivation, same run. |
 
-## 7. Settings that matter
+## 8. Settings that matter
 
 `Range`, `AttackRange`, `Keep-min/max`, `Cooldown`, `Opener`, `Fail-switch`,
-`Min-trials`, `Speed`, `Human-override`, `Wait i-frames`, `Auto-KillAura`,
+`Min-trials`, `Human-override`, `Wait i-frames`, `Auto-KillAura`,
 `Escalate-hits`, `KillAura-hold`, `Restore`, `Target` (Nearest | Lowest HP),
 `Debug`.
+
+There is deliberately **no speed setting**: the walk speed is the engine's own
+(walk vs sprint is its decision, not ours), which is the entire point of using
+input instead of velocity.
 
 The panel status line shows the live state:
 `FIGHT d=2.8 me=20 them=14 d1mh2 strafe-left / hits 7/12 (58%) miss-streak=0`.

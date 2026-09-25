@@ -75,6 +75,7 @@
 ./tools/README.md
 ./tools/build-and-patch.sh
 ./tools/build-kotlin-modules.sh
+./tools/entt_hash.py
 ./tools/minecraft-host-loader.smali
 ./tools/minecraft-touch-listener.smali
 ./tools/patch-minecraft-apk.sh
