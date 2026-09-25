@@ -257,20 +257,35 @@ echo "$LOADER_DIR/EClientTouchListener.smali"
 echo
 
 # Kotlin module layer (optional): dex-compiled Kotlin source produced by
-# tools/build-kotlin-modules.sh. Injected via the unknown/ passthrough as
-# classes2.dex at APK root — ART's multidex loader picks up root classesN.dex
-# verbatim, and cross-dex references from the loader (classes.dex) are legal.
+# tools/build-kotlin-modules.sh. Injected via the unknown/ passthrough under
+# the NEXT FREE multidex name — Minecraft is already multidex (it ships its
+# own classes2..classesN.dex), and stomping one of those = instant startup
+# crash (the r16 regression). apktool decodes each dex as a smali dir
+# (smali = classes.dex, smali_classes2 = classes2.dex, ...), so the next
+# free index = smali dir count + 1.
 KOTLIN_INSTALLED=0
 if [[ -n "${KOTLIN_DEX_FILE:-}" ]] && [[ -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]]; then
     head -c 4 "$KOTLIN_DEX_FILE" | grep -q "dex" || {
         echo "ERROR: KOTLIN_DEX_FILE is not a dex file."
         exit 1
     }
+    SMALI_DIRS=$(find "$DECODED" -maxdepth 1 -type d -name 'smali*' | wc -l)
+    if [[ "$SMALI_DIRS" -lt 1 ]]; then
+        echo "ERROR: no smali dirs in decoded APK — cannot compute dex index."
+        exit 1
+    fi
+    NEXT_INDEX=$((SMALI_DIRS + 1))
+    KOTLIN_DEX_NAME="classes${NEXT_INDEX}.dex"
+    # Paranoia: the slot we are about to take must not already exist.
+    if [[ -d "$DECODED/smali_classes${NEXT_INDEX}" ]]; then
+        echo "ERROR: index $NEXT_INDEX collides with an existing smali dir."
+        exit 1
+    fi
     mkdir -p "$DECODED/unknown"
-    cp "$KOTLIN_DEX_FILE" "$DECODED/unknown/classes2.dex"
+    cp "$KOTLIN_DEX_FILE" "$DECODED/unknown/$KOTLIN_DEX_NAME"
     KOTLIN_INSTALLED=1
-    echo "Kotlin module layer installed:"
-    echo "$DECODED/unknown/classes2.dex ($(du -h "$DECODED/unknown/classes2.dex" | cut -f1))"
+    echo "Kotlin module layer installed (game already has $SMALI_DIRS dex(es)):"
+    echo "$DECODED/unknown/$KOTLIN_DEX_NAME ($(du -h "$DECODED/unknown/$KOTLIN_DEX_NAME" | cut -f1))"
     echo
 fi
 
@@ -431,8 +446,8 @@ if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
             echo "ERROR: Kotlin layer was installed but the loader never calls ModuleRegistry.init."
             exit 1
         }
-    [[ -f "$DECODED/unknown/classes2.dex" ]] || {
-        echo "ERROR: classes2.dex did not survive the copy."
+    [[ -f "$DECODED/unknown/$KOTLIN_DEX_NAME" ]] || {
+        echo "ERROR: Kotlin dex did not survive the copy."
         exit 1
     }
 fi
@@ -518,6 +533,22 @@ echo
 echo "Unsigned APK created:"
 ls -lh "$BUILT_APK"
 echo
+
+if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
+    # Final guard: the built APK must contain our dex NEXT to all the game's
+    # original dex files (nothing replaced, exactly one entry added).
+    python3 - "$BUILT_APK" "$KOTLIN_DEX_NAME" <<'PY'
+import sys, zipfile
+apk, injected = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(apk) as z:
+    dexes = sorted(n for n in z.namelist()
+                   if "/" not in n and n.startswith("classes") and n.endswith(".dex"))
+if injected not in dexes:
+    print(f"ERROR: {injected} missing from built APK — dex list: {dexes}")
+    sys.exit(1)
+print(f"APK dex files ({len(dexes)}): {dexes}")
+PY
+fi
 
 # ============================================================
 # 8. Verify resources.arsc
