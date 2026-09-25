@@ -40,6 +40,7 @@ object ModuleRegistry {
         if (modules.isNotEmpty()) return
         modules += Hitbox()
         modules += AutoTotem()
+        modules += PvpBot()
         NativeBridge.logLine("ModuleRegistry ready: " + modules.joinToString { it.name })
     }
 
@@ -50,6 +51,11 @@ object ModuleRegistry {
     }
 
     fun all(): List<KotlinModule> = modules
+
+    /** App-level prefs for a module that keeps its own state (e.g. the bot's
+     *  learned scores). Returns null before bind(). */
+    fun appPrefs(name: String): android.content.SharedPreferences? =
+        appContext?.getSharedPreferences(name, 0)
 
     fun find(name: String): KotlinModule? = modules.firstOrNull { it.name == name }
 

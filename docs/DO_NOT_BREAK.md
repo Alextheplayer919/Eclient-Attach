@@ -50,6 +50,28 @@ returns without installing the swap hook, so none of the ImGui code below runs.*
 - The log file (`Download/EClient/eclient_ui_*.txt`) is part of the product, not
   debug leftovers: it is how a device-only failure gets diagnosed without adb.
 
+## PvP Bot invariants (r27)
+
+- **No target → no writes.** With nothing in range the bot must not touch
+  movement or attack. Every "automation gone wrong" failure the user could hit
+  starts with a bot that kept acting when it had nothing to act on.
+- **The bot shares KillAura2's actor filter** (`melody::killauraTargetValid`).
+  Do not give `botScan` its own validity rules: the moment the two disagree, the
+  bot can act on an actor the module refuses and the difference is invisible.
+- **Hit attribution keys on the entity id**, never on the scan index (indexes
+  reshuffle every tick). The id travels through a float slot bit-exact
+  (`memcpy` native side, `floatToRawIntBits` Kotlin side — NOT `toBits()`, which
+  canonicalises NaN and would corrupt an id).
+- **The bot's health history is its own map** (`g_botHealth`), deliberately not
+  `g_hurtState`: that one feeds KillAura2's Hurttime filter and must not learn
+  about the bot's bookkeeping.
+- **Movement writes go through `botMove` (KotlinBridge)**, not a Melody-side
+  helper: only there is `g_prevOut` updated, which is what keeps
+  `getWorldInputDir` reporting the *human's* input instead of the bot's own
+  velocity (that is how Human-override works at all).
+- `botRotationAvailable()` must return false while `ActorRotationComponentHash`
+  is 0. Never let the bot claim it can aim.
+
 - Every overlay window is a `TYPE_APPLICATION_PANEL` sub-window with
   `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`, and **no window is ever
   MATCH_PARENT**. That is the entire fix for "the game ignores input once the menu

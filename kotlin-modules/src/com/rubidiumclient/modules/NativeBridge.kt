@@ -59,6 +59,52 @@ object NativeBridge {
     external fun getFloatSetting(module: String, key: String, fallback: Float): Float
     external fun getBoolSetting(module: String, key: String, fallback: Boolean): Boolean
 
+    // ── PvP bot data plane (r27) ──────────────────────────────────────────
+    //
+    // DRIVEN BY YOU, NOT THE UI: these answer `botScan`-style questions about
+    // the world using the SAME validated offsets and the SAME actor filter as
+    // KillAura2 (melody::botScan), so the bot can never act on an actor the
+    // module would itself refuse to attack. All of them fail inert: -1 / false
+    // means "world not readable right now", never a guessed value.
+    //
+    // botScan packs 11 floats per actor, nearest first:
+    //   [0..2] position    [3..5] velocity   [6] distance
+    //   [7] health         [8] type id (approx.)  [9] flags (bit0 = damaged
+    //   within the last 10 ticks)
+    //   [10] entity id, exact — read it with Float.fromBits(v.toInt()).
+    //        Indexes reshuffle between ticks, the entity id does not, so hit
+    //        attribution must key on the id, never on the index.
+    // Returns the actor count, or -1 when the world is not readable.
+    external fun botScan(out: FloatArray, maxRange: Float, playersOnly: Boolean): Int
+
+    /** Attack the actor at `index` of the most recent scan (same tick only). */
+    external fun botAttack(index: Int): Boolean
+
+    /** Yaw/pitch (degrees) that faces the actor at `index`; out[0]=yaw, out[1]=pitch. */
+    external fun botAim(index: Int, out: FloatArray): Boolean
+
+    /**
+     * Move by writing velocity (the mechanism Fly proved; ~0.28 blocks/tick is
+     * vanilla sprint). The direction is WORLD space, so the bot can strafe and
+     * retreat regardless of where the player is looking. Y is preserved unless
+     * `jump` and the player is on the ground.
+     */
+    external fun botMove(dirX: Float, dirZ: Float, speed: Float, jump: Boolean): Boolean
+
+    /**
+     * Self state: [0..2] pos, [3..5] velocity, [6] health, [7] damaged within
+     * 10 ticks (1/0), [8] damage events in the last 5 s, [9] ticks since the
+     * last damage event (-1 = never). out[8]/[9] drive the escalation rule.
+     */
+    external fun botSelf(out: FloatArray): Boolean
+
+    /**
+     * Whether aim can actually be APPLIED yet. False today: the rotation
+     * component is not derived, so the bot computes the aim it needs and shows
+     * it, but the player still has to look. Never pretend otherwise.
+     */
+    external fun botRotationAvailable(): Boolean
+
     // ── logcat, tag EClientKotlin (also tee'd to Download/EClient/*.txt) ──
 
     external fun logLine(line: String)

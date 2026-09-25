@@ -448,6 +448,163 @@ void resetState() {
 
 } // namespace
 
+// ============================================================================
+// Bot support (r27) — see MelodyModules.h for the contract.
+//
+// Everything here is a thin, guarded query over the SAME helpers the PvP
+// modules use. Nothing in this file decides anything: the Kotlin PvpBot owns
+// the strategy, the scoring and the exploration.
+// ============================================================================
+namespace {
+
+// The bot keeps its OWN health history rather than reusing g_hurtState: that
+// map feeds KillAura2's Hurttime filter, and mixing "who damaged whom" into it
+// would change that module's behaviour from the outside.
+struct BotHealth { int health; long hurtUntil; };
+std::unordered_map<void*, BotHealth> g_botHealth;
+std::vector<void*> g_botActors;          // last botScan order (index space)
+std::vector<long> g_botSelfDamageTicks; // ticks at which WE took damage
+int g_botSelfLastHealth = -1;
+
+bool botRecentlyHurt(void* actor, int health) {
+    const auto it = g_botHealth.find(actor);
+    if (it == g_botHealth.end()) {
+        g_botHealth.emplace(actor, BotHealth{health, 0});
+        return false;
+    }
+    BotHealth& st = it->second;
+    const bool dropped = health < st.health;
+    if (dropped) st.hurtUntil = g_tick + 10; // 0.5 s vanilla invulnerability
+    st.health = health;
+    return g_tick < st.hurtUntil;
+}
+
+} // namespace
+
+int botScan(void* player, float maxRange, bool playersOnly, BotActor* out, int cap) {
+    g_botActors.clear();
+    if (!player || !out || cap <= 0) return -1;
+    if (!getRuntimeActors || !isAttackable || !getHealth || !getEntityTypeId) return -1;
+
+    void* level = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetLevelField);
+    Vec3 myPos{};
+    if (!level || !getPosition(player, myPos)) return -1;
+
+    const float range = std::clamp(maxRange, 0.5f, 32.0f);
+    const std::uint32_t myTypeId = playersOnly ? getEntityTypeId(player) : 0;
+
+    std::vector<std::pair<float, void*>> found;
+    for (void* actor : getRuntimeActors(level)) {
+        if (actor == player) continue;
+        if (!killauraTargetValid(player, actor, myPos, range, playersOnly, myTypeId)) continue;
+        Vec3 pos{};
+        if (!getPosition(actor, pos)) continue;
+        const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
+        found.emplace_back(dx * dx + dy * dy + dz * dz, actor);
+    }
+    std::sort(found.begin(), found.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    int n = 0;
+    for (const auto& [d2, actor] : found) {
+        if (n >= cap) break;
+        Vec3 pos{}, vel{};
+        if (!getPosition(actor, pos)) continue;
+        if (Vec3* v = velocityPtr(actor)) {
+            if (std::isfinite(v->x) && std::isfinite(v->y) && std::isfinite(v->z)) vel = *v;
+        }
+        const int hp = getHealth(actor);
+        const bool hurt = botRecentlyHurt(actor, hp);
+        out[n] = BotActor{pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+                          std::sqrt(d2), hp, getEntityTypeId(actor),
+                          entityIdOf(actor),
+                          (hurt ? kBotFlagHurt : 0) | kBotFlagAttackable};
+        g_botActors.push_back(actor);
+        ++n;
+    }
+    return n;
+}
+
+bool botAttackIndex(void* player, int index) {
+    if (!player || !attack) return false;
+    if (index < 0 || static_cast<std::size_t>(index) >= g_botActors.size()) return false;
+    const std::uintptr_t p = reinterpret_cast<std::uintptr_t>(player);
+    void* gameMode = *reinterpret_cast<void**>(p + GetGameModeField);
+    if (!gameMode) return false;
+    attack(gameMode, g_botActors[static_cast<std::size_t>(index)], true);
+    return true;
+}
+
+bool botAimAt(void* player, int index, float* outYawPitch) {
+    if (!player || !outYawPitch) return false;
+    if (index < 0 || static_cast<std::size_t>(index) >= g_botActors.size()) return false;
+    Vec3 myPos{}, targetPos{};
+    if (!getPosition(player, myPos)) return false;
+    if (!getPosition(g_botActors[static_cast<std::size_t>(index)], targetPos)) return false;
+    const Rot rot = getRotations(myPos, targetPos);
+    if (!std::isfinite(rot.yaw) || !std::isfinite(rot.pitch)) return false;
+    outYawPitch[0] = rot.yaw;
+    outYawPitch[1] = rot.pitch;
+    return true;
+}
+
+bool botMove(void* player, float dirX, float dirZ, float speed, bool jump) {
+    if (!player) return false;
+    Vec3* vel = velocityPtr(player);
+    if (!vel) return false;
+    if (!std::isfinite(dirX) || !std::isfinite(dirZ) || !std::isfinite(speed)) return false;
+    if (!std::isfinite(vel->y)) return false;
+
+    const float len = std::sqrt(dirX * dirX + dirZ * dirZ);
+    float nx = 0.0f, nz = 0.0f;
+    if (len > 1.0e-4f) { nx = dirX / len; nz = dirZ / len; }
+
+    // 0.35 is a hard ceiling: vanilla sprint is ~0.28 blocks/tick, so this
+    // allows a little bias but nothing that reads as a speed hack.
+    const float s = std::clamp(speed, 0.0f, 0.35f);
+
+    float vy = vel->y;
+    if (jump && std::fabs(vy) < 0.05f) vy = 0.42f; // vanilla jump impulse
+
+    vel->x = nx * s;
+    vel->z = nz * s;
+    vel->y = vy;
+    return true;
+}
+
+bool botSelf(void* player, float* outSelf) {
+    if (!player || !outSelf || !getHealth) return false;
+    Vec3 pos{}, vel{};
+    if (!getPosition(player, pos)) return false;
+    if (Vec3* v = velocityPtr(player)) {
+        if (std::isfinite(v->x) && std::isfinite(v->y) && std::isfinite(v->z)) vel = *v;
+    }
+
+    const int hp = getHealth(player);
+    bool damagedNow = false;
+    if (g_botSelfLastHealth >= 0 && hp < g_botSelfLastHealth) {
+        damagedNow = true;
+        g_botSelfDamageTicks.push_back(g_tick);
+        if (g_botSelfDamageTicks.size() > 64) g_botSelfDamageTicks.erase(g_botSelfDamageTicks.begin());
+    }
+    g_botSelfLastHealth = hp;
+
+    // 5 s window (100 ticks at 20 tps) — "am I getting hit non stop right now?"
+    std::size_t recent = 0;
+    for (long t : g_botSelfDamageTicks) if (g_tick - t <= 100) ++recent;
+    const long sinceLast = g_botSelfDamageTicks.empty() ? -1 : (g_tick - g_botSelfDamageTicks.back());
+
+    outSelf[0] = pos.x; outSelf[1] = pos.y; outSelf[2] = pos.z;
+    outSelf[3] = vel.x; outSelf[4] = vel.y; outSelf[5] = vel.z;
+    outSelf[6] = static_cast<float>(hp);
+    outSelf[7] = (damagedNow || (sinceLast >= 0 && sinceLast <= 10)) ? 1.0f : 0.0f;
+    outSelf[8] = static_cast<float>(recent);
+    outSelf[9] = static_cast<float>(sinceLast);
+    return true;
+}
+
+bool botRotationAvailable() { return ActorRotationComponentHash != 0; }
+
 bool initialize(std::uintptr_t minecraftBase) {
     if (minecraftBase == 0) return false;
     base = minecraftBase;
@@ -459,6 +616,13 @@ bool initialize(std::uintptr_t minecraftBase) {
     getEntityTypeId = reinterpret_cast<GetEntityTypeIdFn>(fn(GetEntityTypeId));
 
     resetState();
+    // Bot data plane (r27): a fresh bind means a fresh world — drop every
+    // stale actor pointer and health baseline instead of comparing against
+    // a previous session's numbers.
+    g_botHealth.clear();
+    g_botActors.clear();
+    g_botSelfDamageTicks.clear();
+    g_botSelfLastHealth = -1;
     __android_log_print(ANDROID_LOG_INFO, TAG,
         "PvP modules ready: KillAura2 + ECSDump (Fly/FlyDebug removed in r25)");
     return true;

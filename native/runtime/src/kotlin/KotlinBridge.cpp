@@ -7,9 +7,12 @@
 #include <string>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
+#include <vector>
 
 #include "modules/FlyInput.h"
+#include "modules/MelodyModules.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 #include "profile/PatchManager.h"
@@ -350,6 +353,129 @@ JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativePat
 JNIEXPORT void JNICALL Java_com_rubidiumclient_modules_NativeBridge_setKotlinTickActive(
     JNIEnv* /*env*/, jobject /*self*/, jboolean active) {
     eclient_runtime::kotlinbridge::g_kotlinTickActive.store(active == JNI_TRUE);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PVP bot data plane (r27)
+//
+// The bot's decisions are Kotlin (PvpBot.kt); these are the four questions a
+// decision needs answered, plus the movement write. Everything goes through
+// the same validated offsets and the same actor filter as KillAura2 (see
+// melody::botScan), so the bot can never see an actor the module would refuse
+// to attack.
+//
+// botScan layout — 11 floats per actor, nearest first:
+//   [0..2] position  [3..5] velocity  [6] distance
+//   [7] health       [8] type id      [9] flags (1 = damaged within 10 ticks)
+//   [10] entity id, exact, carried in the low bits of a float (Kotlin reads it
+//        with Float.fromBits). Identity matters: scan indexes reshuffle every
+//        tick, so hit attribution has to key on something stable.
+// Returns the actor count, or -1 when the world is not readable (fail inert).
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace {
+constexpr int kBotFloatsPerActor = 11;
+constexpr int kBotMaxActors = 24; // JNI-side cap; the Kotlin side caps again
+} // namespace
+
+JNIEXPORT jint JNICALL Java_com_rubidiumclient_modules_NativeBridge_botScan(
+    JNIEnv* env, jobject /*self*/, jfloatArray out, jfloat maxRange, jboolean playersOnly) {
+    using namespace eclient_runtime::modules::melody;
+    if (!out || env->GetArrayLength(out) < kBotFloatsPerActor) return -1;
+
+    const int cap = std::min(kBotMaxActors,
+                             env->GetArrayLength(out) / kBotFloatsPerActor);
+    std::vector<BotActor> actors(static_cast<std::size_t>(cap));
+    const int n = botScan(eclient_runtime::kotlinbridge::g_player.load(),
+                          static_cast<float>(maxRange), playersOnly == JNI_TRUE,
+                          actors.data(), cap);
+    if (n <= 0) return n;
+
+    std::vector<jfloat> packed(static_cast<std::size_t>(n) * kBotFloatsPerActor);
+    for (int i = 0; i < n; ++i) {
+        const BotActor& a = actors[static_cast<std::size_t>(i)];
+        jfloat* p = &packed[static_cast<std::size_t>(i) * kBotFloatsPerActor];
+        p[0] = a.x; p[1] = a.y; p[2] = a.z;
+        p[3] = a.vx; p[4] = a.vy; p[5] = a.vz;
+        p[6] = a.distance;
+        p[7] = static_cast<jfloat>(a.health);
+        p[8] = static_cast<jfloat>(a.typeId);
+        p[9] = static_cast<jfloat>(a.flags);
+        // Entity id travels bit-exact through a float; see the layout comment.
+        std::uint32_t idBits = a.entityId;
+        jfloat idFloat = 0.0f;
+        static_assert(sizeof(idBits) == sizeof(idFloat), "id must fit a float slot");
+        std::memcpy(&idFloat, &idBits, sizeof(idFloat));
+        p[10] = idFloat;
+    }
+    env->SetFloatArrayRegion(out, 0, static_cast<jsize>(packed.size()), packed.data());
+    return n;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botAttack(
+    JNIEnv* /*env*/, jobject /*self*/, jint index) {
+    using namespace eclient_runtime::modules::melody;
+    const bool ok = botAttackIndex(eclient_runtime::kotlinbridge::g_player.load(),
+                                   static_cast<int>(index));
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botAim(
+    JNIEnv* env, jobject /*self*/, jint index, jfloatArray out) {
+    using namespace eclient_runtime::modules::melody;
+    if (!out || env->GetArrayLength(out) < 2) return JNI_FALSE;
+    float yawPitch[2]{};
+    if (!botAimAt(eclient_runtime::kotlinbridge::g_player.load(),
+                  static_cast<int>(index), yawPitch)) {
+        return JNI_FALSE;
+    }
+    env->SetFloatArrayRegion(out, 0, 2, yawPitch);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botRotationAvailable(
+    JNIEnv* /*env*/, jobject /*self*/) {
+    return eclient_runtime::modules::melody::botRotationAvailable() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botSelf(
+    JNIEnv* env, jobject /*self*/, jfloatArray out) {
+    using namespace eclient_runtime::modules::melody;
+    if (!out || env->GetArrayLength(out) < 10) return JNI_FALSE;
+    float self[10]{};
+    if (!botSelf(eclient_runtime::kotlinbridge::g_player.load(), self)) return JNI_FALSE;
+    env->SetFloatArrayRegion(out, 0, 10, self);
+    return JNI_TRUE;
+}
+
+// Movement: velocity write (the mechanism Fly proved) through the SAME
+// g_prevOut bookkeeping as setVelocity, so getWorldInputDir keeps reporting the
+// HUMAN's own movement and not the bot's. The bot uses that to yield while the
+// player is steering by hand.
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botMove(
+    JNIEnv* /*env*/, jobject /*self*/, jfloat dirX, jfloat dirZ, jfloat speed, jboolean jump) {
+    using namespace eclient_runtime::kotlinbridge;
+    void* player = g_player.load();
+    Vec3* vel = velocityPtr(player);
+    if (!vel) return JNI_FALSE;
+    if (!std::isfinite(dirX) || !std::isfinite(dirZ) || !std::isfinite(speed)) return JNI_FALSE;
+    if (!std::isfinite(vel->y)) return JNI_FALSE;
+
+    const float len = std::sqrt(dirX * dirX + dirZ * dirZ);
+    float nx = 0.0f, nz = 0.0f;
+    if (len > 1.0e-4f) { nx = dirX / len; nz = dirZ / len; }
+    // 0.35 hard ceiling: vanilla sprint is ~0.28 blocks/tick.
+    const float s = std::clamp(speed, 0.0f, 0.35f);
+
+    float vy = vel->y;
+    if (jump == JNI_TRUE && std::fabs(vy) < 0.05f) vy = 0.42f; // vanilla jump impulse
+
+    vel->x = nx * s;
+    vel->z = nz * s;
+    vel->y = vy;
+    g_prevOut = {vel->x, vel->y, vel->z};
+    g_havePrevOut = true;
+    return JNI_TRUE;
 }
 
 } // extern "C"

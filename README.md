@@ -28,6 +28,7 @@ Modules exposed in the in-game panel:
 | NoSlowDown | memory patch | validated & working |
 | Hitbox | Kotlin | pending: needs the entity size offset |
 | AutoTotem | Kotlin | pending: needs inventory offsets |
+| PvP Bot | Kotlin | **new in r27** — spacing, strafes, attack timing, learned patterns, auto-KillAura escalation (see `docs/PVP_BOT.md`) |
 | ECSDump | native dev | hidden unless dev mode (long-press the panel title) |
 
 Removed in r25 (code included, not just the UI entry): Fly, MotionFly, Speed, Step,
@@ -42,6 +43,17 @@ are simply no longer exposed as toggles.
 
 Anything whose memory is not derived yet fails **inert and says so in the UI**.
 Nothing is faked, and nothing half-finished is allowed to silently misbehave.
+
+### PvP Bot (r27)
+
+A per-tick decision system, not a script: it watches every nearby player
+(position, velocity, health, i-frames), holds a fighting distance, opens every
+engagement by backing off (people charge straight in), rates each movement
+pattern ("WASD combination") per situation, forces a different pattern after a
+miss streak, and turns KillAura2 on by itself when it starts taking non-stop
+hits. Scores persist across restarts. Turning the player toward the target is
+the one thing still waiting on the rotation component — it shows the aim error
+instead of pretending. Full design: `docs/PVP_BOT.md`.
 
 ## UI and input (r26)
 
