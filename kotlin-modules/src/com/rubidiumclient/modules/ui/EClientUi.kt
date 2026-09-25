@@ -84,7 +84,13 @@ object EClientUi {
         rebuildPanel(overlay)
 
         ModuleRegistry.onModulesChanged = {
-            main.post { root?.let { rebuildPanel(it) } }
+            main.post {
+                try {
+                    root?.let { rebuildPanel(it) }
+                } catch (t: Throwable) {
+                    com.rubidiumclient.modules.NativeBridge.logLine("panel rebuild: $t")
+                }
+            }
         }
         setFlyButtonsVisible(ModuleRegistry.anyFlyButtonsVisible())
     }
@@ -159,10 +165,22 @@ object EClientUi {
     }
 
     private fun togglePanel() {
-        val p = panel ?: return
-        val show = p.visibility != View.VISIBLE
-        p.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) rebuildPanel(p)
+        // CRITICAL (r19 crash): rebuild must target the ROOT overlay — passing
+        // the panel itself nests ScrollView-in-ScrollView and Android throws
+        // "can host only one direct child" synchronously inside touch
+        // dispatch, killing the app on the first chip tap.
+        val r = root ?: return
+        val show = panel?.visibility != View.VISIBLE
+        try {
+            if (show) {
+                rebuildPanel(r)
+                panel?.visibility = View.VISIBLE
+            } else {
+                panel?.visibility = View.GONE
+            }
+        } catch (t: Throwable) {
+            com.rubidiumclient.modules.NativeBridge.logLine("panel toggle: $t")
+        }
     }
 
     // ── fly buttons ───────────────────────────────────────────────────
@@ -303,32 +321,31 @@ object EClientUi {
         m.statusHint()?.let { texts.addView(label(it, 11f, 0xFFE3B341.toInt())) }
         topRow.addView(texts)
 
-        val toggle = Switch(activity).apply {
-            isChecked = m.isEnabled
-            minWidth = dp(52)
-        }
-        toggle.setOnCheckedChangeListener { _, checked ->
-            ModuleRegistry.setModuleEnabled(m, checked)
-            if (m.isEnabled != checked) toggle.isChecked = m.isEnabled
-        }
-        topRow.addView(toggle)
-        wrap.addView(topRow)
-
         val settingsCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (m.isEnabled && m.settings.isNotEmpty()) View.VISIBLE else View.GONE
             setPadding(dp(6), 0, 0, 0)
         }
         for (s in m.settings) settingsCol.addView(settingRow(s))
-        if (m.settings.isNotEmpty()) {
-            wrap.addView(settingsCol)
-            toggle.setOnCheckedChangeListener { _, checked ->
+
+        val toggle = Switch(activity).apply {
+            isChecked = m.isEnabled
+            minWidth = dp(52)
+        }
+        toggle.setOnCheckedChangeListener { _, checked ->
+            try {
                 ModuleRegistry.setModuleEnabled(m, checked)
                 toggle.isChecked = m.isEnabled
                 settingsCol.visibility =
-                    if (m.isEnabled) View.VISIBLE else View.GONE
+                    if (m.isEnabled && m.settings.isNotEmpty()) View.VISIBLE else View.GONE
+            } catch (t: Throwable) {
+                com.rubidiumclient.modules.NativeBridge.logLine("toggle ${m.name}: $t")
             }
         }
+        topRow.addView(toggle)
+        wrap.addView(topRow)
+
+        if (m.settings.isNotEmpty()) wrap.addView(settingsCol)
         return wrap
     }
 
