@@ -47,6 +47,8 @@ object EClientUi {
     @Volatile private var root: FrameLayout? = null
     @Volatile private var panel: ScrollView? = null
     @Volatile private var flyColumn: LinearLayout? = null
+    @Volatile private var chipView: View? = null
+    private fun chip() = chipView
 
     // ▲/▼ hold state read by Fly/MotionFly on the game tick thread.
     @Volatile var upHeld: Boolean = false; private set
@@ -162,6 +164,7 @@ object EClientUi {
             }
         }
         overlay.addView(chip)
+        chipView = chip
     }
 
     private fun togglePanel() {
@@ -175,9 +178,16 @@ object EClientUi {
             if (show) {
                 rebuildPanel(r)
                 panel?.visibility = View.VISIBLE
+                // While the menu is open, empty space outside the panel
+                // absorbs touches and acts as "tap outside to close".
+                r.isClickable = true
+                r.setOnClickListener { togglePanel() }
             } else {
                 panel?.visibility = View.GONE
+                r.isClickable = false
+                r.setOnClickListener(null)
             }
+            chip()?.bringToFront() // chip stays reachable even over the panel
         } catch (t: Throwable) {
             com.rubidiumclient.modules.NativeBridge.logLine("panel toggle: $t")
         }
@@ -185,6 +195,9 @@ object EClientUi {
 
     // ── fly buttons ───────────────────────────────────────────────────
 
+    // Held-hold to fly vs drag-to-reposition on the same views: a touch that
+    // MOVES past the drag threshold becomes a reposition drag (fly hold is
+    // cancelled for that gesture); a stationary press stays a fly hold.
     private fun flyButton(activity: Activity, glyph: String, colorDown: Int,
                           onHeld: (Boolean) -> Unit): View {
         val v = TextView(activity).apply {
@@ -206,13 +219,37 @@ object EClientUi {
         v.setOnTouchListener { view, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    flyDragRawX = ev.rawX
+                    flyDragRawY = ev.rawY
+                    flyDragging = false
                     onHeld(true)
                     (view.background as GradientDrawable).setColor(colorDown)
                     view.alpha = 1f
                     true
                 }
+                MotionEvent.ACTION_MOVE -> {
+                    val ddx = ev.rawX - flyDragRawX
+                    val ddy = ev.rawY - flyDragRawY
+                    if (!flyDragging &&
+                        ddx * ddx + ddy * ddy > dp(14) * dp(14)) {
+                        flyDragging = true
+                        // The hold is cancelled mid-gesture — you are moving
+                        // the buttons, not flying.
+                        onHeld(false)
+                        (view.background as GradientDrawable).setColor(0x99202630.toInt())
+                        view.alpha = 0.85f
+                    }
+                    if (flyDragging) dragFlyColumn(ddx, ddy)
+                    true
+                }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    onHeld(false)
+                    if (flyDragging) {
+                        onHeld(false) // safety: never leave a stale hold after a drag
+                        persistFlyOffset()
+                        flyDragging = false
+                    } else {
+                        onHeld(false)
+                    }
                     (view.background as GradientDrawable).setColor(0x99202630.toInt())
                     view.alpha = 0.85f
                     true
@@ -221,6 +258,37 @@ object EClientUi {
             }
         }
         return v
+    }
+
+    @Volatile private var flyDragRawX = 0f
+    @Volatile private var flyDragRawY = 0f
+    @Volatile private var flyDragging = false
+
+    private fun uiPrefs() =
+        root?.context?.applicationContext?.getSharedPreferences("eclient_ui", 0)
+
+    private fun dragFlyColumn(ddx: Float, ddy: Float) {
+        val col = flyColumn ?: return
+        val parent = col.parent as? View ?: return
+        if (parent.width <= 0 || col.width <= 0) return
+        // col.left/top are layout-time baselines; translations ride on them.
+        col.translationX = (col.translationX + ddx).coerceIn(
+            -col.left.toFloat(),
+            (parent.width - col.right).toFloat())
+        col.translationY = (col.translationY + ddy).coerceIn(
+            -col.top.toFloat(),
+            (parent.height - col.bottom).toFloat())
+        // Anchors follow the gesture head so each MOVE feeds a delta.
+        flyDragRawX += ddx
+        flyDragRawY += ddy
+    }
+
+    private fun persistFlyOffset() {
+        val col = flyColumn ?: return
+        uiPrefs()?.edit()
+            ?.putFloat("fly_dx", col.translationX)
+            ?.putFloat("fly_dy", col.translationY)
+            ?.apply()
     }
 
     private fun addFlyButtons(activity: Activity, overlay: FrameLayout) {
@@ -241,6 +309,14 @@ object EClientUi {
         }
         overlay.addView(col)
         flyColumn = col
+
+        // Restore saved drag offsets once the view is laid out.
+        col.post {
+            uiPrefs()?.let { p ->
+                col.translationX = p.getFloat("fly_dx", 0f)
+                col.translationY = p.getFloat("fly_dy", 0f)
+            }
+        }
     }
 
     @JvmStatic
@@ -261,6 +337,9 @@ object EClientUi {
             visibility = panel?.visibility ?: View.GONE
             setPadding(dp(18), dp(14), dp(18), dp(14))
             clipToPadding = false
+            // Touches inside the panel stay here (root's tap-outside-to-close
+            // must not fire when the user is actually using the menu).
+            isClickable = true
         }
         val lp = FrameLayout.LayoutParams(
             dp(340).coerceAtMost(
@@ -275,8 +354,27 @@ object EClientUi {
         if (oldIndex >= 0) container.removeView(panel)
 
         val col = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(label("E-Client modules", 17f, Color.WHITE, bold = true))
-        col.addView(label("Drag the E-Client chip to move it · tap to open/close",
+
+        // Header: title + explicit ✕ close button ("can't close the menu" fix).
+        val header = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(label("E-Client modules", 17f, Color.WHITE, bold = true).apply {
+            layoutParams = LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        header.addView(TextView(activity).apply {
+            text = "✕"
+            textSize = 20f
+            setTextColor(0xFFE3B341.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            isClickable = true
+            setOnClickListener { togglePanel() }
+        })
+        col.addView(header)
+        col.addView(label("Drag the chip to move it · tap outside or ✕ to close",
             11f, 0xFF8E99A5.toInt()))
 
         val order = listOf("Combat", "Movement", "Visual", "Player", "Misc")
