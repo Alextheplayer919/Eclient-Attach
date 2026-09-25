@@ -80,6 +80,7 @@ object EClientUi {
             )
         )
         root = overlay
+        overlay.elevation = 1000f // stack insurance: overlay always above game views
 
         addChip(activity, overlay)
         addFlyButtons(activity, overlay)
@@ -116,6 +117,16 @@ object EClientUi {
             setTextColor(color)
             if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
+
+    /** Drag conflict fix: re-assert the overlay AND chip to the very top of
+     *  the window's z-stack. Without this, a drag can leave the chip behind
+     *  the game surface — visible at first, gone after the first move. */
+    private fun assertOnTop() {
+        root?.let { r ->
+            (r.parent as? ViewGroup)?.bringChildToFront(r)
+            chipView?.let { r.bringChildToFront(it) }
+        }
+    }
 
     // ── floating chip ─────────────────────────────────────────────────
 
@@ -157,15 +168,21 @@ object EClientUi {
                     if (kotlin.math.abs(nx - v.x) + kotlin.math.abs(ny - v.y) > 8f) moved = true
                     v.x = nx.coerceIn(0f, (parent.width - v.width).toFloat().coerceAtLeast(0f))
                     v.y = ny.coerceIn(0f, (parent.height - v.height).toFloat().coerceAtLeast(0f))
+                    v.bringToFront() // stay above every sibling during the whole drag
+                    v.alpha = 1f
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) {
-                        if (System.currentTimeMillis() - downAt > 700L) {
-                            resetOverlayState() // PANIC recovery: long-press
-                        } else {
-                            togglePanel()
-                        }
+                    v.alpha = 0.92f
+                    assertOnTop() // re-assert Z once the gesture settles
+                    if (moved) {
+                        android.widget.Toast.makeText(v.context,
+                            "chip @ ${v.x.toInt()},${v.y.toInt()}",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } else if (System.currentTimeMillis() - downAt > 700L) {
+                        resetOverlayState() // PANIC recovery: long-press
+                    } else {
+                        togglePanel()
                     }
                     true
                 }
@@ -221,6 +238,7 @@ object EClientUi {
             syncRootClickable()
             chip()?.bringToFront()
             flyColumn?.bringToFront() // buttons never get buried under the panel
+            assertOnTop()
         } catch (t: Throwable) {
             com.rubidiumclient.modules.NativeBridge.logLine("panel toggle: $t")
         }
@@ -439,6 +457,7 @@ object EClientUi {
         // absorption tracks panel visibility; overlays stay on top.
         syncRootClickable()
         chipView?.bringToFront()
+        assertOnTop()
         flyColumn?.bringToFront()
     }
 
