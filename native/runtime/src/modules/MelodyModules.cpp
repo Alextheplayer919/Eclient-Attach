@@ -82,6 +82,87 @@ std::uint32_t entityIdOf(void* actor) {
     return *reinterpret_cast<std::uint32_t*>(reinterpret_cast<std::uintptr_t>(actor) + EntityIdField);
 }
 
+// Melody TargetUtils::isTargetValid hardcoded "not attackable" entity ids.
+constexpr std::uint32_t kInvalidTypeIds[] = {
+    0, 64, 66, 69, 70, 95, 4194372, 4194390, 4194391, 4194405, 12582992
+};
+
+bool typeIdBlocked(std::uint32_t id) {
+    for (std::uint32_t blocked : kInvalidTypeIds) if (blocked == id) return true;
+    return false;
+}
+
+// ── Actor identity (r29) ──────────────────────────────────────────────────
+// The type id is a 4-byte ECS component (ActorTypeComponent, hash 0x4f6ba419,
+// stride 4 — all disassembly-proven, see profile/Offsets_1_21_111.h). Reading
+// it through our own guarded walk removes any dependence on the game's
+// function ABI, and both KillAura2 and the bot use this one path.
+
+struct TypeRead {
+    std::uint32_t id{0};
+    bool ok{false};           // a value was obtained (either path)
+    bool viaComponent{false}; // ...from the ECS component, not the function
+};
+
+std::uintptr_t findPoolByHash(std::uintptr_t actor, std::uint32_t hash) {
+    if (!actor || !hash) return 0;
+    for (const auto& d : ecs::listPools(actor)) if (d.typeHash == hash) return d.pool;
+    return 0;
+}
+
+TypeRead readActorTypeId(void* actor, std::uintptr_t typePool) {
+    TypeRead r{};
+    if (!actor) return r;
+    if (typePool) {
+        const ecs::ElementInfo el = ecs::resolveElement(typePool, entityIdOf(actor));
+        if (el.valid) {
+            std::uint32_t v = 0;
+            if (memory::NativeMemory::instance().read(
+                    el.block + el.inBlock * ActorTypeComponentStride, &v, sizeof(v))) {
+                r.id = v; r.ok = true; r.viaComponent = true;
+                return r;
+            }
+        }
+    }
+    if (getEntityTypeId) { r.id = getEntityTypeId(actor); r.ok = true; }
+    return r;
+}
+
+// Equal *player* types. Masked on purpose: see TypeIdMask in the offsets header.
+bool samePlayerType(std::uint32_t a, std::uint32_t b) {
+    return a != 0 && b != 0 && ((a & TypeIdMask) == (b & TypeIdMask));
+}
+
+// Why an actor was rejected. The bot counts these, so "the bot sees nobody" can
+// never again be a mystery: the funnel says which stage emptied the list.
+enum class Reject : int {
+    Ok = 0, NullOrSelf, NotAttackable, Dead, TypeBlocked, TypeMismatch, NoPosition, OutOfRange
+};
+
+Reject targetReject(void* player, void* actor, const Vec3& myPos, float range,
+                    bool playersOnly, std::uint32_t myTypeId, std::uintptr_t typePool,
+                    std::uint32_t* outTypeId) {
+    if (outTypeId) *outTypeId = 0;
+    if (!actor || actor == player) return Reject::NullOrSelf;
+    if (!isAttackable || !isAttackable(actor)) return Reject::NotAttackable;
+    if (!getHealth) return Reject::Dead;
+    if (getHealth(actor) <= 0) return Reject::Dead;
+    if (myTypeId != 0 || playersOnly) {
+        const TypeRead t = readActorTypeId(actor, typePool);
+        if (outTypeId) *outTypeId = t.id;
+        if (t.ok) {
+            if (typeIdBlocked(t.id)) return Reject::TypeBlocked;
+            if (playersOnly && myTypeId != 0 && t.id != 0 &&
+                !samePlayerType(t.id, myTypeId)) return Reject::TypeMismatch;
+        }
+    }
+    Vec3 pos{};
+    if (!getPosition(actor, pos)) return Reject::NoPosition;
+    const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
+    if ((dx * dx + dy * dy + dz * dz) > range * range) return Reject::OutOfRange;
+    return Reject::Ok;
+}
+
 // ---------------------------------------------------------------------------
 // World-stability gate.
 //
@@ -144,16 +225,6 @@ bool worldReady(void* player) {
 // Killaura.cpp + Utils/TargetUtils.cpp; settings cloned 1:1 into ModuleManager)
 // ============================================================================
 
-// Melody TargetUtils::isTargetValid hardcoded "not attackable" entity ids.
-constexpr std::uint32_t kInvalidTypeIds[] = {
-    0, 64, 66, 69, 70, 95, 4194372, 4194390, 4194391, 4194405, 12582992
-};
-
-bool typeIdBlocked(std::uint32_t id) {
-    for (std::uint32_t blocked : kInvalidTypeIds) if (blocked == id) return true;
-    return false;
-}
-
 // Melody GetRotations (verbatim math):
 //   yaw   = atan2(dz, dx) * 180/pi - 90
 //   pitch = -atan2(dy, sqrt(dx^2+dz^2)) * 180/pi
@@ -197,21 +268,10 @@ bool recentlyHurt(void* actor, int health) {
 
 bool killauraTargetValid(void* player, void* actor, const Vec3& myPos, float range,
                          bool playersOnly, std::uint32_t myTypeId) {
-    if (!actor || actor == player) return false;
-    if (!isAttackable(actor)) return false;
-    const int health = getHealth(actor);
-    if (health <= 0) return false;
-    if (getEntityTypeId) {
-        const std::uint32_t id = getEntityTypeId(actor);
-        if (typeIdBlocked(id)) return false;
-        if (playersOnly && myTypeId != 0 && id != myTypeId) return false;
-    }
-    Vec3 pos{};
-    if (!getPosition(actor, pos)) return false;
-    const float dx = pos.x - myPos.x;
-    const float dy = pos.y - myPos.y;
-    const float dz = pos.z - myPos.z;
-    return (dx * dx + dy * dy + dz * dz) <= range * range;
+    // One shared filter for KillAura2 and the bot (0 = resolve the type pool via
+    // the function path; the bot passes a pool it resolved once per scan).
+    return targetReject(player, actor, myPos, range, playersOnly, myTypeId, 0, nullptr) ==
+           Reject::Ok;
 }
 
 // The rotation element may only be touched when the pool is known AND the
@@ -489,6 +549,28 @@ namespace {
 // would change that module's behaviour from the outside.
 struct BotHealth { int health; long hurtUntil; };
 std::unordered_map<void*, BotHealth> g_botHealth;
+
+// Funnel counters for the last scan (r29). Everything the bot's target search
+// can reject an actor for is counted, so an empty list always has a reason.
+struct ScanStats {
+    int actors{0};
+    int attackable{0};
+    int inRange{0};
+    int picked{0};
+    int rejectedNotAttackable{0};
+    int rejectedDead{0};
+    int rejectedTypeBlocked{0};
+    int rejectedTypeMismatch{0};
+    int rejectedNoPosition{0};
+    int rejectedOutOfRange{0};
+    std::uint32_t myTypeId{0};
+    bool myTypeOk{false};
+    bool myTypeViaComponent{false};
+    bool fallback{false};
+    int mode{0};
+    int sampleCount{0};
+    std::string ids;
+};
 std::vector<void*> g_botActors;          // last botScan order (index space)
 std::vector<long> g_botSelfDamageTicks; // ticks at which WE took damage
 int g_botSelfLastHealth = -1;
@@ -508,29 +590,101 @@ bool botRecentlyHurt(void* actor, int health) {
 
 } // namespace
 
-int botScan(void* player, float maxRange, bool playersOnly, BotActor* out, int cap) {
+ScanStats g_scanStats;
+
+std::string botScanDiag() {
+    const ScanStats& s = g_scanStats;
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+        "scan(mode=%d): actors=%d atk=%d dead=%d blocked=%d mismatch=%d noPos=%d "
+        "outOfRange=%d inRange=%d picked=%d | myType=0x%x(%s) ids=[%s] fallback=%s",
+        s.mode, s.actors, s.attackable, s.rejectedDead, s.rejectedTypeBlocked,
+        s.rejectedTypeMismatch, s.rejectedNoPosition, s.rejectedOutOfRange,
+        s.inRange, s.picked,
+        s.myTypeId, s.myTypeOk ? (s.myTypeViaComponent ? "comp" : "fn") : "unknown",
+        s.ids.c_str(), s.fallback ? "YES" : "no");
+    return std::string(buf);
+}
+
+int botScan(void* player, float maxRange, int mode, BotActor* out, int cap) {
     g_botActors.clear();
+    g_scanStats = ScanStats{};
+    g_scanStats.mode = mode;
     if (!player || !out || cap <= 0) return -1;
-    if (!getRuntimeActors || !isAttackable || !getHealth || !getEntityTypeId) return -1;
+    if (!getRuntimeActors || !isAttackable || !getHealth) return -1;
 
     void* level = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetLevelField);
     Vec3 myPos{};
     if (!level || !getPosition(player, myPos)) return -1;
 
     const float range = std::clamp(maxRange, 0.5f, 32.0f);
-    const std::uint32_t myTypeId = playersOnly ? getEntityTypeId(player) : 0;
+
+    // Resolve the type pool ONCE (all actors share the world's registry) and
+    // read our own type id the same way we will read everyone else's.
+    const std::uintptr_t typePool = findPoolByHash(reinterpret_cast<std::uintptr_t>(player),
+                                                   ActorTypeComponentHash);
+    const TypeRead mine = readActorTypeId(player, typePool);
+    const std::uint32_t myTypeId = mine.id;
+    g_scanStats.myTypeId = mine.id;
+    g_scanStats.myTypeOk = mine.ok;
+    g_scanStats.myTypeViaComponent = mine.viaComponent;
 
     std::vector<std::pair<float, void*>> found;
-    for (void* actor : getRuntimeActors(level)) {
-        if (actor == player) continue;
-        if (!killauraTargetValid(player, actor, myPos, range, playersOnly, myTypeId)) continue;
-        Vec3 pos{};
-        if (!getPosition(actor, pos)) continue;
-        const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
-        found.emplace_back(dx * dx + dy * dy + dz * dz, actor);
+
+    auto run = [&](bool playersOnly) {
+        found.clear();
+        g_scanStats.actors = 0;
+        g_scanStats.attackable = 0;
+        g_scanStats.rejectedDead = 0;
+        g_scanStats.rejectedTypeBlocked = 0;
+        g_scanStats.rejectedTypeMismatch = 0;
+        g_scanStats.rejectedNoPosition = 0;
+        g_scanStats.rejectedOutOfRange = 0;
+        g_scanStats.inRange = 0;
+
+        for (void* actor : getRuntimeActors(level)) {
+            if (actor == player) continue;
+            ++g_scanStats.actors;
+            std::uint32_t seenId = 0;
+            const Reject why = targetReject(player, actor, myPos, range, playersOnly,
+                                            myTypeId, typePool, &seenId);
+            if (why == Reject::NullOrSelf) { --g_scanStats.actors; continue; }
+            (void)seenId; // ids are sampled from the surviving actors below
+            switch (why) {
+                case Reject::NotAttackable:
+                    g_scanStats.rejectedNotAttackable++; continue;
+                case Reject::Dead:
+                    g_scanStats.rejectedDead++; continue;
+                case Reject::TypeBlocked:
+                    g_scanStats.rejectedTypeBlocked++; continue;
+                case Reject::TypeMismatch:
+                    g_scanStats.rejectedTypeMismatch++; continue;
+                case Reject::NoPosition:
+                    g_scanStats.rejectedNoPosition++; continue;
+                case Reject::OutOfRange:
+                    g_scanStats.rejectedOutOfRange++; continue;
+                default: break;
+            }
+            ++g_scanStats.attackable;
+            ++g_scanStats.inRange;
+            Vec3 pos{};
+            if (!getPosition(actor, pos)) continue;
+            const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
+            found.emplace_back(dx * dx + dy * dy + dz * dz, actor);
+        }
+        std::sort(found.begin(), found.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+    };
+
+    const bool wantPlayers = (mode != 2);
+    run(wantPlayers);
+
+    // Fallback (mode 1): the player filter emptied the list while other
+    // attackable actors were in range. Fight anyway, and say so.
+    if (mode == 1 && found.empty() && g_scanStats.rejectedTypeMismatch > 0) {
+        run(false);
+        g_scanStats.fallback = true;
     }
-    std::sort(found.begin(), found.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
 
     int n = 0;
     for (const auto& [d2, actor] : found) {
@@ -542,13 +696,24 @@ int botScan(void* player, float maxRange, bool playersOnly, BotActor* out, int c
         }
         const int hp = getHealth(actor);
         const bool hurt = botRecentlyHurt(actor, hp);
+        const TypeRead t = readActorTypeId(actor, typePool);
+        if (t.ok && g_scanStats.sampleCount < 4) {
+            char idbuf[24];
+            std::snprintf(idbuf, sizeof(idbuf), "0x%x", t.id);
+            if (g_scanStats.ids.find(idbuf) == std::string::npos) {
+                if (!g_scanStats.ids.empty()) g_scanStats.ids += ",";
+                g_scanStats.ids += idbuf;
+                ++g_scanStats.sampleCount;
+            }
+        }
         out[n] = BotActor{pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
-                          std::sqrt(d2), hp, getEntityTypeId(actor),
+                          std::sqrt(d2), hp, t.id,
                           entityIdOf(actor),
                           (hurt ? kBotFlagHurt : 0) | kBotFlagAttackable};
         g_botActors.push_back(actor);
         ++n;
     }
+    g_scanStats.picked = n;
     return n;
 }
 

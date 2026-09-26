@@ -5,6 +5,7 @@
 ./SOURCE_INVENTORY.txt
 ./docs/DO_NOT_BREAK.md
 ./docs/PATCHING_FROM_PHONE.md
+./docs/PROXY_MERGE_FEASIBILITY.md
 ./docs/PVP_BOT.md
 ./kotlin-modules/src/com/rubidiumclient/modules/AutoTotem.kt
 ./kotlin-modules/src/com/rubidiumclient/modules/Hitbox.kt

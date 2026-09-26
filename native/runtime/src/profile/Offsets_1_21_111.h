@@ -148,6 +148,33 @@ inline constexpr std::uint64_t HitboxStride = 0;
 inline constexpr std::uint64_t HitboxWidthOffset = 0;
 
 // ---------------------------------------------------------------------------
+// ACTOR TYPE COMPONENT (r29) — DERIVED, stride INCLUDED.
+//
+// An actor's numeric type id is not a method: GetEntityTypeId @0x0C937698 is
+// just (bl 0x0C950F38; ldr w0, [x0]; ret), and its callee resolves an ECS
+// component through the standard page/packed chain with the wanted hash
+// loaded as an immediate: `mov w10,#0xa419 / movk w10,#0x4f6b,lsl#16`, i.e.
+// 0x4f6ba419. That is FNV-1a over "ActorTypeComponent" (verified against the
+// binary, and the only name in the 619 enTT storages that produces it).
+//
+// The element address in that callee ends with:
+//     and x9, x10, #0x3ffff / and x9, x9, #0x7f / add x0, x8, x9, lsl #2
+// i.e. element = block + (packed & 0x7F) * 4 — a plain 4-byte component. So
+// the type id can be read directly, with our own guarded memory reads, and
+// without depending on a function pointer's ABI.
+// ---------------------------------------------------------------------------
+inline constexpr std::uint32_t ActorTypeComponentHash = 0x4f6ba419;
+inline constexpr std::uint64_t ActorTypeComponentStride = 4; // disasm: `lsl #2`
+
+// The returned value is compared MASKED. Rationale: the "not attackable" list
+// Melody shipped contains entries like 4194372 (0x400044) and 12582992
+// (0xC00090) — small ids with high flag bits set — so equal types can differ in
+// those bits. Masking only ever makes equality MORE permissive, which is the
+// safe direction here: a false positive costs one wasted swing, a false
+// negative made KillAura2 and the bot see an empty world.
+inline constexpr std::uint32_t TypeIdMask = 0x3FFFFF;
+
+// ---------------------------------------------------------------------------
 // MOVEMENT INPUT (r28) — SEAM, underived.
 //
 // The bot walks by writing the SAME input state the on-screen joystick writes

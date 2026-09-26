@@ -107,6 +107,12 @@ class PvpBot : KotlinModule(
     private val targetMode = enum("Target", "Target", arrayOf("Nearest", "Lowest HP"), 0,
         "Which enemy to focus when several are in range.")
 
+    private val targetFilter = enum("Targets", "Who to fight",
+        arrayOf("Players", "Players+fallback", "Anything"), 1,
+        "Players = only actors matching your own type id. Fallback = if that " +
+            "matches nobody while other attackable actors are in range, fight " +
+            "anyway and say so. Anything = ignore the filter.")
+
     // ── movement patterns ("WASD combinations") ───────────────────────────
     //
     // w/a/s/d are weights in the frame of the TARGET, not of the camera:
@@ -173,6 +179,8 @@ class PvpBot : KotlinModule(
     private val aimApplies: Boolean by lazy { NativeBridge.botRotationAvailable() }
     private var walkBlocked = false
     private var walkStatus = "walk: ?"
+    private var diagLine = "scan: ?"
+    private var lastDiagLogTick = -100000L
     private var walkStatusTick = -1000L
 
     // ── learning: bucket|combo -> score / trials ──────────────────────────
@@ -241,6 +249,7 @@ class PvpBot : KotlinModule(
         misses = 0
         escalated = false
         current = null
+        log("bot scan: " + (try { NativeBridge.botScanDiag() } catch (t: Throwable) { "?" }))
         log("bot online: " + (if (aimApplies) "aiming" else
             "aim is MANUAL (rotation component not derived) — keep them in front of you"))
     }
@@ -282,21 +291,31 @@ class PvpBot : KotlinModule(
 
         // 2) WHO IS THERE — one scan per tick; fast decisions come from data
         //    that is current, not from a stale list.
+        val mode = when (targetFilter.value) {
+            "Players" -> 0
+            "Anything" -> 2
+            else -> 1
+        }
         val n = try {
-            NativeBridge.botScan(scan, scanRange.value, true)
+            NativeBridge.botScan(scan, scanRange.value, mode)
         } catch (t: Throwable) {
             lastStatus = "scan failed: $t"
             return
         }
         if (n <= 0) {
             // Nobody worth fighting: the bot must be completely hands-off.
-            // No movement writes, no swings — standing still is the safe state.
+            // No movement, no swings — standing still is the safe state.
             if (engaged) log("disengaged (no targets)")
             engaged = false
             pending = null
             current = null
             missStreak = 0
-            lastStatus = if (n < 0) "world not ready" else "scanning — no targets"
+            // ...but NEVER silently. The funnel says which stage emptied the
+            // list, so "the bot does nothing" always has a specific reason.
+            if (tick - walkStatusTick >= 0) {
+                diagLine = try { NativeBridge.botScanDiag() } catch (t: Throwable) { "scan: ?" }
+            }
+            lastStatus = if (n < 0) "world not ready\n$diagLine" else "no targets — $diagLine"
             return
         }
 
@@ -329,6 +348,7 @@ class PvpBot : KotlinModule(
             walkStatusTick = tick
             walkStatus = try { NativeBridge.botWalkStatus() } catch (t: Throwable) { "walk: ?" }
             walkBlocked = false
+            diagLine = try { NativeBridge.botScanDiag() } catch (t: Throwable) { "scan: ?" }
         }
 
         // 4) PATTERN SELECTION — opener first, then forced switch on a miss
@@ -550,9 +570,12 @@ class PvpBot : KotlinModule(
         val aim = if (aimApplies) "aim ${"%.0f".format(aimErr)}°"
                   else "aim manual (Δ${"%.0f".format(if (aimErr < 0) 0f else aimErr)}°)"
         val move = if (walkBlocked) "STANDING ($walkStatus)" else "walking"
+        // A silent fallback would hide the fact that the player filter matched
+        // nobody, so it is reported every time it is active.
+        val fb = if (diagLine.contains("fallback=YES")) "\n⚠ target filter fell back: $diagLine" else ""
         return "FIGHT d=${"%.1f".format(dist)} me=$myHealth them=$tHealth " +
             "$bucket ${c.id}\n" +
             "hits $hits/$total ($acc%) miss-streak=$missStreak | $move | " +
-            (if (escalated) "KillAura ENGAGED ($hurtIn5s/5s)" else aim)
+            (if (escalated) "KillAura ENGAGED ($hurtIn5s/5s)" else aim) + fb
     }
 }

@@ -74,8 +74,18 @@ object NativeBridge {
     //   [10] entity id, exact — read it with Float.fromBits(v.toInt()).
     //        Indexes reshuffle between ticks, the entity id does not, so hit
     //        attribution must key on the id, never on the index.
-    // Returns the actor count, or -1 when the world is not readable.
-    external fun botScan(out: FloatArray, maxRange: Float, playersOnly: Boolean): Int
+    // mode: 0 = players only (strict), 1 = players only with automatic fallback
+    // when the filter matches nobody (the fallback is reported), 2 = anything
+    // attackable. Returns the actor count, or -1 when the world is not readable.
+    external fun botScan(out: FloatArray, maxRange: Float, mode: Int): Int
+
+    /**
+     * Funnel of the last scan — actors seen, how many were attackable, which
+     * stage rejected the rest, the sampled type ids and whether they came from
+     * the ECS component or the game function. This is the first thing to read
+     * when the bot "sees nobody".
+     */
+    external fun botScanDiag(): String
 
     /** Attack the actor at `index` of the most recent scan (same tick only). */
     external fun botAttack(index: Int): Boolean

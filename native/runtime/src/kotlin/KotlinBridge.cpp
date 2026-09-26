@@ -381,7 +381,7 @@ constexpr int kBotMaxActors = 24; // JNI-side cap; the Kotlin side caps again
 } // namespace
 
 JNIEXPORT jint JNICALL Java_com_rubidiumclient_modules_NativeBridge_botScan(
-    JNIEnv* env, jobject /*self*/, jfloatArray out, jfloat maxRange, jboolean playersOnly) {
+    JNIEnv* env, jobject /*self*/, jfloatArray out, jfloat maxRange, jint mode) {
     using namespace eclient_runtime::modules::melody;
     if (!out || env->GetArrayLength(out) < kBotFloatsPerActor) return -1;
 
@@ -389,7 +389,7 @@ JNIEXPORT jint JNICALL Java_com_rubidiumclient_modules_NativeBridge_botScan(
                              env->GetArrayLength(out) / kBotFloatsPerActor);
     std::vector<BotActor> actors(static_cast<std::size_t>(cap));
     const int n = botScan(eclient_runtime::kotlinbridge::g_player.load(),
-                          static_cast<float>(maxRange), playersOnly == JNI_TRUE,
+                          static_cast<float>(maxRange), static_cast<int>(mode),
                           actors.data(), cap);
     if (n <= 0) return n;
 
@@ -412,6 +412,15 @@ JNIEXPORT jint JNICALL Java_com_rubidiumclient_modules_NativeBridge_botScan(
     }
     env->SetFloatArrayRegion(out, 0, static_cast<jsize>(packed.size()), packed.data());
     return n;
+}
+
+// One line describing the last scan's funnel: how many actors existed, how many
+// were attackable, which stage rejected the rest, and which real type ids were
+// seen. "The bot detects nobody" is never again a guess.
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_botScanDiag(
+    JNIEnv* env, jobject /*self*/) {
+    const std::string s = eclient_runtime::modules::melody::botScanDiag();
+    return env->NewStringUTF(s.c_str());
 }
 
 JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_botAttack(

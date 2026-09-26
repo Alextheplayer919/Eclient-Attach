@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace eclient_runtime::modules::melody {
 
@@ -36,7 +37,19 @@ inline constexpr int kBotFlagAttackable = 2;
 
 // Fill `out` (cap entries) with nearby attackable actors, nearest first.
 // Returns the count, or -1 when the world is not readable (fail inert).
-int botScan(void* player, float maxRange, bool playersOnly, BotActor* out, int cap);
+//
+// mode: 0 = players only (strict)
+//       1 = players only, but if the filter matches nobody while other
+//           attackable actors ARE in range, retry without it and flag the
+//           fallback (a bot that sees an empty world is worse than a bot that
+//           might swing at a mob once)
+//       2 = anything attackable
+int botScan(void* player, float maxRange, int mode, BotActor* out, int cap);
+
+// One line describing the LAST scan: counts per rejection stage plus sampled
+// type ids and which path produced them. This is what makes "the bot detects
+// nobody" a specific, checkable statement instead of a guess.
+std::string botScanDiag();
 
 // Attack the actor at `index` of the last scan (the game's own attack call).
 bool botAttackIndex(void* player, int index);
