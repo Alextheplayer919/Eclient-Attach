@@ -289,7 +289,83 @@ first:
    (aapt2 merge against the vanilla resource table). Possible, expensive, do it
    last, only if option 1 is unacceptable.
 
-## 7. Recommendation
+## 8. Corrected architecture for the rewrite (design review of the proposal)
+
+Proposal reviewed: *"rewrite Eclient so the attach build doesn't put the client
+inside the game (lag), keep the GUI/brain outside as a listener, have it give
+memory and send attacks when a module is toggled, which removes the need for the
+proxy."* Verdict: **directionally right, with four corrections.**
+
+### 8.1 You cannot remove the in-process part (this one is not a preference)
+
+Without root, an Android app cannot read another app's memory — no
+`/proc/<pid>/mem`, no cross-UID `ptrace`, SELinux blocks it. Therefore:
+
+* **on the wire** ⇒ you are outside the game, and *that is the only reason a relay
+  exists* — being outside forces a second connection;
+* **in-process** ⇒ native code inside MC is mandatory.
+
+There is no third option in which an external app receives memory state from a
+game it is not inside. "Don't put the client inside the game" would mean no client.
+What is shrinkable is *how much* lives inside — that instinct is right.
+
+### 8.2 The lag risk is chatter design, not in-process itself
+
+The proxy decodes and re-encodes every packet through Cloudburst on both sides
+(Java, per packet, twice). The attach runtime's cost is one tick hook — cheaper by
+default. Frame hitches come from: per-tick IPC chatter, logging, and per-read
+costs. Concrete example already in this repo: `NativeMemory::readable()` re-parses
+`/proc/self/maps` **on every read**. The ancestor's tracing design made the same
+call deliberately — lock-free ring buffer, dropped when full, "the game never
+blocks on tracing".
+
+### 8.3 It is a controller, not a listener — and there is a latency wall
+
+Asymmetric directions:
+
+* **state down, intents up** — decoded entities/pose/health/inventory at ~10–20 Hz
+  out; toggles, settings, targeting policy in;
+* **sub-frame decisions stay in-process.** 20 Hz IPC is ~50 ms round-trip before
+  jitter; aiming and swing timing live in single-digit ms. Routing "rotate / swing
+  now" through a socket produces a bot that misses, not a bot that lags.
+
+### 8.4 Never expose raw memory over the bridge (security)
+
+A `readMem`/`writeMem` verb reachable on `127.0.0.1` is an arbitrary-write
+primitive into Minecraft for **any** app on the device. The bridge speaks
+semantics only — `toggleModule`, `setSetting`, `getState`, `getEntities` — plus a
+per-install token. Raw memory access stays in-process, where it cannot be handed out.
+
+### 8.5 What the rewrite removes — and what it does not
+
+**Removed:** RakNet relay, codec-version pinning, Xbox auth chain, LAN
+scanner/Realms, the second connection, the "proxy sits between me and the server"
+failure mode.
+
+**Not automatically replaced:** packet-level capability. Transaction piggybacking
+on `PlayerAuthInputData` flag bits 34/35/36, server-authoritative inventory moves,
+`cancelAndReplace` tricks — no in-process equivalent; you must call the game's own
+send path, and the server judges it identically. ~60–70 % of the 74 modules
+transfer; the rest get reworked or dropped. **Proxy-free is a different capability
+set, not a superset.**
+
+### 8.6 Resulting shape
+
+```
+controller app (Eclient)              patched Minecraft (this repo)
+ GUI: Compose overlay, module list     thin agent:
+ settings, config, chat, friends        · memory reads (decoded, never raw)
+ NO raw memory access                   · actuation: attack / rotate / input
+        ▲ intents      ▼ state          · SUB-FRAME decision loop
+        └──────────── IPC ─────────────►
+   [optional PacketBackend → relay]  = the same module brain, two backends
+```
+
+Keep both builds: the proxy ships to any unpatched device with no patching step;
+the attach build runs the same modules against memory. That is "one module brain,
+two backends" — strictly stronger than rewriting one to kill the other.
+
+## 9. Recommendation
 
 1. **Now (this week):** Model A. Build the truth probe in the proxy, the labelled
    dump in the attach build, and use the pair to finish the four layouts that
