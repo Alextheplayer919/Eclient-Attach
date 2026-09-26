@@ -365,6 +365,34 @@ Keep both builds: the proxy ships to any unpatched device with no patching step;
 the attach build runs the same modules against memory. That is "one module brain,
 two backends" — strictly stronger than rewriting one to kill the other.
 
+### 8.7 Agreement + precedent: this is the Toolbox shape
+
+Design confirmed with the owner: **Eclient and Minecraft are both modified, and
+they are connected so the app receives memory state and drives modules** — the
+"companion app + in-game agent" split, not one replacing the other.
+
+Precedent, in this exact ecosystem: **Toolbox for Minecraft: Bedrock Edition** is
+that shape already. A companion app that pins a floating panel over the running
+game, per-module toggles, switched without leaving the world, backed by memory
+hooks into the installed client, **no root required**. Its own support notes state
+the cost plainly: the hooks are version-locked, so a game update arriving before a
+Toolbox update can crash it — users are told to keep both versions matched.
+
+Two things follow:
+
+1. The architecture is proven and accepted on non-rooted Android Bedrock — a
+   companion app over memory hooks with an overlay GUI is a normal product shape,
+   not an exotic hack.
+2. Version-locking is the accepted price, and this repo already pays it better than
+   a typical build: the APK is pinned by SHA-256, every offset lives in
+   `Offsets_1_21_111.h` and is data rather than code, and unresolved prerequisites
+   leave the runtime **inert** instead of crashing the host.
+
+Note the shape implies something people miss: a panel drawing over the game and
+toggles controlling memory hooks both require code **in** the game process (see
+§8.1). "Companion app" is the UI and the brain; the agent inside remains
+mandatory — it is simply thin.
+
 ## 9. Recommendation
 
 1. **Now (this week):** Model A. Build the truth probe in the proxy, the labelled
