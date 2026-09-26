@@ -18,6 +18,8 @@
 ./kotlin-modules/src/com/rubidiumclient/modules/ui/EClientUi.kt
 ./native/CMakeLists.txt
 ./native/runtime/CMakeLists.txt
+./native/runtime/src/bridge/AgentState.cpp
+./native/runtime/src/bridge/AgentState.h
 ./native/runtime/src/bridge/DebugFiles.cpp
 ./native/runtime/src/bridge/DebugFiles.h
 ./native/runtime/src/bridge/GameBridge.cpp

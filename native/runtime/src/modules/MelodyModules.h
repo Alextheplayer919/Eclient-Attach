@@ -77,4 +77,35 @@ float botPlayerYaw(void* player);
 // yet; callers must show that instead of pretending to aim.
 bool botRotationAvailable();
 
+// ── Seam for the loopback agent (r36 / docs/MERGE_PLAN.md P0) ──────────────
+//
+// The agent speaks to an app that must never touch game memory, so it needs
+// three things this layer already knows how to answer, exposed as functions
+// instead of internals:
+//
+//   * who counts as a player (the masked type comparison),
+//   * whether a rotation write is possible (same guard the aim path uses),
+//   * and a single place to apply an externally chosen yaw/pitch.
+//
+// All three fail closed: an underived layout answers "no", never "sure".
+
+// The local player's own type id as resolved by the LAST botScan (the value the
+// player filter compares against). `ok` (optional) receives whether it was
+// readable at all. Returns 0 when unknown.
+std::uint32_t botMyTypeId(bool* ok);
+
+// True when `typeId` is the same (masked) type as the local player's — i.e. the
+// actor is a player. False when our own type is not resolved yet, so callers
+// must not treat "false" as "definitely not a player" without checking ok.
+bool botIsPlayerType(std::uint32_t typeId);
+
+// Apply an externally chosen rotation (degrees). Returns false when the rotation
+// element layout is not derived yet — the body lands with the derivation, and
+// the guard is what makes saying so the only possible answer today.
+bool botApplyRotation(void* player, float yaw, float pitch);
+
+// Apply joystick-style input (forward/strafe in -1..1). Returns false until the
+// MoveInputComponent element layout is derived.
+bool botApplyInput(void* player, float forward, float strafe, bool jump, bool sneak);
+
 } // namespace eclient_runtime::modules::melody

@@ -32,6 +32,8 @@
 //   * Melody's `if (Mode = 1)` typo bug: port intended Single/Multi behavior.
 // ============================================================================
 
+#include "bridge/AgentState.h"
+
 namespace eclient_runtime::modules::melody {
 namespace {
 constexpr const char* TAG = "EClientMelody";
@@ -773,6 +775,47 @@ bool botSelf(void* player, float* outSelf) {
 
 bool botRotationAvailable() { return rotationWritable(); }
 
+// ── Loopback-agent seam (r36) ───────────────────────────────────────────────
+// These answer questions the app asks through the bridge. They are deliberately
+// thin: every one of them delegates to the same validated path the modules use,
+// so the app can never be told something the module layer would disagree with.
+
+std::uint32_t botMyTypeId(bool* ok) {
+    if (ok) *ok = g_scanStats.myTypeOk;
+    return g_scanStats.myTypeId;
+}
+
+bool botIsPlayerType(std::uint32_t typeId) {
+    // No own type resolved => no opinion. Reporting "player" here would let the
+    // app aim at whatever happens to be nearby; reporting "not a player" would
+    // hide real players. Both are worse than saying nothing.
+    if (!g_scanStats.myTypeOk) return false;
+    return samePlayerType(typeId, g_scanStats.myTypeId);
+}
+
+bool botApplyRotation(void* player, float yaw, float pitch) {
+    if (!player) return false;
+    if (!std::isfinite(yaw) || !std::isfinite(pitch)) return false;
+    // Same guard as rotationWritable(): hash AND stride AND yaw offset. Until the
+    // ActorRotationComponent element layout is derived, all three fail, so this
+    // returns false — which is the truthful answer, not a placeholder. The write
+    // body lands in P3 with the constants, behind this same guard.
+    if (!rotationWritable()) return false;
+    return false;   // unreachable today; P3 replaces this line
+}
+
+bool botApplyInput(void* player, float forward, float strafe, bool jump, bool sneak) {
+    (void)jump; (void)sneak;
+    if (!player) return false;
+    if (!std::isfinite(forward) || !std::isfinite(strafe)) return false;
+    if (forward < -1.0f || forward > 1.0f || strafe < -1.0f || strafe > 1.0f) return false;
+    // The MoveInputComponent element layout is the gate — see DO_NOT_BREAK.md:
+    // movement is input-based walking, and an input write without the derived
+    // layout is exactly the kind of guess that used to land in the wrong field.
+    if (MoveInputElementStride == 0 || MoveInputVecOffset == 0) return false;
+    return false;   // unreachable today; P3 replaces this line
+}
+
 // The local player's rotation element address, or 0 when unavailable. Same
 // guarded resolution the rotation write uses (pool by hash, element by entity
 // id) — one path, so a wrong hash shows up identically in both.
@@ -842,6 +885,13 @@ void onNormalTick(void* localPlayer) {
 
     // Prune hurt-state map of stale pointers occasionally.
     if ((g_tick & 0x3FF) == 0 && g_hurtState.size() > 512) g_hurtState.clear();
+
+    // Loopback agent (r36): latch this tick's world state for the companion app,
+    // then execute whatever intents it queued. publish() runs FIRST so the actor
+    // order the app receives is the same order the attacks below index into.
+    // Both are no-ops unless a client is connected.
+    agentstate::publish(localPlayer);
+    agentstate::executeQueued(localPlayer);
 
     if (mgr().enabled("KillAura2")) tickKillAura2(localPlayer);
 

@@ -125,6 +125,37 @@ The ImGui-era rules below still apply if the GL overlay is ever switched back on
 Do NOT: rename/replace libminecraftpe.so, move hooks earlier than the poll
 loop, swap Dobby for hand-rolled trampolines, or re-order steps 3.
 
+## Loopback agent invariants (r36)
+
+The agent is the in-game half of the companion-app link (`docs/MODULE_SDK.md`).
+It is additive: the game boots and plays exactly as before with it disabled.
+
+1. **No raw memory verbs. Ever.** `readMem`/`writeMem` must never exist. Any app
+   on the device can reach a loopback port, so a generic memory verb would hand
+   an arbitrary-write primitive into Minecraft to every other app on the phone.
+   The agent speaks semantics (`attack`, `setRotation`, `setInput`, `getState`)
+   and this side decides how to satisfy them with validated offsets.
+2. **Token on every line.** The token is generated once, cached in
+   `/sdcard/Download/eclient_agent.token` when storage permits, logged at INFO,
+   and may be pinned via the `ECLIENT_AGENT_TOKEN` environment variable (host
+   self-test + manual sessions). A line with a wrong token is rejected and the
+   connection dropped.
+3. **The bridge thread never touches game memory.** `publish()` latches a
+   snapshot on the game thread (seqlock); the bridge only copies and serializes
+   it. If this thread dies, the game must not notice — do not "optimize" it by
+   reading memory directly from the socket handler.
+4. **One scan per tick, and attacks index THAT scan.** `publish()` runs before
+   `executeQueued()` in `onNormalTick`, so the actor order the app receives is
+   the order `botAttackIndex()` indexes. Reordering these two calls silently
+   makes attacks land on the wrong actor.
+5. **`publish()` is gated on a live client.** With nobody connected it must stay
+   a no-op: that is what makes the agent free when the app is not running.
+6. **Capabilities are statements about what works, not wishes.** `caps()` feeds
+   both the push and the refusal logic; a capability reported true while its
+   layout is underived turns into a module that silently does nothing.
+7. **Attacks are the game's own attack call**, reached through the same
+   `attack(gameMode, actor, true)` path the auras use — not a new mechanism.
+
 ## Hard pins — change together or the pipeline aborts
 
 - APK SHA-256 `69f6584c…3d59`: **3 copies** — `tools/build-and-patch.sh`,
