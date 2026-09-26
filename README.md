@@ -54,7 +54,7 @@ miss streak, and turns KillAura2 on by itself when it starts taking non-stop
 hits. Scores persist across restarts. Full design: `docs/PVP_BOT.md`.
 
 Two design questions are answered in this repo's docs: `docs/PVP_BOT.md` (the
-bot's decision system) and `docs/PROXY_MERGE_FEASIBILITY.md` (how the separate
+bot's decision system) and `docs/PROXY_MERGE_FEASIBILITY.md` / `docs/MODULE_SDK.md` (how the separate
 packet-proxy client can be used to *derive* memory layouts, and what a full merge
 to a proxy-free client actually requires).
 

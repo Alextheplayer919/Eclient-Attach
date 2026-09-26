@@ -4,6 +4,7 @@
 ./README.md
 ./SOURCE_INVENTORY.txt
 ./docs/DO_NOT_BREAK.md
+./docs/MODULE_SDK.md
 ./docs/PATCHING_FROM_PHONE.md
 ./docs/PROXY_MERGE_FEASIBILITY.md
 ./docs/PVP_BOT.md
