@@ -4,6 +4,7 @@
 ./README.md
 ./SOURCE_INVENTORY.txt
 ./docs/DO_NOT_BREAK.md
+./docs/MERGE_PLAN.md
 ./docs/MODULE_SDK.md
 ./docs/PATCHING_FROM_PHONE.md
 ./docs/PROXY_MERGE_FEASIBILITY.md
