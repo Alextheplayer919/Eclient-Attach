@@ -17,6 +17,70 @@ Everything below is grounded in what the two projects actually contain today.
 
 ---
 
+## 0. Prior art in your own repos — this is already half-built
+
+The proposal is **not new**. It is the documented plan of the injector track that
+this repo descends from, and half of it is already shipped.
+
+Lineage (all four repos are yours):
+
+| Repo | What it is |
+|---|---|
+| `Celestia-client` | earliest proxy attempt (`com.proxy.mcbedrock`, `docs/mitm-plan.md`, `docs/decode-research.md`) |
+| `Eclient` | the mature proxy client — 74 modules, command system, Compose overlay |
+| `Eclient-ingame-i-guess` | **the same proxy *plus* `injector/` + `patcher/`** — the "build inside the APK" track |
+| **`Eclient-Attach` (this repo)** | the in-MC runtime from that track, finished and shipping through CI |
+
+`Eclient-ingame-i-guess/INJECTOR-HANDOFF.md` §4 states the target in almost your
+exact words:
+
+> "Everything […] The injected builds inherit the *module brain* (friend lists,
+> schematica, commands) via a JNI bridge so a module toggle hits whichever engine
+> (**packet-writes in proxy mode, memory-writes in injected mode**)."
+
+That is the merge. The handoff also fixed the native↔Kotlin contract *before* the
+RE landed, so modules could be written against it:
+
+```cpp
+// injector/src/native_bridge.cpp — dispatch table, signatures frozen up front
+void onGameTick(LocalPlayer*);        // motion/position writers
+void onFrame(GameRenderer*);          // render/ESP family
+void onClientTick(ClientInstance*);   // utils/UI bridge
+// posture: "NEVER crash the host. Any unresolved prerequisite → the lib stays
+// resident but inert, and the Kotlin side shows 'native: dormant'."
+```
+
+…which is exactly the fail-closed philosophy this repo still runs on. And
+`injector/src/trace_entt.cpp` (ring-buffer trace of the enTT storage machinery,
+"zero static naming needed") is the direct ancestor of today's
+`tools/entt_hash.py` + `ComponentWalk` + hidden `ECSDump`.
+
+**So: three of the four pieces already exist.** The runtime exists (here), the
+module brain exists (`Eclient`, ~74–80 modules including the whole KillAura /
+CrystalAura / AutoTotem / Scaffold / ESP families), and the GUI exists (Compose
+overlay). What was never built is the bridge between them and the backend
+abstraction that lets one module body run against either data source.
+
+### A second injection mode you already wrote, which this repo does not use
+
+The ancestor shipped **two** ways in, and this repo uses only the first:
+
+1. **Smali/manifest route** (what we ship today): bootstrap class injected as
+   `android:name`, `System.loadLibrary(...)`, dex appended, overlay permission
+   patched.
+2. **Lib-replacement shim** (`patcher/patch_surgical.py`): rename the game's
+   `lib/arm64-v8a/libminecraftpe.so` → `libminecraftpe_real.so` and install our
+   shim under the original name; Android `System.loadLibrary("minecraftpe")` loads
+   *us* first, we `dlopen` the real lib and **forward `JNI_OnLoad`**. The patch is
+   **two zip entries, STORED and 4096-aligned** — zero manifest edits, zero dex
+   edits, no overlay permission patch, and `shim_loader.cpp` even writes a boot
+   log to `/sdcard/Download/eclient_boot.log` for diagnosis without adb.
+
+The shim route is materially cleaner for the merged product (nothing to merge in
+dex, no permission surgery). It is also a *different boot chain*, which is
+inviolable in this repo — so it is recorded here as an **option for a future
+generation**, not a change to make now.
+
 ## 1. What each side is actually good at
 
 | | proxy client (`Eclient`, Java) | attach runtime (this repo) |
@@ -238,8 +302,16 @@ first:
    parity yet.
 3. **Then:** Model C for shipping, with (2)/(3) from §4 as its own project.
 
-**Verdict: feasible, recommended, and the ordering above matters more than the
-merging itself.** The proxy's real gift to this repo is not code sharing — it is
-*labelled data*, which is exactly what a memory-first client is starving for.
-And the ClickGUI does not have to be rebuilt anywhere (§6): it is already an
-overlay that draws over Minecraft and only ever needed a different data source.
+**Verdict: feasible — and more than that, it is your own project's written plan,
+already half-executed (§0).** Three of the four pieces exist today: the in-MC
+runtime (this repo), the module brain (~74–80 modules in `Eclient` /
+`Eclient-ingame-i-guess`), and the GUI (Compose overlay). The missing pieces are
+the bridge between them and the backend abstraction that lets one module body run
+against a packet source or a memory source — which is Model B, and whose interface
+the ancestor already specified.
+
+The proxy's real gift to this repo is not code volume — it is *labelled data*,
+exactly what a memory-first client starves for, plus a module set that already
+contains every behaviour the PvP spec asks for. And the ClickGUI does not have to
+be rebuilt anywhere (§6): it is already an overlay that draws over Minecraft and
+only ever needed a different data source.
