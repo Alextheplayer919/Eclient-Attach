@@ -88,6 +88,16 @@ import java.io.OutputStream
  * smali and must keep exactly this name and signature.
  */
 @SuppressLint("ClickableViewAccessibility")
+/** Logs a line at most once per JVM, so headless mode does not spam logcat. */
+internal object DiagOnce {
+    private val seen = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    fun headlessLogged(tag: String, msg: String) {
+        if (seen.putIfAbsent(tag + msg, true) == null) {
+            android.util.Log.i(tag, msg)
+        }
+    }
+}
+
 object EClientUi {
 
     const val BUILD_TAG = "r26"
@@ -148,12 +158,47 @@ object EClientUi {
     // Lifecycle — the only two public entry points (ABI)
     // ══════════════════════════════════════════════════════════════════════
 
-    /** Called from EClientLoaderProvider.onActivityResumed (smali, by name). */
+    /**
+     * HEADLESS BY DEFAULT (r37).
+     *
+     * The in-game panel/chip used to be the only way to see and toggle modules.
+     * It is not any more: the companion Android app talks to the in-game agent
+     * over 127.0.0.1:38170 and drives the same ModuleManager (listModules /
+     * toggleModule / setSetting), so a second UI drawn on top of the game is
+     * redundant weight — and it lived in the game's own window, which is exactly
+     * where an overlay should not be.
+     *
+     * The ABI is unchanged on purpose: the loader smali still calls
+     * `attach(Activity)` by name and signature, it simply does nothing unless the
+     * flag file below exists. That keeps the boot chain untouched (no smali edit,
+     * no hook change) while removing the UI from the experience.
+     *
+     * To bring it back for a debugging session (e.g. to watch ECSDump without the
+     * app): create /sdcard/Download/eclient_ui_on and relaunch the game.
+     */
     @JvmStatic
     fun attach(act: Activity) {
+        if (!uiEnabled()) {
+            DiagOnce.headlessLogged("EClientUi", "headless: in-game UI disabled (external app is the GUI)")
+            return
+        }
         if (Looper.myLooper() == Looper.getMainLooper()) attachOnMain(act)
         else main.post { attachOnMain(act) }
     }
+
+    /** True only when the opt-in flag file exists. Cheap; called on every attach. */
+    private fun uiEnabled(): Boolean {
+        if (forcedUi != null) return forcedUi!!
+        val on = try {
+            java.io.File("/sdcard/Download/eclient_ui_on").exists() ||
+                java.io.File("/sdcard/eclient_ui_on").exists()
+        } catch (_: Throwable) { false }
+        forcedUi = on
+        return on
+    }
+
+    /** Cached flag, so the check costs one stat per process. */
+    @Volatile private var forcedUi: Boolean? = null
 
     @JvmStatic
     fun detach() {

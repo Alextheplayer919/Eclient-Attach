@@ -153,7 +153,14 @@ It is additive: the game boots and plays exactly as before with it disabled.
 6. **Capabilities are statements about what works, not wishes.** `caps()` feeds
    both the push and the refusal logic; a capability reported true while its
    layout is underived turns into a module that silently does nothing.
-7. **Attacks are the game's own attack call**, reached through the same
+7. **The in-game UI is headless by default** (`EClientUi.attach` returns early
+   unless `/sdcard/Download/eclient_ui_on` exists). The external app is the GUI.
+   The ABI stays because the loader smali calls `attach(Landroid/app/Activity;)V`
+   by name — never remove the method, only gate it. Module control therefore has
+   to keep working from the agent (`listModules` / `toggleModule` / `setSetting`);
+   those ops run on the GAME thread inside `executeQueued`, never on the bridge
+   thread, because ModuleManager is not thread-safe against the tick.
+8. **Attacks are the game's own attack call**, reached through the same
    `attack(gameMode, actor, true)` path the auras use — not a new mechanism.
 
 ## Hard pins — change together or the pipeline aborts

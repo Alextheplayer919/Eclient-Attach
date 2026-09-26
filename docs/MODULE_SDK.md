@@ -85,12 +85,12 @@ listens on), token on every line.
 | `attack` | live — queued, executed on the next tick through the game's own attack call |
 | `setRotation` | **refused** (`ok:false`, "rotation layout not derived") until `ActorRotationComponent` is derived |
 | `setInput` | **refused** (`ok:false`, "move input layout not derived") until `MoveInputComponent` is derived |
-| `toggleModule`, `setSetting` | **refused** ("module control not wired yet") — module state lives in the Kotlin registry; that path is its own step |
+| `toggleModule`, `setSetting`, `listModules` | **live** — applied on the game thread against the native ModuleManager, mirrored into the Kotlin registry, so the app IS the GUI |
 | `readMem`, `writeMem` | **do not exist** — unknown op, by design |
 
 State push carries `self`, `entities` (nearest-first, ≤32 m, the same filter the
-auras use), `caps`, `missing`, `cmds` (queued/executed/failed/dropped counters)
-and `diag`, at ~20 Hz.
+auras use), `modules` (name/category/enabled/kotlin), `caps`, `missing`, `cmds`
+(queued/executed/failed/dropped counters) and `diag`, at ~20 Hz.
 
 Rules, non-negotiable:
 

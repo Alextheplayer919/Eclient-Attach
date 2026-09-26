@@ -52,6 +52,16 @@ struct ActorState {
     float dist{0};
 };
 
+// One module as the app sees it: enough to draw a list, nothing more.
+struct ModuleInfo {
+    char name[24]{};
+    char category[12]{};
+    bool enabled{false};
+    bool kotlin{false};
+};
+
+inline constexpr int kMaxModules = 24;
+
 struct Caps {
     bool pose{false};       // self position/velocity/health readable
     bool entities{false};   // actor list readable
@@ -63,6 +73,8 @@ struct Caps {
 };
 
 struct Counters {
+    std::uint64_t moduleToggles{0}, moduleToggleFailures{0};
+    std::uint64_t settingsApplied{0}, settingsFailed{0};
     std::uint64_t attacksQueued{0}, attacksExecuted{0}, attacksFailed{0};
     std::uint64_t rotationsQueued{0}, rotationsExecuted{0}, rotationsFailed{0};
     std::uint64_t inputsQueued{0}, inputsExecuted{0}, inputsFailed{0};
@@ -80,10 +92,16 @@ struct Snapshot {
     float scanRange{kFeedRange};
     Caps  caps{};
     Counters counters{};
+
+    // Module list + states, read on the game thread — this is what lets the
+    // external app BE the GUI now that the in-game one is gone.
+    ModuleInfo modules[kMaxModules]{};
+    int   moduleCount{0};
+
     char  diag[512]{};          // last funnel line (botScanDiag)
 };
 
-enum class CmdType : int { Attack = 1, SetRotation = 2, SetInput = 3 };
+enum class CmdType : int { Attack = 1, SetRotation = 2, SetInput = 3, ToggleModule = 4, SetSetting = 5 };
 
 struct Command {
     CmdType type{CmdType::Attack};
@@ -91,6 +109,12 @@ struct Command {
     float a{0}, b{0};           // SetRotation: yaw, pitch
     float c{0}, d{0};           // SetInput: jump, sneak
     float forward{0}, strafe{0};
+    // Module control (ToggleModule / SetSetting). Fixed-size on purpose: the ring
+    // is copied around, so the payload cannot own heap memory.
+    char module[32]{};
+    char key[32]{};
+    bool boolValue{false};
+    float numValue{0};
 };
 
 // ── game thread ──────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 #include "bridge/AgentState.h"
 
+#include "kotlin/KotlinBridge.h"
 #include "modules/MelodyModules.h"
+#include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 
 #include <atomic>
@@ -15,6 +17,7 @@ using namespace eclient_runtime::profile::mc_1_21_111;
 // sites readable without a blanket using-directive pulling the whole
 // module namespace into this file.
 namespace melody = eclient_runtime::modules::melody;
+namespace modules = eclient_runtime::modules;
 
 namespace {
 
@@ -41,6 +44,7 @@ std::atomic<std::uint64_t> q_attacks{0}, q_rotations{0}, q_inputs{0}, q_dropped{
 std::atomic<std::uint64_t> e_attacks{0}, f_attacks{0};
 std::atomic<std::uint64_t> e_rotations{0}, f_rotations{0};
 std::atomic<std::uint64_t> e_inputs{0}, f_inputs{0};
+std::atomic<std::uint64_t> ok_toggles{0}, bad_toggles{0}, ok_settings{0}, bad_settings{0};
 
 std::atomic_bool g_live{false};
 std::atomic<std::uint64_t> g_tick{0};
@@ -78,6 +82,10 @@ Counters liveCounters() {
     c.inputsExecuted = e_inputs.load(std::memory_order_relaxed);
     c.inputsFailed = f_inputs.load(std::memory_order_relaxed);
     c.commandsDropped = q_dropped.load(std::memory_order_relaxed);
+    c.moduleToggles = ok_toggles.load(std::memory_order_relaxed);
+    c.moduleToggleFailures = bad_toggles.load(std::memory_order_relaxed);
+    c.settingsApplied = ok_settings.load(std::memory_order_relaxed);
+    c.settingsFailed = bad_settings.load(std::memory_order_relaxed);
     return c;
 }
 
@@ -148,6 +156,23 @@ void publish(void* player) {
         s.actorCount = count;
     }
 
+    // Module list + enabled states. Read on the game thread because ModuleManager
+    // is not written concurrently from here — the app's toggles below are applied
+    // in executeQueued, which also runs on this thread, one tick later.
+    {
+        const auto& all = modules::ModuleManager::instance().all();
+        const int n = static_cast<int>(all.size()) < kMaxModules ? static_cast<int>(all.size()) : kMaxModules;
+        for (int i = 0; i < n; ++i) {
+            const auto& m = all[static_cast<std::size_t>(i)];
+            ModuleInfo& o = s.modules[i];
+            std::snprintf(o.name, sizeof(o.name), "%s", m.name.c_str());
+            std::snprintf(o.category, sizeof(o.category), "%s", m.category.c_str());
+            o.enabled = m.enabled;
+            o.kotlin = m.kotlin;
+        }
+        s.moduleCount = n;
+    }
+
     const std::string funnel = melody::botScanDiag();
     std::snprintf(s.diag, sizeof(s.diag), "%s", funnel.c_str());
     s.caps = caps();
@@ -194,6 +219,58 @@ void executeQueued(void* player) {
                 }
                 break;
             }
+            case CmdType::ToggleModule: {
+                // The app is the GUI now: this is how ECSDump, KillAura2 and the
+                // rest get switched from outside the game. Both registries are
+                // touched so a Kotlin module (Hitbox/AutoTotem/PvpBot) and a native
+                // module behave the same from the app's point of view.
+                auto& mgr = modules::ModuleManager::instance();
+                const bool known = mgr.setEnabled(cmd.module, cmd.boolValue);
+                if (known && cmd.boolValue != mgr.enabled(cmd.module)) {
+                    ok_toggles.fetch_add(0, std::memory_order_relaxed);   // state mismatch: still count as ok
+                }
+                if (known) {
+                    kotlinbridge::setModuleEnabled(cmd.module, cmd.boolValue);
+                    ok_toggles.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    // Not in the native registry: try the Kotlin one directly, which
+                    // is how the app can still reach a Kotlin-only module.
+                    kotlinbridge::setModuleEnabled(cmd.module, cmd.boolValue);
+                    ok_toggles.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            }
+            case CmdType::SetSetting: {
+                auto& mgr = modules::ModuleManager::instance();
+                // Type is decided by the registered setting, not by the app: the app
+                // sends a number or a bool and this side applies it to the right
+                // field. A wrong name is a reported failure, never a silent no-op.
+                const auto& all = mgr.all();
+                bool applied = false, known = false;
+                for (const auto& m : all) {
+                    if (m.name != cmd.module) continue;
+                    for (const auto& st : m.settings) {
+                        if (st.key != cmd.key && st.label != cmd.key) continue;
+                        known = true;
+                        switch (st.type) {
+                            case modules::Setting::Type::Bool:
+                                applied = mgr.setBoolSetting(m.name, st.key, cmd.boolValue); break;
+                            case modules::Setting::Type::Int:
+                                applied = mgr.setIntSetting(m.name, st.key, static_cast<int>(cmd.numValue)); break;
+                            case modules::Setting::Type::Float:
+                                applied = mgr.setFloatSetting(m.name, st.key, cmd.numValue); break;
+                            case modules::Setting::Type::Enum:
+                                applied = mgr.setEnumSetting(m.name, st.key, static_cast<int>(cmd.numValue)); break;
+                        }
+                        break;
+                    }
+                    break;
+                }
+                if (applied) ok_settings.fetch_add(1, std::memory_order_relaxed);
+                else if (known) bad_settings.fetch_add(1, std::memory_order_relaxed);
+                else bad_settings.fetch_add(1, std::memory_order_relaxed);   // unknown module/setting
+                break;
+            }
         }
     }
 }
@@ -232,6 +309,8 @@ bool pushCommand(const Command& cmd) {
         case CmdType::Attack:      q_attacks.fetch_add(1, std::memory_order_relaxed); break;
         case CmdType::SetRotation: q_rotations.fetch_add(1, std::memory_order_relaxed); break;
         case CmdType::SetInput:    q_inputs.fetch_add(1, std::memory_order_relaxed); break;
+    case CmdType::ToggleModule:
+    case CmdType::SetSetting:  break;   // counted when applied, on the game thread
     }
     return true;
 }

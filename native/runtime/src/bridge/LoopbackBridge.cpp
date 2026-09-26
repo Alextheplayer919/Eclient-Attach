@@ -258,6 +258,21 @@ std::string buildStateLine(const agentstate::Snapshot& s) {
 
     appendCaps(out, s.caps);
 
+    out += ",\"modules\":[";
+    for (int i = 0; i < s.moduleCount; ++i) {
+        if (i) out += ',';
+        out += "{\"name\":\"";
+        out += s.modules[i].name;
+        out += "\",\"category\":\"";
+        out += s.modules[i].category;
+        out += "\",\"enabled\":";
+        out += s.modules[i].enabled ? "true" : "false";
+        out += ",\"kotlin\":";
+        out += s.modules[i].kotlin ? "true" : "false";
+        out += '}';
+    }
+    out += ']';
+
     std::snprintf(buf, sizeof(buf),
                   ",\"cmds\":{\"aq\":%llu,\"ae\":%llu,\"af\":%llu,"
                   "\"rq\":%llu,\"re\":%llu,\"rf\":%llu,"
@@ -471,12 +486,70 @@ void LoopbackBridge::run(void* logger) {
                         if (agentstate::pushCommand(c)) sendAll(client, okLine(id, "\"queued\":true"));
                         else sendAll(client, failLine(id, "command queue full"));
 
-                    } else if (op == "toggleModule" || op == "setSetting") {
-                        // Deliberately not faked. Module state lives in the Kotlin
-                        // registry inside the game process; wiring that path is its
-                        // own step (MERGE_PLAN P2), and until then the app must see
-                        // that it is unavailable rather than a silent no-op.
-                        sendAll(client, failLine(id, "module control not wired yet"));
+                    } else if (op == "toggleModule") {
+                        std::string name;
+                        bool enabled = false;
+                        if (!jStr(line, "module", name) || !jBool(line, "enabled", enabled)) {
+                            sendAll(client, failLine(id, "toggleModule needs module and enabled"));
+                            continue;
+                        }
+                        agentstate::Command c{};
+                        c.type = agentstate::CmdType::ToggleModule;
+                        std::snprintf(c.module, sizeof(c.module), "%s", name.c_str());
+                        c.boolValue = enabled;
+                        if (agentstate::pushCommand(c)) {
+                            sendAll(client, okLine(id, "\"queued\":true"));
+                        } else {
+                            sendAll(client, failLine(id, "command queue full"));
+                        }
+
+                    } else if (op == "setSetting") {
+                        std::string mod, key;
+                        double value = 0;
+                        bool bvalue = false;
+                        const bool isBool = jBool(line, "value", bvalue);
+                        const bool isNum = jNum(line, "value", value);
+                        if (!jStr(line, "module", mod) || !jStr(line, "setting", key) ||
+                            (!isBool && !isNum)) {
+                            sendAll(client, failLine(id, "setSetting needs module, setting and value"));
+                            continue;
+                        }
+                        agentstate::Command c{};
+                        c.type = agentstate::CmdType::SetSetting;
+                        std::snprintf(c.module, sizeof(c.module), "%s", mod.c_str());
+                        std::snprintf(c.key, sizeof(c.key), "%s", key.c_str());
+                        c.boolValue = bvalue;
+                        c.numValue = static_cast<float>(value);
+                        if (agentstate::pushCommand(c)) {
+                            sendAll(client, okLine(id, "\"queued\":true"));
+                        } else {
+                            sendAll(client, failLine(id, "command queue full"));
+                        }
+
+                    } else if (op == "listModules") {
+                        // Answered from the last snapshot (game thread owns the
+                        // registry), so this is a read, not a queue round-trip.
+                        agentstate::Snapshot snap{};
+                        if (!agentstate::snapshot(snap)) {
+                            sendAll(client, failLine(id, "no snapshot yet"));
+                            continue;
+                        }
+                        std::string out = "{\"id\":" + std::to_string(id) +
+                                          ",\"ok\":true,\"modules\":[";
+                        for (int i = 0; i < snap.moduleCount; ++i) {
+                            if (i) out += ',';
+                            out += "{\"name\":\"";
+                            out += snap.modules[i].name;
+                            out += "\",\"category\":\"";
+                            out += snap.modules[i].category;
+                            out += "\",\"enabled\":";
+                            out += snap.modules[i].enabled ? "true" : "false";
+                            out += ",\"kotlin\":";
+                            out += snap.modules[i].kotlin ? "true" : "false";
+                            out += '}';
+                        }
+                        out += "]}\n";
+                        sendAll(client, out);
 
                     } else {
                         sendAll(client, failLine(id, "unknown op"));
