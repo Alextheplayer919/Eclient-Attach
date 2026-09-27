@@ -5,9 +5,10 @@
 # against a fake game layer and runs them on a plain Linux box: no NDK, no
 # device, no CI round-trip. Use it before every push.
 #
-#   ./run.sh            build + bench + self-test
-#   ./run.sh bench      memory bench only
-#   ./run.sh selftest   agent self-test only
+#   ./run.sh            everything: memory bench, tick bench, agent self-test
+#   ./run.sh bench      memory bench (correctness + per-read cost)
+#   ./run.sh tick       tick bench (us/tick of the REAL module code)
+#   ./run.sh selftest   agent self-test (real socket protocol)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -26,6 +27,16 @@ RUNTIME=(
     "$SRC/bridge/AgentState.cpp"
     "$SRC/bridge/LoopbackBridge.cpp"
 )
+# the tick bench runs the module code itself, so it needs the module sources
+# and the real ModuleManager (its per-tick settings lookups are part of what it
+# measures — stubbing them would hide real cost).
+TICK_SOURCES=(
+    "$SRC/memory/NativeMemory.cpp"
+    "$SRC/memory/ComponentWalk.cpp"
+    "$SRC/modules/MelodyModules.cpp"
+    "$SRC/modules/ModuleManager.cpp"
+    "$SRC/bridge/AgentState.cpp"
+)
 CXXFLAGS=(-O1 -std=c++20 -I "$SRC" -I "$(pwd)/include")
 [ -n "$JNI_INC" ] && CXXFLAGS+=($JNI_INC)
 
@@ -33,14 +44,15 @@ want="${1:-all}"
 
 if [ "$want" = all ] || [ "$want" = selftest ]; then
     echo "── building agent self-test"
-    g++ "${CXXFLAGS[@]}" src/stub_android.cpp src/fake_game.cpp src/test_agent.cpp \
+    g++ "${CXXFLAGS[@]}" src/stub_android.cpp src/stub_modulemanager.cpp \
+        src/fake_game.cpp src/test_agent.cpp \
         "${RUNTIME[@]}" -lpthread -o "$OUT/agent_selftest"
 fi
 
 if [ "$want" = all ] || [ "$want" = bench ]; then
     echo "── building memory bench"
     # the bench only needs the memory layer (the bridge pulls in jni.h)
-    g++ -O2 -std=c++20 -I "$SRC" -I "$(pwd)/include" \
+    g++ -O2 -std=c++20 -I "$SRC" -I "$(pwd)/include" $JNI_INC \
         src/stub_android.cpp src/bench_memory.cpp "$SRC/memory/NativeMemory.cpp" \
         -lpthread -o "$OUT/memory_bench"
 fi
@@ -49,6 +61,16 @@ if [ "$want" = all ] || [ "$want" = bench ]; then
     echo
     echo "════════ memory bench ════════"
     "$OUT/memory_bench"
+fi
+
+if [ "$want" = all ] || [ "$want" = tick ]; then
+    echo "── building tick bench"
+    g++ -O2 -std=c++20 -I "$SRC" -I "$(pwd)/include" -I "$(pwd)/src" $JNI_INC \
+        src/stub_android.cpp src/stub_patchmanager.cpp src/fake_world.cpp src/bench_tick.cpp \
+        "${TICK_SOURCES[@]}" -lpthread -o "$OUT/tick_bench"
+    echo
+    echo "════════ tick bench ════════"
+    "$OUT/tick_bench" | grep -v '^\[EClient'
 fi
 
 if [ "$want" = all ] || [ "$want" = selftest ]; then

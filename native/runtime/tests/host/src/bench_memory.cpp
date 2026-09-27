@@ -9,10 +9,58 @@
 
 #include <chrono>
 #include <cstdint>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <cstdio>
 #include <vector>
 
+// ── correctness: a freshly mapped region must be readable FIRST TRY ────────
+// This is the regression test for the r38 refresh policy. The first version
+// rate-limited refreshes and answered "unreadable" in between, so the moment
+// the game mapped something new, every read into it failed for up to 250 ms —
+// scans and position reads silently returned nothing. Do not "optimise" the
+// refresh path without this test staying green.
+static int checkFreshMapping() {
+    const long page = sysconf(_SC_PAGESIZE);
+    void* fresh = mmap(nullptr, static_cast<std::size_t>(page) * 4,
+                       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (fresh == MAP_FAILED) {
+        std::printf("fresh-mapping test: mmap failed\n");
+        return 1;
+    }
+    volatile std::uintptr_t* cell = static_cast<std::uintptr_t*>(fresh);
+    *cell = 0xEC1100D5u;
+
+    auto& mem = eclient_runtime::memory::NativeMemory::instance();
+    std::uintptr_t got = 0;
+    const bool ok = mem.read(reinterpret_cast<std::uintptr_t>(fresh), &got, sizeof(got));
+    std::printf("freshly mapped region readable on FIRST read: %s (value=%#lx)\n",
+                ok && got == 0xEC1100D5u ? "yes" : "NO", static_cast<unsigned long>(got));
+
+    // and an address that is genuinely unmapped must still be refused, repeatedly
+    void* reclaimed = MAP_FAILED;
+    {
+        void* probe = mmap(nullptr, static_cast<std::size_t>(page), PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (probe != MAP_FAILED) {
+            munmap(probe, static_cast<std::size_t>(page));
+            reclaimed = probe;
+        }
+    }
+    bool refused = true;
+    if (reclaimed != MAP_FAILED) {
+        for (int i = 0; i < 5; ++i) {
+            if (mem.read(reinterpret_cast<std::uintptr_t>(reclaimed), &got, sizeof(got))) refused = false;
+        }
+    }
+    std::printf("unmapped address refused every time        : %s\n\n", refused ? "yes" : "NO");
+
+    munmap(fresh, static_cast<std::size_t>(page) * 4);
+    return (ok && got == 0xEC1100D5u && refused) ? 0 : 1;
+}
+
 int main() {
+    int failures = checkFreshMapping();
     auto& mem = eclient_runtime::memory::NativeMemory::instance();
     std::uintptr_t probe = 0;
     const std::uintptr_t valid = reinterpret_cast<std::uintptr_t>(&probe);
@@ -53,5 +101,6 @@ int main() {
     }
     std::printf("\n(20 TPS budget is 50 ms per tick.)\n");
     (void)sink;
-    return 0;
+    if (failures) std::printf("\n*** CORRECTNESS CHECK FAILED ***\n");
+    return failures;
 }

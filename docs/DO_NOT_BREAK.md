@@ -83,6 +83,17 @@ returns without installing the swap hook, so none of the ImGui code below runs.*
   Flying/MayFly/Ladder when the module is switched off, and it runs *before*
   the world-ready gate for exactly that reason. A module that leaves the player
   flying after being disabled is a bug, not a feature.
+- **A memory read must never answer "unreadable" for memory that IS readable.**
+  The map cache re-checks on a miss (per-address dedup + a 16-per-250 ms budget
+  + a 100 ms negative cache bound the cost). The first version rate-limited
+  refreshes outright, which meant every read into a freshly mapped region
+  failed for up to 250 ms — the game maps things constantly, so scans and
+  position reads silently returned nothing. `run.sh bench` asserts a freshly
+  mapped region is readable on the FIRST read; keep it green.
+- **A benchmark must print what it measured.** The first version of the tick
+  bench reported 0.2 us/tick while the modules were doing nothing at all. Any
+  perf harness here prints its work counters (actor lists, attacks, ability
+  calls) next to the timing, so "fast" cannot be confused with "not running".
 - **An un-derived offset must fail inert.** Every API pointer goes through
   `apiPtr<T>(offset)`, which returns null for offset 0. Calling `fn(0)` would
   jump into the module base.

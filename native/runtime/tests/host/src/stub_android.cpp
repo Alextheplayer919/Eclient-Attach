@@ -14,21 +14,23 @@ extern "C" int __android_log_print(int, const char* tag, const char* fmt, ...) {
 }
 
 #include "modules/ModuleManager.h"
-// ── runtime pieces the agent touches but this host test does not need ──────
-// A real (empty) module registry plus the Kotlin mirror seam, so the bridge can
-// be exercised end-to-end without a device.
-namespace eclient_runtime::modules {
-ModuleManager& ModuleManager::instance() { static ModuleManager m; return m; }
-ModuleManager::ModuleManager() = default;
-const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
-bool ModuleManager::setEnabled(const std::string&, bool) { return false; }
-bool ModuleManager::enabled(const std::string&) const { return false; }
-bool ModuleManager::setBoolSetting(const std::string&, const std::string&, bool) { return false; }
-bool ModuleManager::setFloatSetting(const std::string&, const std::string&, float) { return false; }
-bool ModuleManager::setIntSetting(const std::string&, const std::string&, int) { return false; }
-bool ModuleManager::setEnumSetting(const std::string&, const std::string&, int) { return false; }
-} // namespace eclient_runtime::modules
-
 namespace eclient_runtime::kotlinbridge {
 void setModuleEnabled(const char*, bool) {}
+} // namespace eclient_runtime::kotlinbridge
+
+// ── seams the tick bench does not exercise ────────────────────────────────
+// DebugFiles (log tee) and the Kotlin dispatch are device-side; the bench
+// stubs them so the module code links without pulling in jni.h.
+#include <cstddef>
+#include "bridge/DebugFiles.h"
+namespace eclient_runtime::debugfiles {
+PublicLog::~PublicLog() = default;
+bool PublicLog::open(const char*) { return false; }   // no file sinks on the host
+void PublicLog::write(const char*) {}
+void PublicLog::close() {}
+} // namespace eclient_runtime::debugfiles
+
+namespace eclient_runtime::kotlinbridge {
+bool anyKotlinModuleEnabled() { return false; }
+void dispatchTick(void*) {}
 } // namespace eclient_runtime::kotlinbridge

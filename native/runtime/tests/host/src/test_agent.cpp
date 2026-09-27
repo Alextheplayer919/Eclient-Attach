@@ -56,7 +56,11 @@ void sendLine(int fd, const std::string& payload) {
 }
 
 // Read one newline-terminated line, waiting up to `ms`.
-std::string readLine(int fd, int ms = 1200) {
+//
+// The waits are deliberately generous: under load (the harness also compiles
+// three binaries, and CI machines are shared) a tight timeout turns into a
+// spurious FAIL, and a flaky self-test is worse than no self-test.
+std::string readLine(int fd, int ms = 3000) {
     std::string out;
     const auto t0 = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -80,17 +84,27 @@ void pumpGameSide() {
     eclient_runtime::agentstate::executeQueued(player);
 }
 
-std::string request(int fd, const std::string& token, const std::string& body, int id) {
-    sendLine(fd, "{\"token\":\"" + token + "\"," + body + ",\"id\":" + std::to_string(id) + "}");
-    std::string line;
-    for (int i = 0; i < 4 && line.empty(); ++i) {
-        line = readLine(fd, 400);
-        if (!line.empty() && line.find("\"id\":" + std::to_string(id)) == std::string::npos) {
-            line.clear();   // that was a push, keep looking for the ack
-        }
+// Wait for a line matching `want`, pumping the game side while waiting.
+//
+// The first version of this test pumped once and then read with a timeout, and
+// it failed maybe one run in five when the machine was busy compiling — a
+// false alarm that trains you to ignore the harness. Waiting for the line we
+// actually want, while nudging the game side, removes the race entirely.
+std::string waitForLine(int fd, const std::string& token, const std::string& want,
+                        const std::string& body = {}, int id = 0, int budgetMs = 6000) {
+    if (!body.empty()) {
+        sendLine(fd, "{\"token\":\"" + token + "\"," + body + ",\"id\":" + std::to_string(id) + "}");
     }
-    return line;
+    const auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - t0).count() < budgetMs) {
+        pumpGameSide();
+        const std::string line = readLine(fd, 25);
+        if (!line.empty() && line.find(want) != std::string::npos) return line;
+    }
+    return {};
 }
+
 } // namespace
 
 int main() {
@@ -125,15 +139,8 @@ int main() {
         check(fd >= 0, "reconnects after the refusal");
         if (fd < 0) return 1;
 
-        sendLine(fd, std::string("{\"token\":\"") + token + "\",\"id\":2,\"op\":\"getState\"}");
-        pumpGameSide();
-
-        std::string push, ack;
-        for (int i = 0; i < 8 && (push.empty() || ack.empty()); ++i) {
-            const std::string line = readLine(fd, 500);
-            if (line.find("\"push\":\"state\"") != std::string::npos) push = line;
-            else if (line.find("\"id\":2") != std::string::npos) ack = line;
-        }
+        const std::string push = waitForLine(fd, token, "\"push\":\"state\"",
+                                              "\"op\":\"getState\"", 2);
         check(!push.empty(), "state push arrives");
         check(push.find("\"entities\":[") != std::string::npos && push.find("1001") != std::string::npos,
               "push carries the scanned actors");
@@ -143,25 +150,34 @@ int main() {
         check(push.find("\"modules\":[") != std::string::npos, "push carries the module list");
 
         // ── attack op ───────────────────────────────────────────────────────
+        // The ack only means the command was QUEUED. The attack itself runs on
+        // the game thread inside executeQueued, so the test waits for the
+        // EFFECT and only then asserts — otherwise it is racing the thing it
+        // is trying to measure (this is what made it fail under CPU load).
         const int before = echo::attackCalls();
-        sendLine(fd, std::string("{\"token\":\"") + token +
-                     "\",\"id\":3,\"op\":\"attack\",\"target\":1002}");
-        (void)readLine(fd, 400);
-        pumpGameSide();
+        (void)waitForLine(fd, token, "\"id\":3", "\"op\":\"attack\",\"target\":1002", 3);
+        for (int i = 0; i < 100 && echo::attackCalls() == before; ++i) {
+            pumpGameSide();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
         check(echo::attackCalls() == before + 1, "attack op executes exactly once");
         check(echo::lastAttackIndex() == 1, "attack targets the actor the app asked for");
 
+        // ...and EXACTLY once: further ticks must not re-run a consumed command.
+        for (int i = 0; i < 10; ++i) pumpGameSide();
+        check(echo::attackCalls() == before + 1, "a consumed command is not re-executed");
+
         // ── refusals ────────────────────────────────────────────────────────
-        check(request(fd, token, "\"op\":\"setRotation\",\"yaw\":90,\"pitch\":0", 5)
-                  .find("rotation") != std::string::npos,
-              "setRotation refused while the layout is underived");
-        check(request(fd, token, "\"op\":\"readMem\",\"addr\":4096", 6)
+        check(waitForLine(fd, token, "rotation", "\"op\":\"setRotation\",\"yaw\":90,\"pitch\":0", 5)
+                  .find("\"ok\":false") != std::string::npos,
+              "setRotation refused when no rotation capability is reported");
+        check(waitForLine(fd, token, "unknown op", "\"op\":\"readMem\",\"addr\":4096", 6)
                   .find("unknown op") != std::string::npos,
               "readMem does not exist (no raw memory verbs)");
-        check(request(fd, token, "\"op\":\"toggleModule\",\"module\":\"KillAura2\",\"enabled\":true", 7)
-                  .find("\"ok\":") != std::string::npos,
+        check(!waitForLine(fd, token, "\"id\":7",
+                           "\"op\":\"toggleModule\",\"module\":\"KillAura2\",\"enabled\":true", 7).empty(),
               "toggleModule is handled");
-        check(request(fd, token, "\"op\":\"listModules\"", 8).find("\"ok\":") != std::string::npos,
+        check(!waitForLine(fd, token, "\"id\":8", "\"op\":\"listModules\"", 8).empty(),
               "listModules is handled");
 
         ::close(fd);

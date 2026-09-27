@@ -7,6 +7,7 @@
 ./docs/MERGE_PLAN.md
 ./docs/MODULE_SDK.md
 ./docs/PATCHING_FROM_PHONE.md
+./docs/PERF_AUDIT.md
 ./docs/PROXY_MERGE_FEASIBILITY.md
 ./docs/PVP_BOT.md
 ./kotlin-modules/src/com/rubidiumclient/modules/AutoTotem.kt
@@ -55,8 +56,13 @@
 ./native/runtime/tests/host/include/android/log.h
 ./native/runtime/tests/host/run.sh
 ./native/runtime/tests/host/src/bench_memory.cpp
+./native/runtime/tests/host/src/bench_tick.cpp
 ./native/runtime/tests/host/src/fake_game.cpp
+./native/runtime/tests/host/src/fake_world.cpp
+./native/runtime/tests/host/src/fake_world.h
 ./native/runtime/tests/host/src/stub_android.cpp
+./native/runtime/tests/host/src/stub_modulemanager.cpp
+./native/runtime/tests/host/src/stub_patchmanager.cpp
 ./native/runtime/tests/host/src/test_agent.cpp
 ./native/vendor/arm64hook/And64InlineHook.cpp
 ./native/vendor/arm64hook/And64InlineHook.hpp

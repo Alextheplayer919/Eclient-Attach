@@ -8,7 +8,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -57,11 +56,34 @@ namespace eclient_runtime::memory {
 namespace {
 constexpr const char* TAG = "EClientMemory";
 
-// How often a MISS may trigger a re-parse of the map. A miss is either a region
-// that appeared after startup (dlopen of a new library, a freshly mmap'd arena)
-// or a genuinely invalid address; the rate limit serves the first case quickly
-// without letting the second case hammer the filesystem.
-constexpr std::int64_t kRefreshFloorMs = 250;
+// ── refresh policy ─────────────────────────────────────────────────────────
+// A MISS means "this address is not in the table I have". That is either a
+// region that appeared after the table was built (dlopen, a fresh arena, a new
+// thread stack) or a genuinely dead pointer.
+//
+// The first version of this cache rate-limited refreshes to one per 250 ms and
+// returned "unreadable" in between. That was WRONG, and it is the kind of wrong
+// that looks like a broken module: the moment the game maps something new — a
+// chunk buffer, an entity arena, a texture — every read into it fails for up
+// to a quarter of a second, so scans, position reads and the world-stability
+// gate all quietly say "nothing there". Found by running the tick bench, not
+// by reading the code.
+//
+// Correct policy: a miss ALWAYS re-checks, but the cost is bounded twice over.
+//   * per-address dedup: the same address missing twice in a row does not
+//     re-parse again inside kRefreshWindowMs;
+//   * a global budget: at most kRefreshBudget parses per window, so a stale
+//     actor list full of freed pointers cannot turn into a parse storm. It is
+//     deliberately generous (16 per 250 ms = at most ~2.4 ms of work per
+//     window) because the budget is there to catch a pathological caller, not
+//     to ration the one or two genuinely new regions a world join produces.
+//   * NativeMemory::invalidateMapCache() lets a caller that KNOWS the map
+//     changed skip all of it and force a fresh read.
+// Anything that still misses is NEGATIVE-CACHED per thread, so a tight loop
+// asking about the same dead address costs a comparison, not a file parse.
+constexpr std::int64_t kRefreshWindowMs = 250;
+constexpr int kRefreshBudget = 16;
+constexpr std::int64_t kNegativeTtlMs = 100;
 
 struct Range {
     std::uintptr_t lo{0};
@@ -75,8 +97,12 @@ using Table = std::vector<Range>;
 // misses, which for the runtime's access pattern is rare.
 std::shared_mutex g_mapMutex;
 Table g_table;
+std::uint32_t g_generation = 0;      // bumped on every table swap
 std::mutex g_refreshMutex;
-std::atomic<std::int64_t> g_lastRefreshMs{0};
+std::int64_t g_windowStartMs = 0;    // start of the current refresh window
+int g_windowRefreshes = 0;
+std::uintptr_t g_lastMissAddr = 0;
+std::int64_t g_lastMissMs = 0;
 
 std::int64_t nowMs() {
     using namespace std::chrono;
@@ -118,29 +144,53 @@ const Range* findRange(const Table& table, std::uintptr_t start, std::uintptr_t 
     return nullptr;
 }
 
+// ── per-thread hot cache ───────────────────────────────────────────────────
 // The common case is a run of reads against the same struct, so remember the
-// last few ranges per thread. Direct-mapped, no eviction policy needed: a wrong
-// guess costs one binary search, never a wrong answer.
+// last few ranges per thread. Positive entries carry the table generation so a
+// refresh (or a remap) can never leave a stale "yes" behind. Negative entries
+// expire on their own.
 constexpr int kHotEntries = 16;
-struct HotRange {
+struct HotEntry {
     std::uintptr_t lo{0};
     std::uintptr_t hi{0};
+    std::uint32_t generation{0};
+    std::int64_t negativeUntilMs{0};   // 0 = positive entry
     bool valid{false};
 };
 
-bool hotCacheHolds(std::uintptr_t start, std::uintptr_t end) {
-    static thread_local HotRange hot[kHotEntries];
-    const std::size_t slot = ((start >> 4) ^ (start >> 16)) & (kHotEntries - 1);
-    const HotRange& h = hot[slot];
-    return h.valid && start >= h.lo && end < h.hi;
+HotEntry* hotSlot(std::uintptr_t start) {
+    static thread_local HotEntry hot[kHotEntries];
+    return &hot[((start >> 4) ^ (start >> 16)) & (kHotEntries - 1)];
 }
 
-void hotCacheRemember(const Range& r) {
-    static thread_local HotRange hot[kHotEntries];
-    const std::size_t slot = ((r.lo >> 4) ^ (r.lo >> 16)) & (kHotEntries - 1);
-    hot[slot].lo = r.lo;
-    hot[slot].hi = r.hi;
-    hot[slot].valid = true;
+bool hotSaysReadable(std::uintptr_t start, std::uintptr_t end) {
+    const HotEntry* h = hotSlot(start);
+    return h->valid && h->negativeUntilMs == 0 && h->generation == g_generation &&
+           start >= h->lo && end < h->hi;
+}
+
+bool hotSaysUnreadable(std::uintptr_t start, std::uintptr_t end) {
+    const HotEntry* h = hotSlot(start);
+    return h->valid && h->negativeUntilMs != 0 && nowMs() < h->negativeUntilMs &&
+           start >= h->lo && end < h->hi;
+}
+
+void hotRememberReadable(const Range& r) {
+    HotEntry* h = hotSlot(r.lo);
+    h->lo = r.lo;
+    h->hi = r.hi;
+    h->generation = g_generation;
+    h->negativeUntilMs = 0;
+    h->valid = true;
+}
+
+void hotRememberUnreadable(std::uintptr_t start, std::int64_t until) {
+    HotEntry* h = hotSlot(start);
+    h->lo = start;
+    h->hi = start + 1;
+    h->generation = g_generation;
+    h->negativeUntilMs = until;
+    h->valid = true;
 }
 
 bool readable(const void* p, std::size_t size) {
@@ -148,37 +198,50 @@ bool readable(const void* p, std::size_t size) {
     const auto start = reinterpret_cast<std::uintptr_t>(p);
     const auto end = start + size - 1;
 
-    // Fast path: nothing but a couple of comparisons and a thread-local lookup.
-    if (hotCacheHolds(start, end)) return true;
+    // Fast paths: no locks, no file work.
+    if (hotSaysReadable(start, end)) return true;
+    if (hotSaysUnreadable(start, end)) return false;
 
     {
         std::shared_lock<std::shared_mutex> lock(g_mapMutex);
         if (const Range* r = findRange(g_table, start, end)) {
-            hotCacheRemember(*r);
+            hotRememberReadable(*r);
             return true;
         }
     }
 
-    // Miss: the map may have changed under us (a library loaded, an arena
-    // grown). Ask once — rate-limited — and retry before declaring the address
-    // unusable.
-    std::lock_guard<std::mutex> lock(g_refreshMutex);
-    const std::int64_t now = nowMs();
-    if (now - g_lastRefreshMs.load(std::memory_order_relaxed) < kRefreshFloorMs) {
-        return false;   // refresh too recent: this address really is unusable
-    }
+    // Miss. Give the map one honest chance to be re-read, within budget.
     {
-        Table fresh = parseMaps();
-        std::unique_lock<std::shared_mutex> write(g_mapMutex);
-        g_table.swap(fresh);
-    }
-    g_lastRefreshMs.store(now, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(g_refreshMutex);
+        const std::int64_t now = nowMs();
+        if (now - g_windowStartMs >= kRefreshWindowMs) {
+            g_windowStartMs = now;
+            g_windowRefreshes = 0;
+        }
+        const bool sameAddressAgain =
+            (start == g_lastMissAddr) && (now - g_lastMissMs) < kRefreshWindowMs;
+        g_lastMissAddr = start;
+        g_lastMissMs = now;
 
-    std::shared_lock<std::shared_mutex> lock2(g_mapMutex);
-    if (const Range* r = findRange(g_table, start, end)) {
-        hotCacheRemember(*r);
-        return true;
+        if (!sameAddressAgain && g_windowRefreshes < kRefreshBudget) {
+            ++g_windowRefreshes;
+            Table fresh = parseMaps();
+            {
+                std::unique_lock<std::shared_mutex> write(g_mapMutex);
+                g_table.swap(fresh);
+                ++g_generation;
+            }
+        }
     }
+
+    {
+        std::shared_lock<std::shared_mutex> lock(g_mapMutex);
+        if (const Range* r = findRange(g_table, start, end)) {
+            hotRememberReadable(*r);
+            return true;
+        }
+    }
+    hotRememberUnreadable(start, nowMs() + kNegativeTtlMs);
     return false;
 }
 
@@ -270,9 +333,19 @@ std::size_t NativeMemory::cachedRangeCount() const {
 }
 
 void NativeMemory::invalidateMapCache() const {
-    std::unique_lock<std::shared_mutex> lock(g_mapMutex);
-    g_table.clear();
-    g_lastRefreshMs.store(0, std::memory_order_relaxed);
+    // For callers that KNOW the map changed (just mapped a large region, just
+    // loaded a library): drop the snapshot and give the next miss a free
+    // refresh, so the caller is never blind for the rest of the window.
+    {
+        std::unique_lock<std::shared_mutex> lock(g_mapMutex);
+        g_table.clear();
+        ++g_generation;
+    }
+    std::lock_guard<std::mutex> lock(g_refreshMutex);
+    g_windowRefreshes = 0;
+    g_windowStartMs = 0;
+    g_lastMissAddr = 0;
+    g_lastMissMs = 0;
 }
 
 } // namespace eclient_runtime::memory

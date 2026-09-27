@@ -173,8 +173,16 @@ void publish(void* player) {
         s.moduleCount = n;
     }
 
-    const std::string funnel = melody::botScanDiag();
-    std::snprintf(s.diag, sizeof(s.diag), "%s", funnel.c_str());
+    // The funnel text is for a human reading the app, and building it costs a
+    // std::string plus a formatted line every tick. Nothing can consume it
+    // faster than a human can read it, so it is refreshed at ~1 Hz.
+    static std::string cachedDiag;
+    static long lastDiagTick = -10000;
+    if (s.tick - lastDiagTick >= 20) {
+        cachedDiag = melody::botScanDiag();
+        lastDiagTick = s.tick;
+    }
+    std::snprintf(s.diag, sizeof(s.diag), "%s", cachedDiag.c_str());
     s.caps = caps();
     s.counters = liveCounters();
 
