@@ -249,4 +249,63 @@ inline constexpr std::uint64_t HurtTimeField = 0x194;      // Mob::hurtEffects
 inline constexpr int AbilityLayerBase = 2;   // the layer Apollon drives
 inline constexpr int AbilityFlying = 9;      // in flight right now
 inline constexpr int AbilityMayFly = 10;     // allowed to start flying
+
+// ===========================================================================
+// RECOVERED APOLLON v4.62 — REFERENCE CONSTANTS (aarch64), not yet wired in
+// ===========================================================================
+// These are the entries of the recovered Apollon offset table that our profile
+// did not already carry. Every symbol we DO share with that table agrees
+// exactly (see docs/APOLLON_RECOVERED.md), which is why the remainder is worth
+// keeping: it is the same libminecraftpe.so build, described by someone who had
+// the client running against real servers.
+//
+// NOTHING here is used by a module yet. They are recorded so the next feature
+// does not need the zip that keeps disappearing — and so that whoever wires one
+// up starts from a value cross-checked with a working client instead of a guess.
+// Treat each as a starting point to be validated by PatchManager-style entry-byte
+// checks before it is trusted.
+//
+// Apollo resolves them as `base + offset` (getAbsoluteAddress), same as fn().
+inline constexpr std::uint64_t Font = 0x0263C304;  // [fn   ] Default 1 float
+inline constexpr std::uint64_t WaterTrigger1 = 0x066578D8;  // [fn   ] <WasInWaterFlagComponent,EntityId ActorHeadWasInWater
+inline constexpr std::uint64_t WaterTrigger2 = 0x093B7B9C;  // [fn   ] <ActorHeadInWaterFlagComponent,EntityId SUB
+inline constexpr std::uint64_t WaterTrigger3 = 0x05E35F94;  // [fn   ] <WaterSplashEffectRequestComponent,EntityId SUB
+inline constexpr std::uint64_t Fov = 0x07BBDB00;  // [fn   ] 9CameraAPI returns float
+inline constexpr std::uint64_t FastBridge = 0x0CCC3650;  // [fn   ] "GameMode::useItemOn (client)"
+inline constexpr std::uint64_t BlockReach = 0x0CCC4B70;  // [fn   ] returns 7 or 12 float
+inline constexpr std::uint64_t PlayerAuthInput = 0x0A772168;  // [fn   ] "Player`s Head rotation"
+inline constexpr std::uint64_t NativeKeyHandler = 0x0CFA5130;  // [fn   ] ...nativeKeyHandler
+inline constexpr std::uint64_t InMainMenu = 0x06086AB4;  // [fn   ] 23CubemapBackgroundScreen
+inline constexpr std::uint64_t InLanGame1 = 0x0E26A008;  // [fn   ] NetherNet::SimpleNetworkInterfaceImpl::SendPacket
+inline constexpr std::uint64_t InLanGame2 = 0x0E26A234;  // [fn   ] NetherNet::SimpleNetworkInterfaceImpl::ReadPacket
+inline constexpr std::uint64_t FastDrop = 0x06358EDC;  // [fn   ] GuiData::_tickItemDrop intertnal float field
+inline constexpr std::uint64_t UnlockMarket = 0x076CF620;  // [fn   ] Entitlement::isOwned
+inline constexpr std::uint64_t GetMaxPlayers = 0x0E14C3C4;  // [fn   ] AppPlatform::getMaxPlayers
+inline constexpr std::uint64_t FogState = 0x07C08F08;  // [fn   ] LevelRendererCamera::_getFogDensitySettingType
+inline constexpr std::uint64_t SetupFog = 0x07C00420;  // [fn   ] LevelRendererPlayer::setupFog
+inline constexpr std::uint64_t ShowPaperdoll = 0x06373FB8;  // [fn   ] HudPlayerRenderer::update
+inline constexpr std::uint64_t Subtitle = 0x063164C4;  // [fn   ] TileMessage::setSubtitle
+inline constexpr std::uint64_t ClientInstanceOnTick = 0x06478734;  // [fn   ] ClientInstance::onTick
+inline constexpr std::uint64_t HandleDestroyOrAttack = 0x06462B60;  // [fn   ] ClientInputCallbacks::handleDestoryOrAttackButtonPress
+inline constexpr std::uint64_t PlayUI = 0x0648AED8;  // [fn   ] ClientInstance::playUI
+inline constexpr std::uint64_t DisplayMessage = 0x06BF196C;  // [fn   ] LocalPlayer::displayClientMessage
+inline constexpr std::uint64_t Block_getRenderLayer = 0x0D52E0F4;  // [fn   ] Block::getRenderLayer
+inline constexpr std::uint64_t RebuildAllChunkGeometry = 0x07BF10A8;  // [fn   ] LevelRenderer::rebuildAllRenderChunkGeometry
+inline constexpr std::uint64_t NoNametags = 0x06AEE80C;  // [fn   ] BaseActorRenderer::renderText
+inline constexpr std::uint64_t ScreenName = 0x0648482C;  // [fn   ] ClientInstance::getScreenName
+inline constexpr std::uint64_t GetNameTag = 0x0C94C468;  // [fn   ] Actor::getNameTag
+inline constexpr std::uint64_t GetDimensionBlockSource = 0x0C9318F0;  // [fn   ] Actor::getDimensionBlockSource
+inline constexpr std::uint64_t GetBlock = 0x0CEE4E74;  // [fn   ] BlockSource::getBlock
+inline constexpr std::uint64_t IsAir = 0x0CFA78FC;  // [fn   ] Block::isAir
+inline constexpr std::uint64_t ActorRotation = RotationPtrField;  // alias — Apollon's name for our RotationPtrField (0x218)
+inline constexpr std::uint64_t GetHurtTime = HurtTimeField;  // alias — Apollon's name for our HurtTimeField (0x194)
+inline constexpr std::uint64_t GetCameraPos = 0x0000065C;  // [field] LevelRendererCamera::getCameraPos
+inline constexpr std::uint64_t GetLevelRendererPlayer = 0x000003A0;  // [field] LevelRenderer::getLevelRendererPlayer
+inline constexpr std::uint64_t GetLevelRenderer = 0x000000C0;  // [field] ClientInstance::getLevelRenderer
+inline constexpr std::uint64_t BlockTypeClass = 0x00000078;  // [field] inside Block::getDescriptionId
+inline constexpr std::uint64_t GetPlatform = 0x0000046C;  // [field] Player::getPlatform
+inline constexpr std::uint64_t GetGameplayUserManager = 0x00000430;  // [field] inside Level::forEachPlayer
+inline constexpr std::uint64_t ViewMatrix = 0x00000318;  // [field] ClientInstance Cheat Engine
+inline constexpr std::uint64_t FovX = 0x00000F28;  // [field] LevelRendererPlayer Game Guardian 0.3~0.7 fovX
+inline constexpr std::uint64_t FovY = 0x00000F3C;  // [field] LevelRendererPlayer Game Guardian 0.8~1.5 fovY
 }
