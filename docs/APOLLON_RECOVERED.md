@@ -97,6 +97,19 @@ Also worth recording: every one of those blocks sits inside `if (!isLANGame)`,
 where the LAN flag comes from `InLanGame1/InLanGame2` (NetherNet send/read packet)
 — they disable movement features in LAN worlds.
 
+## What this changed in our code
+
+**Fly's `Mode` now defaults to `Force` (r45).** Apollon has two separate switches
+and they are not the same feature: `creativeFly` grants `MAY_FLY` (10) — *permission*
+— and vanilla then waits for a double-tap jump before the player leaves the
+ground; `forceCreativeFly` sets `FLYING` (9) and the player is airborne
+immediately. Our `Mode` default was `Creative`, i.e. the permission-only half, so
+"turn Fly on and nothing happens" was the documented behaviour of the default
+setting, not a broken module. The user reported exactly that. Force is now the
+default (and the tooltip says plainly which mode the other one is), because a
+mode whose visible effect requires an undocumented second action is not a
+sensible default for a feature someone asks for.
+
 ## Symbols we did not have (now in the header)
 
 44 entries in `Offsets64` were new to us. They are now in

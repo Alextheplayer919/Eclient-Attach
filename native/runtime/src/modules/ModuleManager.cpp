@@ -125,9 +125,19 @@ ModuleManager::ModuleManager() : modules_{
     // refuse with "patch profile not validated". See patchCoverageAudit().
     {"Fly", "Engine flight via player abilities — creative-style, works like the game's own fly",
         "Movement", false, false, {
-        Setting::choice("Mode", {"Creative", "Force"}, 0,
-            "Creative: you are allowed to fly — double-tap jump, vanilla behaviour.\n"
-            "Force: airborne immediately."),
+        // Default is FORCE, and that is deliberate. "Creative" only grants
+        // MAY_FLY — permission — and vanilla then waits for a double-tap jump
+        // before the player leaves the ground, so enabling Fly and watching it
+        // do nothing is the expected result of that mode. Apollon splits the
+        // same two switches (creativeFly = setAbility(10) alone, forceCreativeFly
+        // = setAbility(9)) and the force one is the switch that visibly flies.
+        // See docs/APOLLON_RECOVERED.md. Nothing is persisted to disk, so this
+        // default is what every fresh launch gets.
+        Setting::choice("Mode", {"Creative", "Force"}, 1,
+            "Force (default): airborne the moment the module is on.\n"
+            "Creative: only grants permission to fly — you must double-tap jump "
+            "before anything happens. If Fly looked like it did nothing, that "
+            "was this mode."),
         Setting::boolean("Ladder", false,
             "Climb walls while flying, as if they were ladders."),
     }},
