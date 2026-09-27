@@ -59,6 +59,23 @@ object NativeBridge {
     external fun getFloatSetting(module: String, key: String, fallback: Float): Float
     external fun getBoolSetting(module: String, key: String, fallback: Boolean): Boolean
 
+    /**
+     * Every setting of a native module, one line each, tab-separated:
+     *     key \t label \t kind \t value \t min \t max \t options \t tooltip
+     * kind is b|i|f|e. options is comma-joined and only used by enums.
+     *
+     * The in-game panel needs this so a memory-backed module can be configured
+     * on the device it runs on — the external app cannot do it for them.
+     */
+    external fun nativeListSettings(module: String): String
+
+    /**
+     * Apply one setting. Send all three values; the SETTING's native type decides
+     * which one is used, so the UI cannot desync from the module's real type.
+     * Returns false when the module/key is unknown or the value is rejected.
+     */
+    external fun nativeSetSetting(module: String, key: String, f: Float, b: Boolean, i: Int): Boolean
+
     // ── PvP bot data plane (r27) ──────────────────────────────────────────
     //
     // DRIVEN BY YOU, NOT THE UI: these answer `botScan`-style questions about

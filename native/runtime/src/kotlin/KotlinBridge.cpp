@@ -1,5 +1,7 @@
 #include "kotlin/KotlinBridge.h"
 
+#include <cstdio>
+
 #include <android/log.h>
 
 #include <algorithm>
@@ -279,6 +281,128 @@ JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_setFullB
     JNIEnv* /*env*/, jobject /*self*/, jboolean enabled) {
     return eclient_runtime::profile::PatchManager::instance()
                    .set("FullBright", enabled == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Native module SETTINGS for the in-game panel (r42)
+//
+// The in-game GUI is the only GUI that can drive memory-backed modules, so it
+// has to be able to configure them, not just toggle them. One call per module
+// returns every setting; one call applies a value.
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+// Flatten a label/tooltip for a single-line tab-separated wire format.
+std::string flatten(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) out += (c == '\n' || c == '\t' || c == '\r') ? ' ' : c;
+    return out;
+}
+
+const eclient_runtime::modules::Setting* findSettingByName(const std::string& module,
+                                                          const std::string& key) {
+    using eclient_runtime::modules::ModuleManager;
+    for (const auto& m : ModuleManager::instance().all()) {
+        if (m.name != module) continue;
+        for (const auto& s : m.settings) {
+            if (s.key == key) return &s;
+        }
+        return nullptr;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeListSettings(
+    JNIEnv* env, jobject /*self*/, jstring module) {
+    using eclient_runtime::modules::ModuleManager;
+    std::string out;
+    if (module) {
+        const char* want = env->GetStringUTFChars(module, nullptr);
+        if (want) {
+            for (const auto& m : ModuleManager::instance().all()) {
+                if (m.name != want) continue;
+                char buf[64];
+                for (const auto& s : m.settings) {
+                    const char kind =
+                        s.type == eclient_runtime::modules::Setting::Type::Bool    ? 'b' :
+                        s.type == eclient_runtime::modules::Setting::Type::Int     ? 'i' :
+                        s.type == eclient_runtime::modules::Setting::Type::Float   ? 'f' : 'e';
+
+                    std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(s.floatValue));
+                    const std::string value =
+                        (kind == 'b') ? (s.boolValue ? "1" : "0") :
+                        (kind == 'f') ? std::string(buf) :
+                                        std::to_string(kind == 'e' ? s.enumValue : s.intValue);
+
+                    std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(s.floatMin));
+                    const std::string fmin = buf;
+                    std::snprintf(buf, sizeof(buf), "%.3f", static_cast<double>(s.floatMax));
+                    const std::string fmax = buf;
+
+                    const std::string smin = (kind == 'f') ? fmin : std::to_string(s.intMin);
+                    const std::string smax = (kind == 'f') ? fmax : std::to_string(s.intMax);
+
+                    std::string options;
+                    if (kind == 'e') {
+                        for (std::size_t i = 0; i < s.options.size(); ++i) {
+                            if (i) options += ',';
+                            options += flatten(s.options[i]);
+                        }
+                    }
+
+                    // label falls back to key so a row can never render blank
+                    out += s.key;
+                    out += '\t' + flatten(s.label.empty() ? s.key : s.label);
+                    out += '\t' + std::string(1, kind);
+                    out += '\t' + value;
+                    out += '\t' + smin;
+                    out += '\t' + smax;
+                    out += '\t' + options;
+                    out += '\t' + flatten(s.tooltip);
+                    out += '\n';
+                }
+                break;
+            }
+            env->ReleaseStringUTFChars(module, want);
+        }
+    }
+    return env->NewStringUTF(out.c_str());
+}
+
+JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeSetSetting(
+    JNIEnv* env, jobject /*self*/, jstring module, jstring key,
+    jfloat f, jboolean b, jint i) {
+    using eclient_runtime::modules::ModuleManager;
+    if (!module || !key) return JNI_FALSE;
+    const char* m = env->GetStringUTFChars(module, nullptr);
+    const char* k = env->GetStringUTFChars(key, nullptr);
+    if (!m || !k) {
+        if (m) env->ReleaseStringUTFChars(module, m);
+        if (k) env->ReleaseStringUTFChars(key, k);
+        return JNI_FALSE;
+    }
+
+    // The setting's own type picks the field: the caller sends all three and
+    // cannot desync from the native type.
+    bool ok = false;
+    const auto* s = findSettingByName(m, k);
+    if (s) {
+        using T = eclient_runtime::modules::Setting::Type;
+        switch (s->type) {
+            case T::Bool:  ok = ModuleManager::instance().setBoolSetting(m, k, b == JNI_TRUE); break;
+            case T::Float: ok = ModuleManager::instance().setFloatSetting(m, k, static_cast<float>(f)); break;
+            case T::Int:   ok = ModuleManager::instance().setIntSetting(m, k, static_cast<int>(i)); break;
+            case T::Enum:  ok = ModuleManager::instance().setEnumSetting(m, k, static_cast<int>(i)); break;
+        }
+    }
+
+    env->ReleaseStringUTFChars(key, k);
+    env->ReleaseStringUTFChars(module, m);
+    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

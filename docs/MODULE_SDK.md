@@ -124,3 +124,26 @@ Rules, non-negotiable:
 3. Derive `MoveInput` + `Rotation` via the oracle step. Walking and aiming go live;
    `caps` grows two entries and modules light up on their own.
 4. Module development is then free: replay for logic, live for behaviour.
+
+
+### Native settings from Kotlin (r42)
+
+Two calls let the in-game panel read and write a native module's settings —
+the knobs that live in C++ and therefore cannot be reached from the app:
+
+```kotlin
+NativeBridge.nativeListSettings("KillAura2")
+// one line per setting, tab-separated:
+//   key \t label \t kind \t value \t min \t max \t options \t tooltip
+// kind: b=bool  i=int  f=float  e=enum (value is the option INDEX)
+
+NativeBridge.nativeSetSetting("KillAura2", "Range", 4.5f, true, 4)
+// true  = applied
+// false = unknown module/key, or the value was rejected out of range
+```
+
+Pass all three values; the **setting's own native type decides which one is
+used**, so a Kotlin caller cannot desync from the C++ type. `/home/user/repo/native/runtime/src/kotlin/KotlinBridge.cpp`
+is the other half of this ABI — adding an `external fun` here without the
+matching `Java_com_rubidiumclient_modules_NativeBridge_<name>` export there
+fails at CALL time (UnsatisfiedLinkError), not at build time.

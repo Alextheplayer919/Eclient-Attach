@@ -179,13 +179,27 @@ It is additive: the game boots and plays exactly as before with it disabled.
 6. **Capabilities are statements about what works, not wishes.** `caps()` feeds
    both the push and the refusal logic; a capability reported true while its
    layout is underived turns into a module that silently does nothing.
-7. **The in-game UI is headless by default** (`EClientUi.attach` returns early
-   unless `/sdcard/Download/eclient_ui_on` exists). The external app is the GUI.
-   The ABI stays because the loader smali calls `attach(Landroid/app/Activity;)V`
-   by name — never remove the method, only gate it. Module control therefore has
-   to keep working from the agent (`listModules` / `toggleModule` / `setSetting`);
-   those ops run on the GAME thread inside `executeQueued`, never on the bridge
-   thread, because ModuleManager is not thread-safe against the tick.
+7. **The in-game UI is the only memory-capable GUI, so it is ON by default.**
+   The companion app runs in a different process and cannot read or write
+   Minecraft's memory — it only receives numbers the in-game agent already read.
+   Anything that touches game memory (KillAura2's range/delay/rotation mode,
+   Fly's mode, the patch-backed modules) therefore has to be drivable from
+   inside the game, and `EClientUi` is that surface.
+   * `attach(Landroid/app/Activity;)V` is called by name from the loader smali:
+     never remove or rename it.
+   * Hiding it is an opt-OUT: `/sdcard/Download/eclient_ui_off` (or
+     `/sdcard/eclient_ui_off`), checked once per process. Do not turn the opt-in
+     flag back on — that made the GUI look broken to anyone who had not created
+     a file nobody told them about.
+   * Agent-driven module control must keep working too (`listModules` /
+     `toggleModule` / `setSetting`); those ops run on the GAME thread inside
+     `executeQueued`, never on the bridge thread, because ModuleManager is not
+     thread-safe against the tick.
+   * Both GUIs write the same `ModuleManager`, which is fine because both run on
+     the game/UI side of their own process — but never let a control write a
+     value keyed by a stale module name: several modules share setting keys
+     ("Mode" exists on both Fly and KillAura2), so the module name travels with
+     each control instead of living in a shared "currently editing" field.
 8. **Attacks are the game's own attack call**, reached through the same
    `attack(gameMode, actor, true)` path the auras use — not a new mechanism.
 

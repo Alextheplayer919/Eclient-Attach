@@ -100,7 +100,7 @@ internal object DiagOnce {
 
 object EClientUi {
 
-    const val BUILD_TAG = "r26"
+    const val BUILD_TAG = "r42"
     private const val TAG = "EClientUi"
     private const val LOG_BASE = "eclient_ui"
 
@@ -159,42 +159,43 @@ object EClientUi {
     // ══════════════════════════════════════════════════════════════════════
 
     /**
-     * HEADLESS BY DEFAULT (r37).
+     * VISIBLE BY DEFAULT (r42).
      *
-     * The in-game panel/chip used to be the only way to see and toggle modules.
-     * It is not any more: the companion Android app talks to the in-game agent
-     * over 127.0.0.1:38170 and drives the same ModuleManager (listModules /
-     * toggleModule / setSetting), so a second UI drawn on top of the game is
-     * redundant weight — and it lived in the game's own window, which is exactly
-     * where an overlay should not be.
+     * This is THE clickgui, and it is the only one that can be. The companion
+     * app runs in a different process and cannot touch Minecraft's memory at
+     * all — it only receives numbers the in-game agent already read (see
+     * docs/DO_NOT_BREAK.md, "the app cannot read memory"). Every control that
+     * changes game memory has to be driven from in here: KillAura2's range and
+     * rotation mode, Fly's mode, and the settings behind the patch layer.
      *
-     * The ABI is unchanged on purpose: the loader smali still calls
-     * `attach(Activity)` by name and signature, it simply does nothing unless the
-     * flag file below exists. That keeps the boot chain untouched (no smali edit,
-     * no hook change) while removing the UI from the experience.
+     * r37 made this headless because the external app could drive the module
+     * toggles over the agent bridge. That is true for toggles and false for
+     * everything that needs the memory layer, so the UI is on by default again.
      *
-     * To bring it back for a debugging session (e.g. to watch ECSDump without the
-     * app): create /sdcard/Download/eclient_ui_on and relaunch the game.
+     * To hide it anyway (a clean session, a recording, a server that checks
+     * screenshots): create /sdcard/Download/eclient_ui_off and relaunch the
+     * game. The ABI is unchanged either way — the loader smali still calls
+     * `attach(Activity)` by name and signature.
      */
     @JvmStatic
     fun attach(act: Activity) {
         if (!uiEnabled()) {
-            DiagOnce.headlessLogged("EClientUi", "headless: in-game UI disabled (external app is the GUI)")
+            DiagOnce.headlessLogged("EClientUi", "headless: in-game UI disabled by eclient_ui_off")
             return
         }
         if (Looper.myLooper() == Looper.getMainLooper()) attachOnMain(act)
         else main.post { attachOnMain(act) }
     }
 
-    /** True only when the opt-in flag file exists. Cheap; called on every attach. */
+    /** True unless the opt-out flag file exists. Cheap; called on every attach. */
     private fun uiEnabled(): Boolean {
         if (forcedUi != null) return forcedUi!!
-        val on = try {
-            java.io.File("/sdcard/Download/eclient_ui_on").exists() ||
-                java.io.File("/sdcard/eclient_ui_on").exists()
+        val off = try {
+            java.io.File("/sdcard/Download/eclient_ui_off").exists() ||
+                java.io.File("/sdcard/eclient_ui_off").exists()
         } catch (_: Throwable) { false }
-        forcedUi = on
-        return on
+        forcedUi = !off
+        return forcedUi!!
     }
 
     /** Cached flag, so the check costs one stat per process. */
@@ -778,6 +779,77 @@ object EClientUi {
         return out
     }
 
+    /**
+     * One setting of a native (C++) module, as sent by nativeListSettings().
+     *
+     * kind: 'b' bool, 'i' int, 'f' float, 'e' enum (v is the option index).
+     * All values travel as a float so one parser covers every kind.
+     */
+    private class NativeSetting(
+        val key: String,
+        val label: String,
+        val kind: Char,
+        var v: Float,
+        val vMin: Float,
+        val vMax: Float,
+        val options: List<String>,
+        val desc: String,
+    ) {
+        val text: String
+            get() = when (kind) {
+                'b' -> if (v > 0.5f) "on" else "off"
+                'e' -> options.getOrElse(v.toInt()) { "?" }
+                'i' -> v.toInt().toString()
+                else -> fmt(v)
+            }
+    }
+
+    /** Empty list = the module has no settings, or native did not answer. */
+    private fun nativeSettingsFor(module: String): List<NativeSetting> {
+        val raw = try {
+            NativeBridge.nativeListSettings(module) ?: ""
+        } catch (t: Throwable) {
+            log("nativeListSettings($module) failed: $t")
+            return emptyList()
+        }
+        val out = mutableListOf<NativeSetting>()
+        for (line in raw.split('\n')) {
+            if (line.isBlank()) continue
+            val f = line.split('\t')
+            if (f.size < 8) continue
+            out += NativeSetting(
+                key     = f[0],
+                label   = f[1],
+                kind    = f[2].firstOrNull() ?: 'f',
+                v       = f[3].toFloatOrNull() ?: 0f,
+                vMin    = f[4].toFloatOrNull() ?: 0f,
+                vMax    = f[5].toFloatOrNull() ?: 1f,
+                options = if (f[6].isEmpty()) emptyList() else f[6].split(','),
+                desc    = f[7],
+            )
+        }
+        return out
+    }
+
+    /**
+     * Push one value; the native side picks the field that matches its type.
+     *
+     * The module name is passed IN, not read from a field: several modules share
+     * setting keys ("Mode" exists on both Fly and KillAura2), so a shared
+     * "currently editing" field could write a value into the wrong module once a
+     * rebuild swapped the rows underneath a control.
+     */
+    private fun applyNative(module: String, s: NativeSetting, value: Float): Boolean {
+        val ok = try {
+            NativeBridge.nativeSetSetting(module, s.key, value, value > 0.5f, value.toInt())
+        } catch (t: Throwable) {
+            log("nativeSetSetting($module.${s.key}) failed: $t")
+            false
+        }
+        if (!ok) toast("${s.key}: refused")
+        return ok
+    }
+
     private fun nativeRow(m: NativeRow): View {
         val row = LinearLayout(actContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -802,9 +874,122 @@ object EClientUi {
                 if (applied != want) {
                     isChecked = m.enabled
                     toast("${m.name}: refused (patch profile not validated)")
+                } else {
+                    rebuildPanel()   // show/hide this module's settings
                 }
             }
         })
+
+        // Settings, same rule as the Kotlin rows: shown while the module is on,
+        // because that is when they do something. Values are re-read from native
+        // on every rebuild, so the app and this panel never drift apart.
+        val wrap = LinearLayout(actContext()).apply { orientation = LinearLayout.VERTICAL }
+        wrap.addView(row)
+        if (m.enabled) {
+            val settings = nativeSettingsFor(m.name)
+            if (settings.isNotEmpty()) {
+                val col = LinearLayout(actContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(6), dp(2), 0, dp(2))
+                }
+                for (s in settings) col.addView(nativeSettingRow(m.name, s))
+                wrap.addView(col)
+            }
+        }
+        return wrap
+    }
+
+    /**
+     * One native setting: Switch for bools, SeekBar for numbers, a cycling
+     * button for enums — deliberately the same controls the Kotlin settings use,
+     * so the panel reads as one list rather than two design languages.
+     *
+     * Every change is applied immediately (the JNI call is a mutex plus a
+     * lookup, and seeing the effect while dragging is the point of having these
+     * in-game at all).
+     */
+    private fun nativeSettingRow(module: String, s: NativeSetting): View {
+        val row = LinearLayout(actContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, dp(3))
+        }
+        row.addView(label(s.label, 12f, COL_TEXT).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            if (Build.VERSION.SDK_INT >= 26 && s.desc.isNotEmpty()) tooltipText = s.desc
+        })
+
+        when (s.kind) {
+            'b' -> row.addView(Switch(actContext()).apply {
+                isChecked = s.v > 0.5f
+                setOnCheckedChangeListener { _, want ->
+                    val next = if (want) 1f else 0f
+                    if (applyNative(module, s, next)) s.v = next else isChecked = s.v > 0.5f
+                }
+            })
+
+            'e' -> row.addView(label(s.text, 12f, COL_ACCENT).apply {
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = rounded(COL_CARD_BG, 6f)
+                isClickable = true
+                setOnClickListener {
+                    if (s.options.isEmpty()) return@setOnClickListener
+                    val next = ((s.v.toInt() + 1) % s.options.size).toFloat()
+                    if (applyNative(module, s, next)) {
+                        s.v = next
+                        text = s.text
+                    }
+                }
+            })
+
+            'i' -> {
+                val tv = label(s.text, 11f, COL_ACCENT)
+                row.addView(tv)
+                val span = (s.vMax - s.vMin).coerceAtLeast(1f)
+                row.addView(SeekBar(actContext()).apply {
+                    max = span.toInt()
+                    progress = (s.v - s.vMin).toInt().coerceIn(0, max)
+                    layoutParams = LinearLayout.LayoutParams(dp(110), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { leftMargin = dp(6) }
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                            if (!fromUser) return
+                            val next = s.vMin + p
+                            if (applyNative(module, s, next)) {
+                                s.v = next
+                                tv.text = s.text
+                            }
+                        }
+                        override fun onStartTrackingTouch(sb: SeekBar?) {}
+                        override fun onStopTrackingTouch(sb: SeekBar?) {}
+                    })
+                })
+            }
+
+            else -> {   // 'f'
+                val tv = label(s.text, 11f, COL_ACCENT)
+                row.addView(tv)
+                val span = (s.vMax - s.vMin).takeIf { it > 0f } ?: 1f
+                row.addView(SeekBar(actContext()).apply {
+                    max = 1000
+                    progress = (((s.v - s.vMin) / span) * 1000f).toInt().coerceIn(0, 1000)
+                    layoutParams = LinearLayout.LayoutParams(dp(110), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { leftMargin = dp(6) }
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                            if (!fromUser) return
+                            val next = s.vMin + (p / 1000f) * span
+                            if (applyNative(module, s, next)) {
+                                s.v = next
+                                tv.text = s.text
+                            }
+                        }
+                        override fun onStartTrackingTouch(sb: SeekBar?) {}
+                        override fun onStopTrackingTouch(sb: SeekBar?) {}
+                    })
+                })
+            }
+        }
         return row
     }
 
