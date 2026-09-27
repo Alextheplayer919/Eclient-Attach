@@ -31,6 +31,12 @@ public:
     std::uintptr_t scan(const ModuleInfo& module, const std::vector<std::uint8_t>& bytes,
                         const std::string& mask) const;
 
+    // ── map cache diagnostics (r38) ─────────────────────────────────────────
+    // The validation table is parsed once and re-parsed only on a miss, so these
+    // exist to make that visible in a device log instead of a matter of faith.
+    std::size_t cachedRangeCount() const;
+    void invalidateMapCache() const;
+
 private:
     NativeMemory() = default;
     NativeMemory(const NativeMemory&) = delete;

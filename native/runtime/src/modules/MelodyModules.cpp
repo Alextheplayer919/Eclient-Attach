@@ -112,6 +112,8 @@ std::uintptr_t findPoolByHash(std::uintptr_t actor, std::uint32_t hash) {
     return 0;
 }
 
+
+
 TypeRead readActorTypeId(void* actor, std::uintptr_t typePool) {
     TypeRead r{};
     if (!actor) return r;
@@ -182,6 +184,42 @@ Reject targetReject(void* player, void* actor, const Vec3& myPos, float range,
 bool g_stableLatch = false;
 long g_lastStableCheck = -1000;
 long g_tick = 0; // declared early: the world-stability gate reads it
+
+// ── Type-pool cache (r38) ───────────────────────────────────────────────────
+// Walking the registry to find one pool costs one guarded read per field of
+// every descriptor (~620 pools x 2 reads) PLUS a vector allocation, and botScan
+// did it on every scan (twice a tick once KillAura2 and the bot both ran).
+// The answer only changes when the WORLD changes, so it is cached against the
+// local-player pointer and a tick budget; a world join replaces the pointer.
+constexpr long kTypePoolCacheTicks = 200;   // ~10 s of safety margin
+void* g_typePoolOwner = nullptr;
+std::uintptr_t g_typePoolValue = 0;
+long g_typePoolTick = -1;
+
+std::uintptr_t typePoolForPlayer(void* player) {
+    if (!player) return 0;
+    if (g_typePoolOwner == player && g_typePoolValue &&
+        g_tick - g_typePoolTick < kTypePoolCacheTicks) {
+        return g_typePoolValue;
+    }
+    const std::uintptr_t pool = findPoolByHash(reinterpret_cast<std::uintptr_t>(player),
+                                               ActorTypeComponentHash);
+    if (pool) {
+        g_typePoolOwner = player;
+        g_typePoolValue = pool;
+        g_typePoolTick = g_tick;
+    } else {
+        g_typePoolOwner = nullptr;
+        g_typePoolValue = 0;
+    }
+    return pool;
+}
+
+void dropTypePoolCache() {
+    g_typePoolOwner = nullptr;
+    g_typePoolValue = 0;
+    g_typePoolTick = -1;
+}
 
 bool heavyPlayerSafe(void* player) {
     using memory::NativeMemory;
@@ -528,6 +566,7 @@ void tickEcsDump(void* player) {
 
 
 void resetState() {
+    dropTypePoolCache();
     g_hurtState.clear();
     g_attackTimer = 0;
     g_dumpProbes.clear();
@@ -623,8 +662,7 @@ int botScan(void* player, float maxRange, int mode, BotActor* out, int cap) {
 
     // Resolve the type pool ONCE (all actors share the world's registry) and
     // read our own type id the same way we will read everyone else's.
-    const std::uintptr_t typePool = findPoolByHash(reinterpret_cast<std::uintptr_t>(player),
-                                                   ActorTypeComponentHash);
+    const std::uintptr_t typePool = typePoolForPlayer(player);
     const TypeRead mine = readActorTypeId(player, typePool);
     const std::uint32_t myTypeId = mine.id;
     g_scanStats.myTypeId = mine.id;
@@ -880,6 +918,8 @@ void onNormalTick(void* localPlayer) {
     if (!worldReady(localPlayer)) {
         // Let a disabled ECSDump re-arm so the next enable starts fresh.
         if (!mgr().enabled("ECSDump")) { g_dumped = false; g_dumpStartTick = -1; }
+        // Not in a world: nothing the pool cache says is trustworthy next time.
+        dropTypePoolCache();
         return;
     }
 
