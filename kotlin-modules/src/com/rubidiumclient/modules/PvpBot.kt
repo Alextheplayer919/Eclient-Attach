@@ -260,7 +260,7 @@ class PvpBot : KotlinModule(
         current = null
         engaged = false
         if (escalated && restoreKillAura.value) {
-            NativeBridge.nativeSetModuleEnabled("KillAura2", killedAuraWasOn)
+            NativeBridge.nativeSetModuleEnabled("KillAura2", killedAuraWasOn).isEmpty()
             escalated = false
             log("bot offline: KillAura2 restored to $killedAuraWasOn")
         } else {
@@ -541,7 +541,7 @@ class PvpBot : KotlinModule(
         if (!escalated && hurtIn5s >= escalateHits.value) {
             killedAuraWasOn = NativeBridge.nativeModuleEnabled("KillAura2")
             if (!killedAuraWasOn) {
-                val ok = NativeBridge.nativeSetModuleEnabled("KillAura2", true)
+                val ok = NativeBridge.nativeSetModuleEnabled("KillAura2", true).isEmpty()
                 log("ESCALATE: $hurtIn5s hits in 5 s → KillAura2 ${if (ok) "on" else "refused"}")
             }
             escalated = true
@@ -553,7 +553,7 @@ class PvpBot : KotlinModule(
             val held = tick - escalatedAt > killAuraHoldMs.value / 50 // ms → ticks
             if (calm && held) {
                 if (restoreKillAura.value && !killedAuraWasOn) {
-                    NativeBridge.nativeSetModuleEnabled("KillAura2", false)
+                    NativeBridge.nativeSetModuleEnabled("KillAura2", false).isEmpty()
                 }
                 log("ESCALATE: calm again → KillAura2 handed back")
                 escalated = false

@@ -202,6 +202,27 @@ It is additive: the game boots and plays exactly as before with it disabled.
      each control instead of living in a shared "currently editing" field.
 8. **Attacks are the game's own attack call**, reached through the same
    `attack(gameMode, actor, true)` path the auras use — not a new mechanism.
+9. **A refusal must name its real reason — never one sentence for many
+   failures.** `nativeSetModuleEnabled` returns a `jstring`: `""` means the
+   module is now in the requested state, anything else is the reason handed
+   back to the player (`no patch profile named X`, `patch write failed (n of m
+   site(s))`, `patch profile not validated (<status>)`, `module is marked
+   memory-backed but has no patch profile`, `unknown module X`). It used to
+   return a bare bool that the UI turned into one fixed sentence, so *any*
+   failure — including a Fly row flagged `memoryBacked` with no `"Fly"` spec in
+   `PatchManager` — came out as "patch profiles are not validated" while the
+   status line said VALIDATED. Keep the reason string, keep it specific, and
+   keep every caller restoring the switch when the reason is non-empty.
+   * **`memoryBacked = true` requires a same-named spec in
+     `PatchManager.cpp`.** `native/runtime/tests/host/check_module_patch_coverage.py`
+     (wired into `./run.sh`, also runnable as `./run.sh coverage`) fails on any
+     violation, and prints the dormant specs — profiles no module drives yet.
+     Fly is `false` on purpose: it flies through the player's abilities
+     (`getAbilities`/`getLayer`/`setAbility`) and writes no bytes at all.
+   * A toggle counts as a success only when the module's reported state actually
+     matches the request (`AgentState`'s `ToggleModule`); never treat "the name
+     was known" as applied, and never let a refusal be routed through the
+     validation message.
 
 ## Hard pins — change together or the pipeline aborts
 
@@ -210,7 +231,8 @@ It is additive: the game boots and plays exactly as before with it disabled.
 - Function addresses: `src/profile/Offsets_1_21_111.h` ONLY.
 - Patch sites: `src/profile/PatchManager.cpp` — spec **name strings are the
   join key** to `ModuleManager` UI names; a mismatch silently kills that
-  toggle. Composites share one name (see "NoBlur").
+  toggle. Composites share one name (see "NoBlur"). The join is checked by
+  `native/runtime/tests/host/check_module_patch_coverage.py` (see rule 9).
 - Loader class/authority: smali + patcher + manifest edit:
   `com.rubidiumclient.host.EClientLoaderProvider` /
   `com.rubidiumclient.eclientloader`.

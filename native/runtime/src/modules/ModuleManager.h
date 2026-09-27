@@ -61,7 +61,15 @@ class ModuleManager final {
 public:
     static ModuleManager& instance();
     const std::vector<ModuleState>& all() const;
-    bool setEnabled(const std::string& name, bool enabled);
+    /// `why` receives the reason when this returns false (unknown module, a
+    /// memory-backed module with no patch profile, a write failure, ...).
+    bool setEnabled(const std::string& name, bool enabled, std::string* why = nullptr);
+
+    /// Every module that CLAIMS to be memory-backed but has no matching patch
+    /// profile, as human-readable lines. Empty = consistent. This is the check
+    /// that would have caught Fly being flagged as a patch module when it is
+    /// driven entirely by the ability API.
+    std::vector<std::string> patchCoverageAudit() const;
     bool enabled(const std::string& name) const;
 
     // Setting reads — cheap, used by module tick logic on the game thread.

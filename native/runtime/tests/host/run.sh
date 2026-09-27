@@ -9,6 +9,7 @@
 #   ./run.sh bench      memory bench (correctness + per-read cost)
 #   ./run.sh tick       tick bench (us/tick of the REAL module code)
 #   ./run.sh selftest   agent self-test (real socket protocol)
+#   ./run.sh coverage   module table vs patch table (no compiler needed)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -71,6 +72,16 @@ if [ "$want" = all ] || [ "$want" = tick ]; then
     echo
     echo "════════ tick bench ════════"
     "$OUT/tick_bench" | grep -v '^\[EClient'
+fi
+
+if [ "$want" = all ] || [ "$want" = coverage ]; then
+    echo
+    echo "════════ module/patch coverage ════════"
+    # Static join of the two source tables: a module flagged memoryBacked with no
+    # same-named patch spec can only ever refuse at toggle time (that was the
+    # r43 "patch profiles are not validated" bug).  Pure text check, so it runs
+    # even when no compiler is around.
+    python3 check_module_patch_coverage.py
 fi
 
 if [ "$want" = all ] || [ "$want" = selftest ]; then

@@ -17,6 +17,7 @@ round-trip.
 ./run.sh bench      # memory bench (correctness + per-read cost)
 ./run.sh tick       # tick bench (us/tick of the REAL module code)
 ./run.sh selftest   # agent self-test (real socket protocol)
+./run.sh coverage   # module table vs patch table (no compiler needed)
 ```
 
 `ECLIENT_AGENT_TOKEN=...` overrides the token the self-test uses.
@@ -34,6 +35,21 @@ round-trip.
 * (bench) a freshly mapped region is readable on the FIRST read, and an
   unmapped address is refused every time — the regression test for the refresh
   policy
+
+## The coverage check
+
+`check_module_patch_coverage.py` joins the two source tables statically: every
+module in `modules/ModuleManager.cpp` flagged `memoryBacked` must have a
+same-named spec in `profile/PatchManager.cpp`. It also lists the dormant specs
+(profiles no module drives yet — that is fine, they have their own entry
+points).
+
+This is the r43 regression guard. Fly's row carried `memoryBacked = true` left
+over from the deleted patch-era Fly, so every toggle called
+`PatchManager::set("Fly")` against a name with no spec, got `matched = false`,
+and refused — with a message about *validation*, even though the panel said
+VALIDATED. The bug is a wiring mistake, so it is caught by a text check rather
+than by hand-testing a toggle on a phone.
 
 ## The bench
 

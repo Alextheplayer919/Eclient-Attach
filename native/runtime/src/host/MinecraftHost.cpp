@@ -13,6 +13,7 @@
 #include "../bridge/GameBridge.h"
 #include "../input/NativeInputHook.h"
 #include "../profile/PatchManager.h"
+#include "../modules/ModuleManager.h"
 #include "../modules/GameplayModules.h"
 
 namespace eclient_runtime::host {
@@ -271,6 +272,15 @@ void MinecraftHost::bootstrapLoop() {
                 std::chrono::milliseconds(500));
 
             continue;
+        }
+
+        // Wiring audit: a module that claims memoryBacked with no patch profile
+        // can never be toggled, and the only symptom used to be a refusal at the
+        // first toggle that blamed validation. Say it once, at boot, by name.
+        for (const auto& problem : eclient_runtime::modules::ModuleManager::instance()
+                                       .patchCoverageAudit()) {
+            __android_log_print(ANDROID_LOG_ERROR, "EClientPatches",
+                "patch coverage problem — %s", problem.c_str());
         }
 
         if (!eclient_runtime::modules::gameplay::initialize()) {

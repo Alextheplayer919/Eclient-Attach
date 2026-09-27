@@ -865,15 +865,18 @@ object EClientUi {
         row.addView(Switch(actContext()).apply {
             isChecked = m.enabled
             setOnCheckedChangeListener { _, want ->
-                val applied = try {
+                val refusal = try {
                     NativeBridge.nativeSetModuleEnabled(m.name, want)
                 } catch (t: Throwable) {
                     log("setEnabled(${m.name}) failed: $t")
-                    false
+                    "native call threw: ${t.javaClass.simpleName}"
                 }
-                if (applied != want) {
+                if (refusal.isNotEmpty()) {
+                    // The switch must not lie: put it back where it was and say
+                    // exactly what native answered, not a generic sentence.
                     isChecked = m.enabled
-                    toast("${m.name}: refused (patch profile not validated)")
+                    log("setEnabled(${m.name}, $want) refused: $refusal")
+                    toast("${m.name}: $refusal")
                 } else {
                     rebuildPanel()   // show/hide this module's settings
                 }

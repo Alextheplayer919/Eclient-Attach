@@ -66,11 +66,15 @@ bool PatchManager::initialize() {
     return true;
 }
 
-bool PatchManager::set(const std::string& module, bool on) {
-    if (!ready_ && !initialize()) return false;
+bool PatchManager::set(const std::string& module, bool on, std::string* why) {
+    if (!ready_ && !initialize()) {
+        if (why) *why = "patch profile not validated (" + status_ + ")";
+        return false;
+    }
     // Apply to EVERY spec with this name (composites like "NoBlur").
     bool matched = false;
     bool allOk = true;
+    int written = 0, failed = 0;
     for (std::size_t i=0; i<specs_.size(); ++i) {
         if (module != specs_[i].module) continue;
         matched = true;
@@ -78,12 +82,31 @@ bool PatchManager::set(const std::string& module, bool on) {
         const auto& bytes = on ? specs_[i].enabled : specs_[i].expected;
         if (!memory::NativeMemory::instance().write(address, bytes.data(), bytes.size())) {
             allOk = false;
+            ++failed;
             continue;
         }
+        ++written;
         active_[i] = on;
+    }
+    if (why) {
+        if (!matched) {
+            *why = "no patch profile named \"" + module + "\"";
+        } else if (!allOk) {
+            *why = "patch write failed (" + std::to_string(failed) + " of " +
+                   std::to_string(written + failed) + " site(s))";
+        } else {
+            why->clear();
+        }
     }
     return matched && allOk;
 }
+
+bool PatchManager::hasSpec(const std::string& module) const {
+    for (const auto& s : specs_) if (module == s.module) return true;
+    return false;
+}
+
+std::size_t PatchManager::specCount() const { return specs_.size(); }
 
 bool PatchManager::enabled(const std::string& module) const {
     // Composite-aware: enabled only when every site sharing the name is active.

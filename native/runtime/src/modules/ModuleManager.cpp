@@ -2,6 +2,8 @@
 #include "kotlin/KotlinBridge.h"
 #include "profile/PatchManager.h"
 
+#include <android/log.h>
+
 #include <cmath>
 
 namespace eclient_runtime::modules {
@@ -116,8 +118,13 @@ ModuleManager::ModuleManager() : modules_{
     // flying once the ability is granted, so there is no velocity or position
     // write anywhere in this module — the two approaches that came before it
     // (state-vector velocity, then a position write) are both gone for good.
+    // memoryBacked=false ON PURPOSE: Fly flies through the player's abilities
+    // (getAbilities/getLayer/setAbility) and writes no bytes at all. It was
+    // flagged true by copy-paste from the deleted patch-era Fly, which made
+    // every toggle call PatchManager::set("Fly") — a name with no spec — and
+    // refuse with "patch profile not validated". See patchCoverageAudit().
     {"Fly", "Engine flight via player abilities — creative-style, works like the game's own fly",
-        "Movement", false, true, {
+        "Movement", false, false, {
         Setting::choice("Mode", {"Creative", "Force"}, 0,
             "Creative: you are allowed to fly — double-tap jump, vanilla behaviour.\n"
             "Force: airborne immediately."),
@@ -133,7 +140,7 @@ ModuleManager::ModuleManager() : modules_{
 
 const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
 
-bool ModuleManager::setEnabled(const std::string& name, bool enabled) {
+bool ModuleManager::setEnabled(const std::string& name, bool enabled, std::string* why) {
     std::lock_guard lock(mutex_);
     // NOTE: the Fly ⇄ MotionFly exclusivity pair lived here. Both modules were
     // removed from the product (r25 is PvP-only). If two future modules must
@@ -143,13 +150,46 @@ bool ModuleManager::setEnabled(const std::string& name, bool enabled) {
     for (auto& module : modules_) {
         if (module.name != name) continue;
         if (module.memoryBacked) {
-            if (!profile::PatchManager::instance().set(name, enabled)) return false;
+            auto& patches = profile::PatchManager::instance();
+            // Distinguish the two failures that used to look identical. A module
+            // flagged memory-backed with no spec is a WIRING BUG in this table,
+            // not a validation problem, and it should say so.
+            if (!patches.hasSpec(name)) {
+                if (why) {
+                    *why = "module is marked memory-backed but has no patch profile named \"" +
+                           name + "\"";
+                }
+                __android_log_print(ANDROID_LOG_ERROR, "EClientModules",
+                    "wiring bug: %s is memoryBacked but PatchManager has no spec for it",
+                    name.c_str());
+                return false;
+            }
+            if (!patches.set(name, enabled, why)) return false;
         }
         module.enabled = enabled;
         if (module.kotlin) kotlinbridge::setModuleEnabled(name.c_str(), enabled);
+        if (why) why->clear();
         return true;
     }
+    if (why) *why = "unknown module \"" + name + "\"";
     return false;
+}
+
+std::vector<std::string> ModuleManager::patchCoverageAudit() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::string> problems;
+    auto& patches = profile::PatchManager::instance();
+    // Nothing to compare against until the profile has been built.
+    if (patches.specCount() == 0) return problems;
+    for (const auto& m : modules_) {
+        if (!m.memoryBacked) continue;
+        if (!patches.hasSpec(m.name)) {
+            problems.push_back(m.name +
+                ": memoryBacked=true but no patch profile with that name exists "
+                "(either clear memoryBacked or add/fix the spec name)");
+        }
+    }
+    return problems;
 }
 
 bool ModuleManager::enabled(const std::string& name) const {

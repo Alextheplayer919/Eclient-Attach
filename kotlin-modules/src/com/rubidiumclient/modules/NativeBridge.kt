@@ -41,8 +41,14 @@ object NativeBridge {
 
     external fun nativeModuleEnabled(name: String): Boolean
 
-    /** Apply a toggle. Returns false when the patch layer refused (profile not validated). */
-    external fun nativeSetModuleEnabled(name: String, enabled: Boolean): Boolean
+    /**
+     * Apply a toggle.
+     *
+     * Returns "" when it applied, or a human-readable reason when it refused —
+     * e.g. a missing patch profile, a profile that failed validation, or a write
+     * that did not land. Show the reason; never invent one.
+     */
+    external fun nativeSetModuleEnabled(name: String, enabled: Boolean): String
 
     /** Human-readable patch-profile state for the panel's status line. */
     external fun nativePatchStatus(): String

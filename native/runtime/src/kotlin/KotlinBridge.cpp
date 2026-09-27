@@ -447,21 +447,26 @@ JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeMo
     return on ? JNI_TRUE : JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeSetModuleEnabled(
+// Returns "" when the toggle applied, or the reason it did not.
+//
+// It used to return a bare bool, and the UI turned that into one fixed sentence
+// ("patch profile not validated") no matter what had actually happened. That is
+// why the panel could show "patches validated" and refuse every toggle in the
+// same breath: the refusal was real, the explanation was invented. The reason
+// now travels with the answer.
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeSetModuleEnabled(
     JNIEnv* env, jobject /*self*/, jstring name, jboolean enabled) {
     using eclient_runtime::modules::ModuleManager;
-    if (!name) return JNI_FALSE;
+    if (!name) return env->NewStringUTF("no module name");
     const char* n = env->GetStringUTFChars(name, nullptr);
     if (!n) {
         if (env->ExceptionCheck()) env->ExceptionClear();
-        return JNI_FALSE;
+        return env->NewStringUTF("module name was not readable");
     }
-    // Returns false when the layer refuses — for a memory-backed module that
-    // means the patch profile was not validated, and the UI must show that
-    // instead of a switch that silently lies.
-    const bool ok = ModuleManager::instance().setEnabled(n, enabled == JNI_TRUE);
+    std::string why;
+    const bool ok = ModuleManager::instance().setEnabled(n, enabled == JNI_TRUE, &why);
     env->ReleaseStringUTFChars(name, n);
-    return ok ? JNI_TRUE : JNI_FALSE;
+    return env->NewStringUTF(ok ? "" : why.c_str());
 }
 
 JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativePatchStatus(

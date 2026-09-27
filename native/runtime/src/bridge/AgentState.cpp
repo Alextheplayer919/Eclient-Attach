@@ -1,5 +1,7 @@
 #include "bridge/AgentState.h"
 
+#include <android/log.h>
+
 #include "kotlin/KotlinBridge.h"
 #include "modules/MelodyModules.h"
 #include "modules/ModuleManager.h"
@@ -233,18 +235,29 @@ void executeQueued(void* player) {
                 // touched so a Kotlin module (Hitbox/AutoTotem/PvpBot) and a native
                 // module behave the same from the app's point of view.
                 auto& mgr = modules::ModuleManager::instance();
-                const bool known = mgr.setEnabled(cmd.module, cmd.boolValue);
-                if (known && cmd.boolValue != mgr.enabled(cmd.module)) {
-                    ok_toggles.fetch_add(0, std::memory_order_relaxed);   // state mismatch: still count as ok
-                }
-                if (known) {
+                std::string why;
+                const bool applied = mgr.setEnabled(cmd.module, cmd.boolValue, &why);
+
+                // A module that only exists on the Kotlin side is not a failure:
+                // the native registry answers "unknown module" for it and the
+                // Kotlin registry takes it. Anything else is a real refusal.
+                const bool kotlinOnly = !applied && why.rfind("unknown module", 0) == 0;
+                if (kotlinOnly) {
                     kotlinbridge::setModuleEnabled(cmd.module, cmd.boolValue);
+                    ok_toggles.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+
+                // Success means the state ACTUALLY matches the request. This used
+                // to count a success whenever the name was known, so a refused
+                // patch toggle still looked applied from the app's side.
+                if (applied && mgr.enabled(cmd.module) == cmd.boolValue) {
                     ok_toggles.fetch_add(1, std::memory_order_relaxed);
                 } else {
-                    // Not in the native registry: try the Kotlin one directly, which
-                    // is how the app can still reach a Kotlin-only module.
-                    kotlinbridge::setModuleEnabled(cmd.module, cmd.boolValue);
-                    ok_toggles.fetch_add(1, std::memory_order_relaxed);
+                    bad_toggles.fetch_add(1, std::memory_order_relaxed);
+                    __android_log_print(ANDROID_LOG_WARN, "EClientAgent",
+                        "toggleModule %s=%d refused: %s", cmd.module,
+                        cmd.boolValue ? 1 : 0, why.empty() ? "(no reason given)" : why.c_str());
                 }
                 break;
             }
