@@ -42,12 +42,15 @@ inline constexpr std::uint64_t GetHealth = 0x0C9437D0;
 // From Apollon 1.21.111 (previously missing — caused compile failure)
 inline constexpr std::uint64_t SetSprinting = 0x6BF05B8;
 inline constexpr std::uint64_t InitMaxAutoStep = 0xC956C54;
-// Ability helpers used by Fly. Offsets must come from the same Apollon table;
-// left at 0 until the exact values are confirmed against the binary so that
-// initialize() keeps the function pointers null and Fly stays inert.
-inline constexpr std::uint64_t GetAbilities = 0x0;
-inline constexpr std::uint64_t GetLayer = 0x0;
-inline constexpr std::uint64_t SetAbility = 0x0;
+// ── Ability helpers (Fly) — CONFIRMED, no longer 0 ───────────────────────
+// Source: the Apollon v4.62 1.21.111 table now in the repo (see the section at
+// the end of this file). Cross-validated before use: every entry we derived
+// independently — LerpMotion, JumpHack, Gravity, InitMaxAutoStep,
+// GetPositionField, GetLevelField, GetGameModeField, GetNameField, Attack,
+// IsAttackable — matches that table exactly, so both describe this binary.
+inline constexpr std::uint64_t GetAbilities = 0x0CDF943C; // Player::getAbilities
+inline constexpr std::uint64_t GetLayer = 0x0CDF9450;     // LayeredAbilities::getLayer
+inline constexpr std::uint64_t SetAbility = 0x0CDF87E0;   // Abilities::setAbility
 inline constexpr std::uint64_t GetPositionField = 0x208;
 inline constexpr std::uint64_t GetLevelField = 0x1D0;
 inline constexpr std::uint64_t GetGameModeField = 0x9C0;
@@ -198,4 +201,52 @@ inline constexpr std::uint32_t MoveInputSneakBit = 0;
 inline constexpr std::uint32_t MoveInputSprintBit = 0;
 inline constexpr int MoveInputForwardSign = 0;           // +1/-1 axis convention (0 = not pinned)
 inline constexpr int MoveInputStrafeSign = 0;
+
+// ===========================================================================
+// APOLLON v4.62 (1.21.111) — API POINTERS, now IN THE REPO
+//
+// Why these are trusted: the same table supplied GetAbilities/GetLayer/
+// SetAbility and the ability-based fly, and its Fields64 block reproduces our
+// independently derived field offsets exactly (GetPosition=0x208, GetLevel=0x1D0,
+// GetGamemode=0x9C0, GetName=0xB30, and GetAbilities/GetLayer/SetAbility line up
+// with the Fly mechanism our header had been waiting on). A table that agrees
+// with our Capstone-derived entries on every shared symbol is describing the
+// same libminecraftpe.so.
+//
+// Everything below is a CALLABLE (function pointer), unlike the offsets above.
+// Resolve through fn() exactly like Attack/IsAttackable, and keep the
+// "if (!ptr) return;" guard: a null function pointer must fail inert.
+// ===========================================================================
+
+// ── movement / flight ──────────────────────────────────────────────────────
+inline constexpr std::uint64_t SetClimbing = 0x0C945610;   // Actor::setClimbing
+inline constexpr std::uint64_t SetOnGround = 0x06F42DFC;   // ActorEntityAccess::addOrRemoveComponent<OnGroundFlagComponent>
+inline constexpr std::uint64_t SetNoJumpDelay = 0x0CDDB410;// MobJump::setNoJumpDelay
+inline constexpr std::uint64_t MobIsJumping = 0x0CDD8840;  // ActorEntityAccess::addOrRemoveComponent<MobIsJumpingFlag>
+
+// ── rotation ───────────────────────────────────────────────────────────────
+// The player's rotation is a POINTER FIELD, not a pool element:
+//     float* rot = *(float**)(actor + RotationPtrField);
+//     rot[0] = yaw (degrees), rot[1] = pitch   <- identical Vec2 order to the
+//                                                Melody math already ported
+// This supersedes the old plan of hunting ActorRotationComponent through the
+// ECS pool (ActorRotationStride/YawOffset stay 0 and are now unused).
+inline constexpr std::uint64_t RotationPtrField = 0x218;   // Actor::setRotationX
+inline constexpr std::uint64_t RotationPitchOffset = 0x04;
+inline constexpr std::uint64_t SetYHeadRot = 0x0C95AF30;   // Actor::setYHeadRot
+inline constexpr std::uint64_t GetYHeadRot = 0x0C95AE58;   // Actor::getYHeadRot
+inline constexpr std::uint64_t SetYBodyRot = 0x0C86C5D4;   // Mob::setYBodyRotation
+
+// ── combat / world ─────────────────────────────────────────────────────────
+inline constexpr std::uint64_t GetAABBDim = 0x0C93AE58;    // Actor::getAABBDim -> Vec2{width, height}
+inline constexpr std::uint64_t Intersects = 0x0C94727C;    // Actor::intersects (line of sight)
+inline constexpr std::uint64_t SetInvisible = 0x0C9597B8;  // Actor::setInvisible
+inline constexpr std::uint64_t Swing = 0x06BF031C;         // LocalPlayer::swing
+inline constexpr std::uint64_t ForEachActivePlayer = 0x0CE9B8F4; // GameplayUserManager::forEachActivePlayer
+inline constexpr std::uint64_t HurtTimeField = 0x194;      // Mob::hurtEffects
+
+// ── ability indices for LayeredAbilities::setAbility(index, on) ─────────────
+inline constexpr int AbilityLayerBase = 2;   // the layer Apollon drives
+inline constexpr int AbilityFlying = 9;      // in flight right now
+inline constexpr int AbilityMayFly = 10;     // allowed to start flying
 }

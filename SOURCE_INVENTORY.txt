@@ -51,6 +51,13 @@
 ./native/runtime/src/profile/Offsets_1_21_111.h
 ./native/runtime/src/profile/PatchManager.cpp
 ./native/runtime/src/profile/PatchManager.h
+./native/runtime/tests/host/README.md
+./native/runtime/tests/host/include/android/log.h
+./native/runtime/tests/host/run.sh
+./native/runtime/tests/host/src/bench_memory.cpp
+./native/runtime/tests/host/src/fake_game.cpp
+./native/runtime/tests/host/src/stub_android.cpp
+./native/runtime/tests/host/src/test_agent.cpp
 ./native/vendor/arm64hook/And64InlineHook.cpp
 ./native/vendor/arm64hook/And64InlineHook.hpp
 ./native/vendor/dobby/dobby.h

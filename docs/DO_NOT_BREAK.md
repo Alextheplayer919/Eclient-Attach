@@ -69,8 +69,23 @@ returns without installing the swap hook, so none of the ImGui code below runs.*
   helper: only there is `g_prevOut` updated, which is what keeps
   `getWorldInputDir` reporting the *human's* input instead of the bot's own
   velocity (that is how Human-override works at all).
-- `botRotationAvailable()` must return false while `ActorRotationComponentHash`
-  is 0. Never let the bot claim it can aim.
+- **Rotation is a pointer field, not a pool element.** `*(float**)(actor + 0x218)`
+  is a `Vec2{yaw, pitch}` (yaw first). `botRotationAvailable()` reports the
+  *probed* truth through an atomic written on the game thread; never compute it
+  on the bridge thread, which must not touch game memory at all. The old
+  `ActorRotationComponentHash`/stride hunt is retired — do not reintroduce it.
+- **Fly goes through abilities, never through velocity or position.** Granting
+  the engine's own `Flying`/`MayFly` abilities makes the game fly the player;
+  the two earlier mechanisms (writing the state vector's velocity, then writing
+  position/prevPos) both fought the engine and were deleted. If you add a
+  movement module, do not resurrect either of them.
+- **An ability that was granted must be given back.** `tickFlyDisable()` clears
+  Flying/MayFly/Ladder when the module is switched off, and it runs *before*
+  the world-ready gate for exactly that reason. A module that leaves the player
+  flying after being disabled is a bug, not a feature.
+- **An un-derived offset must fail inert.** Every API pointer goes through
+  `apiPtr<T>(offset)`, which returns null for offset 0. Calling `fn(0)` would
+  jump into the module base.
 - **Movement is input-based walking, never a velocity write.** `botWalk` writes
   the joystick's own state (`MoveInputComponent`) and lets the engine move the
   player. Do not reintroduce the fly-style velocity write for the bot: it fights

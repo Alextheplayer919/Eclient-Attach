@@ -84,10 +84,12 @@ ModuleManager::ModuleManager() : modules_{
         Setting::choice("Mode", {"Single", "Multi"}, 0,
             "Single: attack the closest valid target.\nMulti: attack every valid target in range each attack tick."),
         Setting::choice("Rotation", {"None", "Silent", "Strafe"}, 0,
-            "Melody Fruit rotations (yaw/pitch math IS ported and used).\n"
-            "Silent/Strafe need the rotation component address, which the\n"
-            "ECSDump dev module is there to discover — until then they\n"
-            "behave like None."),
+            "Melody Fruit rotations (yaw/pitch math ported verbatim).\n"
+            "Silent: aim the camera rotation at the target — attacks land where\n"
+            "we aim, and your view follows.\n"
+            "Strafe: turn body and head only, your camera stays where you left\n"
+            "it (the closest thing to a silent rotation in-process, where there\n"
+            "is no packet to rewrite)."),
         Setting::choice("Switch", {"None", "Full", "Silent"}, 0,
             "Melody weapon-switch mode. Needs inventory access (still being\n"
             "derived) — Full/Silent currently act as None."),
@@ -110,6 +112,18 @@ ModuleManager::ModuleManager() : modules_{
     // until the item-use state is derived (fail-closed, never breaks eating).
     {"AlwaysSprint", "Keeps sprint active without fighting item use — PENDING item-use offset, inert until then",
         "Movement", false, false, {}},
+    // Fly (r40): flight through the player's abilities. The engine does the
+    // flying once the ability is granted, so there is no velocity or position
+    // write anywhere in this module — the two approaches that came before it
+    // (state-vector velocity, then a position write) are both gone for good.
+    {"Fly", "Engine flight via player abilities — creative-style, works like the game's own fly",
+        "Movement", false, true, {
+        Setting::choice("Mode", {"Creative", "Force"}, 0,
+            "Creative: you are allowed to fly — double-tap jump, vanilla behaviour.\n"
+            "Force: airborne immediately."),
+        Setting::boolean("Ladder", false,
+            "Climb walls while flying, as if they were ladders."),
+    }},
     {"AntiKnockback", "Suppress motion interpolation used by knockback", "Movement", false, true, {}},
     {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
 

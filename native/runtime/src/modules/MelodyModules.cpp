@@ -1,5 +1,7 @@
 #include "modules/MelodyModules.h"
 
+#include <atomic>
+
 #include "bridge/DebugFiles.h"
 #include "kotlin/KotlinBridge.h"
 #include "memory/ComponentWalk.h"
@@ -51,9 +53,47 @@ IsAttackableFn isAttackable = nullptr;
 GetHealthFn getHealth = nullptr;
 GetEntityTypeIdFn getEntityTypeId = nullptr;
 
+// ── Ability / rotation / movement API (r40) ────────────────────────────────
+// These are the game's OWN accessors, resolved from the Apollon-validated
+// table. Flying through setAbility is what the engine expects; it is why this
+// works where writing the state vector's velocity never did (the engine
+// overwrote it every tick, and the server never agreed we were flying).
+using GetAbilitiesFn = void* (*)(void* player);          // -> Abilities*
+using GetLayerFn = void* (*)(void* abilities, int index); // -> LayeredAbilities*
+using SetAbilityFn = void (*)(void* layer, int index, bool on);
+using SetClimbingFn = void (*)(void* actor, bool);
+using SetYHeadRotFn = void (*)(void* actor, float yaw);
+using GetYHeadRotFn = float (*)(void* actor);
+using SetYBodyRotFn = void (*)(void* mob, float yaw);
+
+GetAbilitiesFn getAbilities = nullptr;
+GetLayerFn getLayer = nullptr;
+SetAbilityFn setAbility = nullptr;
+SetClimbingFn setClimbing = nullptr;
+SetYHeadRotFn setYHeadRot = nullptr;
+GetYHeadRotFn getYHeadRot = nullptr;
+SetYBodyRotFn setYBodyRot = nullptr;
+
+// Rotation readiness is probed on the GAME thread and published as an atomic,
+// because the bridge thread also asks for it (capabilities) and must never
+// dereference game memory itself.
+std::atomic<bool> g_rotationReady{false};
+
+// Fly latches what it turned on so it can turn exactly that off again.
+bool g_flyEngaged = false;
+
 std::uintptr_t base = 0;
 
 inline void* fn(std::uint64_t off) { return reinterpret_cast<void*>(base + off); }
+
+// Resolve an API function pointer, treating offset 0 as "not derived yet".
+// Calling fn(0) hands back the module base and the first call jumps into an
+// arbitrary instruction, so this is the difference between a module that fails
+// inert and a module that crashes the game on enable.
+template <typename Fn>
+Fn apiPtr(std::uint64_t offset) {
+    return offset ? reinterpret_cast<Fn>(fn(offset)) : nullptr;
+}
 
 ModuleManager& mgr() { return ModuleManager::instance(); }
 
@@ -314,13 +354,116 @@ bool killauraTargetValid(void* player, void* actor, const Vec3& myPos, float ran
            Reject::Ok;
 }
 
-// The rotation element may only be touched when the pool is known AND the
-// element layout is pinned. The hash alone is NOT enough: the write below
-// indexes block + inBlock*stride + yawOffset, so a non-zero hash with a zero
-// stride would write into the component block itself.
+// ── Rotation (r40): a POINTER FIELD, not an ECS pool element ──────────────
+//   float* rot = *(float**)(actor + 0x218);   rot[0] = yaw, rot[1] = pitch
+// This is the same Vec2 the ported Melody math already produces, so no
+// unit conversion sits between the aim calculation and the write. It replaces
+// the old ActorRotationComponent-pool hunt (those constants stay 0 and unused).
+float* rotationVec2(void* player) {
+    if (!player) return nullptr;
+    void* raw = nullptr;
+    if (!memory::NativeMemory::instance().read(
+            reinterpret_cast<std::uintptr_t>(player) + RotationPtrField, &raw, sizeof(raw))) {
+        return nullptr;
+    }
+    if (!raw) return nullptr;
+    auto* rot = static_cast<float*>(raw);
+    if (!memory::NativeMemory::instance().read(
+            reinterpret_cast<std::uintptr_t>(rot), rot, sizeof(float) * 2)) {
+        return nullptr;
+    }
+    return rot;
+}
+
 bool rotationWritable() {
-    return ActorRotationComponentHash != 0 && ActorRotationStride != 0 &&
-           ActorRotationYawOffset != 0;
+    return g_rotationReady.load(std::memory_order_relaxed);
+}
+
+// Apply an aim. `bodyOnly` turns the body/head without touching the camera
+// rotation component — that is the closest thing to a silent rotation that
+// exists in-process, where there is no packet to rewrite.
+bool applyAim(void* player, float yaw, float pitch, bool bodyOnly) {
+    if (!player || !std::isfinite(yaw) || !std::isfinite(pitch)) return false;
+
+    if (bodyOnly) {
+        if (!setYBodyRot || !setYHeadRot) return false;
+        setYBodyRot(player, yaw);
+        setYHeadRot(player, yaw);
+        return true;
+    }
+
+    float* rot = rotationVec2(player);
+    if (!rot) return false;
+    rot[0] = yaw;
+    rot[1] = pitch;
+    // Mirror onto the head so the entity the server sees is looking where we
+    // aimed, not where the camera used to point.
+    if (setYHeadRot) setYHeadRot(player, yaw);
+    return true;
+}
+
+// ── Abilities (Fly) ───────────────────────────────────────────────────────
+void* abilityLayer(void* player) {
+    if (!player || !getAbilities || !getLayer) return nullptr;
+    void* abilities = getAbilities(player);
+    if (!abilities) return nullptr;
+    return getLayer(abilities, AbilityLayerBase);
+}
+
+bool setAbilityOn(void* player, int index, bool on) {
+    void* layer = abilityLayer(player);
+    if (!layer || !setAbility) return false;
+    setAbility(layer, index, on);
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Fly (r40) — flight through the player's ABILITIES, not through memory writes
+//
+// Why this and not the old mechanism: writing the state vector's velocity (the
+// deleted native Fly, and what the Kotlin MotionFly ended up doing) fought the
+// engine's own movement every tick, produced no flight animation, and told the
+// server nothing — the server kept simulating a walking player. The engine has
+// a first-class concept for this: the player's abilities. Permission to fly is
+// an ability, being in flight is an ability, and once they are set the ENGINE
+// flies the player — collision, motion, animation, and the state the server
+// actually trusts. Nothing is written to velocity or position.
+//
+//   Mode Creative  grant MayFly only: double-tap jump to fly, vanilla creative
+//                  behaviour (the form servers tolerate best).
+//   Mode Force     grant Flying too: airborne immediately.
+//   Ladder         setClimbing(true) while enabled — climb walls like a ladder.
+//
+// Give-back is not optional. Leaving Flying set after the module is switched
+// off is the difference between "module off" and "still flying with the UI
+// closed", so the clear runs even when the world gate would have returned early.
+// ════════════════════════════════════════════════════════════════════════════
+void tickFly(void* player) {
+    if (!player) return;
+    if (!getAbilities || !getLayer || !setAbility) return;   // underived: inert
+
+    const int mode = mgr().enumSetting("Fly", "Mode", 0);        // 0 Creative, 1 Force
+    const bool ladder = mgr().boolSetting("Fly", "Ladder", false);
+
+    if (!abilityLayer(player)) return;
+    if (!setAbilityOn(player, AbilityMayFly, true)) return;
+    if (mode == 1) setAbilityOn(player, AbilityFlying, true);
+    if (ladder && setClimbing) setClimbing(player, true);
+    g_flyEngaged = true;
+}
+
+void tickFlyDisable(void* player) {
+    if (!g_flyEngaged) return;
+    if (!player) { g_flyEngaged = false; return; }
+    // Apollon's guard, and it is the correct one: in a gamemode where the
+    // ability was never legitimately granted (survival on a server), clearing
+    // is what the server expects. In creative the ability is the game's own
+    // state, so leave it alone.
+    if (isAttackable && !isAttackable(player)) { g_flyEngaged = false; return; }
+    setAbilityOn(player, AbilityFlying, false);
+    setAbilityOn(player, AbilityMayFly, false);
+    if (setClimbing) setClimbing(player, false);
+    g_flyEngaged = false;
 }
 
 // KillAura2 tick. Settings (Melody parity) are read through ModuleManager:
@@ -377,32 +520,14 @@ void tickKillAura2(void* player) {
         Vec3 targetPos{};
         if (!getPosition(target, targetPos)) continue;
 
-        // Melody applies Fruit rotations (math ported verbatim above).
-        // Rotation modes need the ActorRotationComponent element address;
-        // until ECSDump discovers it they intentionally fail inert.
+        // Melody's Fruit rotations, now actually applied (r40):
+        //   Silent -> aim the camera rotation (attacks land where we aim)
+        //   Strafe -> body/head only, camera left alone
+        // The aim is written BEFORE the attack in the same tick, so the swing
+        // is evaluated from the aimed direction.
         const Rot rot = getRotations(myPos, targetPos);
-        (void)rot;
         if (rotationMode != 0 && rotationWritable()) {
-            using namespace eclient_runtime::ecs;
-            const ElementInfo el = resolveElement(
-                [player]() -> std::uintptr_t {
-                    std::uintptr_t registry = *reinterpret_cast<std::uintptr_t*>(
-                        reinterpret_cast<std::uintptr_t>(player) + EcsRegistryField);
-                    if (!registry) return 0;
-                    for (const PoolDesc& d : listPools(reinterpret_cast<std::uintptr_t>(player)))
-                        if (d.typeHash == ActorRotationComponentHash) return d.pool;
-                    return 0;
-                }(),
-                entityIdOf(player));
-            if (el.valid) {
-                auto* rotField = reinterpret_cast<Vec3*>(
-                    el.block + el.inBlock * ActorRotationStride + ActorRotationYawOffset);
-                float* yawPitch = reinterpret_cast<float*>(rotField); // Vec2 {yaw, pitch}
-                if (std::isfinite(rot.yaw) && std::isfinite(rot.pitch)) {
-                    yawPitch[0] = rot.yaw;   // Strafe memory-write rotation
-                    yawPitch[1] = rot.pitch;
-                }
-            }
+            applyAim(player, rot.yaw, rot.pitch, /*bodyOnly=*/rotationMode == 2);
         }
 
         attack(gameMode, target, true);
@@ -811,7 +936,12 @@ bool botSelf(void* player, float* outSelf) {
     return true;
 }
 
-bool botRotationAvailable() { return rotationWritable(); }
+bool botRotationAvailable() {
+    // True once the game thread has PROVEN the rotation pointer reads back as a
+    // finite Vec2, and false the rest of the time. The bridge thread only ever
+    // reads this atomic — it never touches game memory itself.
+    return g_rotationReady.load(std::memory_order_relaxed);
+}
 
 // ── Loopback-agent seam (r36) ───────────────────────────────────────────────
 // These answer questions the app asks through the bridge. They are deliberately
@@ -832,14 +962,10 @@ bool botIsPlayerType(std::uint32_t typeId) {
 }
 
 bool botApplyRotation(void* player, float yaw, float pitch) {
-    if (!player) return false;
-    if (!std::isfinite(yaw) || !std::isfinite(pitch)) return false;
-    // Same guard as rotationWritable(): hash AND stride AND yaw offset. Until the
-    // ActorRotationComponent element layout is derived, all three fail, so this
-    // returns false — which is the truthful answer, not a placeholder. The write
-    // body lands in P3 with the constants, behind this same guard.
+    // r40: this is real now. The rotation is a pointer field on the player
+    // (0x218 -> Vec2{yaw, pitch}), so no pool walk or stride guess is involved.
     if (!rotationWritable()) return false;
-    return false;   // unreachable today; P3 replaces this line
+    return applyAim(player, yaw, pitch, /*bodyOnly=*/false);
 }
 
 bool botApplyInput(void* player, float forward, float strafe, bool jump, bool sneak) {
@@ -890,11 +1016,26 @@ bool initialize(std::uintptr_t minecraftBase) {
     if (minecraftBase == 0) return false;
     base = minecraftBase;
 
-    getRuntimeActors = reinterpret_cast<GetRuntimeActorFn>(fn(GetRuntimeActor));
-    attack = reinterpret_cast<AttackFn>(fn(Attack));
-    isAttackable = reinterpret_cast<IsAttackableFn>(fn(IsAttackable));
-    getHealth = reinterpret_cast<GetHealthFn>(fn(GetHealth));
-    getEntityTypeId = reinterpret_cast<GetEntityTypeIdFn>(fn(GetEntityTypeId));
+    // A zero offset would resolve to the module base and call garbage, so every
+    // API pointer goes through apiPtr(), which yields null and fails inert.
+    getRuntimeActors = apiPtr<GetRuntimeActorFn>(GetRuntimeActor);
+    attack = apiPtr<AttackFn>(Attack);
+    isAttackable = apiPtr<IsAttackableFn>(IsAttackable);
+    getHealth = apiPtr<GetHealthFn>(GetHealth);
+    getEntityTypeId = apiPtr<GetEntityTypeIdFn>(GetEntityTypeId);
+
+    // r40: the game's own ability / rotation / movement accessors. These are
+    // what make Fly and the KillAura2 rotations possible without a single
+    // velocity write.
+    getAbilities = apiPtr<GetAbilitiesFn>(GetAbilities);
+    getLayer = apiPtr<GetLayerFn>(GetLayer);
+    setAbility = apiPtr<SetAbilityFn>(SetAbility);
+    setClimbing = apiPtr<SetClimbingFn>(SetClimbing);
+    setYHeadRot = apiPtr<SetYHeadRotFn>(SetYHeadRot);
+    getYHeadRot = apiPtr<GetYHeadRotFn>(GetYHeadRot);
+    setYBodyRot = apiPtr<SetYBodyRotFn>(SetYBodyRot);
+    g_flyEngaged = false;
+    g_rotationReady.store(false, std::memory_order_relaxed);
 
     resetState();
     // Bot data plane (r27): a fresh bind means a fresh world — drop every
@@ -905,7 +1046,11 @@ bool initialize(std::uintptr_t minecraftBase) {
     g_botSelfDamageTicks.clear();
     g_botSelfLastHealth = -1;
     __android_log_print(ANDROID_LOG_INFO, TAG,
-        "PvP modules ready: KillAura2 + ECSDump (Fly/FlyDebug removed in r25)");
+        "modules ready: KillAura2 + ECSDump + Fly (ability-based, r40)");
+    __android_log_print(ANDROID_LOG_INFO, TAG,
+        "api: abilities=%d layer=%d setAbility=%d rotationField=0x%llx",
+        getAbilities != nullptr, getLayer != nullptr, setAbility != nullptr,
+        static_cast<unsigned long long>(RotationPtrField));
     return true;
 }
 
@@ -915,12 +1060,23 @@ void onNormalTick(void* localPlayer) {
 
     // Stability gate: skip ALL memory-touching modules while the world/server
     // join rebuilds the actor structures (this was the join-crash root cause).
+    // Fly off-state is handled BEFORE the world gate: switching the module off
+    // must give the abilities back even while a world is rebuilding.
+    if (!mgr().enabled("Fly")) tickFlyDisable(localPlayer);
+
     if (!worldReady(localPlayer)) {
         // Let a disabled ECSDump re-arm so the next enable starts fresh.
         if (!mgr().enabled("ECSDump")) { g_dumped = false; g_dumpStartTick = -1; }
         // Not in a world: nothing the pool cache says is trustworthy next time.
         dropTypePoolCache();
         return;
+    }
+
+    // Rotation readiness: probed here (game thread) and published for the
+    // bridge thread. Re-probed occasionally so a world change cannot leave a
+    // stale "true" behind.
+    if (!g_rotationReady.load(std::memory_order_relaxed) || (g_tick % 200) == 0) {
+        g_rotationReady.store(rotationVec2(localPlayer) != nullptr, std::memory_order_relaxed);
     }
 
     // Prune hurt-state map of stale pointers occasionally.
@@ -932,6 +1088,8 @@ void onNormalTick(void* localPlayer) {
     // Both are no-ops unless a client is connected.
     agentstate::publish(localPlayer);
     agentstate::executeQueued(localPlayer);
+
+    if (mgr().enabled("Fly")) tickFly(localPlayer);
 
     if (mgr().enabled("KillAura2")) tickKillAura2(localPlayer);
 
