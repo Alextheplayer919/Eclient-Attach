@@ -161,6 +161,18 @@ bool ModuleManager::setEnabled(const std::string& name, bool enabled, std::strin
         if (module.name != name) continue;
         if (module.memoryBacked) {
             auto& patches = profile::PatchManager::instance();
+            // BUILD THE PROFILE FIRST. hasSpec() answers against the spec table
+            // that initialize() fills in, so asking it about an unbuilt profile
+            // returns false for EVERY module — and the code below would then
+            // accuse this table of a wiring bug that does not exist, while
+            // hiding the real reason (the profile was never validated). r43
+            // introduced exactly that: it consulted hasSpec() before anything
+            // ensured the profile had been built, which also removed the lazy
+            // initialize() the old set() call used to perform.
+            if (!patches.ready() && !patches.initialize()) {
+                if (why) *why = "patch profile not validated (" + patches.status() + ")";
+                return false;
+            }
             // Distinguish the two failures that used to look identical. A module
             // flagged memory-backed with no spec is a WIRING BUG in this table,
             // not a validation problem, and it should say so.

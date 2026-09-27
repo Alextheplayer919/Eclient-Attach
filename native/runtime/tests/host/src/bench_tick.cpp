@@ -99,5 +99,17 @@ int main() {
     std::printf("\n═══════════════════════════════════════════════════════════════════\n");
     std::printf("50,000 us = a whole 20 TPS tick. Anything above ~10%% is time the\n");
     std::printf("frame does not get.\n");
+
+    // The in-game panel shows diagLine() — print the same string here so the
+    // host can prove it is well-formed, and so a device screenshot has a
+    // reference for what "healthy" looks like.
+    ModuleManager::instance().setEnabled("KillAura2", true);
+    fakeworld::setup(12);
+    eclient_runtime::modules::melody::initialize(fakeworld::base());
+    for (int i = 0; i < 80; ++i) {
+        eclient_runtime::modules::melody::onNormalTick(fakeworld::player());
+    }
+    std::printf("\n════════ diagLine() — exactly what the in-game panel shows ════════\n");
+    std::printf("%s\n", eclient_runtime::modules::melody::diagLine().c_str());
     return 0;
 }

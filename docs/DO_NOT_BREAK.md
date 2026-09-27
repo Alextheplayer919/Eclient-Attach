@@ -224,6 +224,28 @@ It is additive: the game boots and plays exactly as before with it disabled.
      was known" as applied, and never let a refusal be routed through the
      validation message.
 
+10. **Never judge a patch profile that was never built.** `PatchManager::hasSpec()`
+   answers against the table `initialize()` fills, so on an *unbuilt* profile it
+   is false for **every** module. `ModuleManager::setEnabled` therefore has to
+   ensure the profile is ready before it can conclude "this module is marked
+   memory-backed but has no patch profile" — otherwise a validation failure is
+   reported as a wiring bug, and the real reason ("patch profile not validated
+   (<status>)") is hidden. r43 shipped exactly that and removed the lazy
+   `initialize()` that the old `set()` call performed.
+11. **The host harness must be able to see the failure you are fixing.**
+   `tests/host/stub_patchmanager.cpp` used to report `hasSpec()==false` and
+   `specCount()==0` unconditionally, which made every memory-backed toggle
+   refuse and made the coverage audit return early — so the harness was green
+   through the whole class of bug that reached the user twice. It now models a
+   real profile (empty before `initialize()`, three specs after) and
+   `g_stubProfileReady` can be flipped to model "this profile never validated".
+   `tests/host/src/check_modules.cpp` toggles every module in the table.
+12. **`BUILD_TAG` in `ui/EClientUi.kt` must be bumped with every shipped
+   release.** It is how the panel — and a screenshot of the panel — identifies
+   which build is on the device. Four releases (r43–r45) all displayed "r42",
+   which cost real investigation time and nearly ruled out the correct APK.
+   Verify the tag in the built APK's dex, not just in the source tree.
+
 ## Hard pins — change together or the pipeline aborts
 
 - APK SHA-256 `69f6584c…3d59`: **3 copies** — `tools/build-and-patch.sh`,

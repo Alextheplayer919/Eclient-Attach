@@ -469,6 +469,14 @@ JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeSet
     return env->NewStringUTF(ok ? "" : why.c_str());
 }
 
+// The panel's diagnostic line. Read-only, and safe to call before the module
+// layer is up — it then reports the stage that is missing.
+JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativeDiag(
+    JNIEnv* env, jobject /*self*/) {
+    const std::string d = eclient_runtime::modules::melody::diagLine();
+    return env->NewStringUTF(d.c_str());
+}
+
 JNIEXPORT jstring JNICALL Java_com_rubidiumclient_modules_NativeBridge_nativePatchStatus(
     JNIEnv* env, jobject /*self*/) {
     using eclient_runtime::profile::PatchManager;

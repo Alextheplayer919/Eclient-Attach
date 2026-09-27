@@ -10,6 +10,7 @@
 #   ./run.sh tick       tick bench (us/tick of the REAL module code)
 #   ./run.sh selftest   agent self-test (real socket protocol)
 #   ./run.sh coverage   module table vs patch table (no compiler needed)
+#   ./run.sh modules    module toggle matrix (real ModuleManager)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -74,6 +75,12 @@ if [ "$want" = all ] || [ "$want" = tick ]; then
     "$OUT/tick_bench" | grep -v '^\[EClient'
 fi
 
+if [ "$want" = all ] || [ "$want" = modules ]; then
+    echo "── building module toggle matrix"
+    g++ "${CXXFLAGS[@]}" src/stub_android.cpp src/stub_patchmanager.cpp src/check_modules.cpp \
+        "$SRC/modules/ModuleManager.cpp" -lpthread -o "$OUT/check_modules"
+fi
+
 if [ "$want" = all ] || [ "$want" = coverage ]; then
     echo
     echo "════════ module/patch coverage ════════"
@@ -82,6 +89,12 @@ if [ "$want" = all ] || [ "$want" = coverage ]; then
     # r43 "patch profiles are not validated" bug).  Pure text check, so it runs
     # even when no compiler is around.
     python3 check_module_patch_coverage.py
+fi
+
+if [ "$want" = all ] || [ "$want" = modules ]; then
+    echo
+    echo "════════ module toggle matrix ════════"
+    ECLIENT_AGENT_TOKEN="${ECLIENT_AGENT_TOKEN:-hosttest}" "$OUT/check_modules"
 fi
 
 if [ "$want" = all ] || [ "$want" = selftest ]; then

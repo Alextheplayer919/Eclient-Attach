@@ -51,6 +51,12 @@ int botScan(void* player, float maxRange, int mode, BotActor* out, int cap);
 // nobody" a specific, checkable statement instead of a guess.
 std::string botScanDiag();
 
+/// One compact line for the in-game panel: is the module tick alive, are
+/// the game API pointers resolved, which modules are on, and what did the
+/// last KillAura2 scan see and reject. This exists because "nothing works"
+/// on a device is otherwise indistinguishable from "nothing is enabled".
+std::string diagLine();
+
 // Attack the actor at `index` of the last scan (the game's own attack call).
 bool botAttackIndex(void* player, int index);
 

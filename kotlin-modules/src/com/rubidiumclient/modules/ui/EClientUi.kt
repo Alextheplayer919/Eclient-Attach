@@ -100,7 +100,7 @@ internal object DiagOnce {
 
 object EClientUi {
 
-    const val BUILD_TAG = "r42"
+    const val BUILD_TAG = "r46"
     private const val TAG = "EClientUi"
     private const val LOG_BASE = "eclient_ui"
 
@@ -664,7 +664,14 @@ object EClientUi {
         } catch (t: Throwable) {
             "patch: ? ($t)"
         }
-        return "strategy=${strategy.tag}  touch #$panelTouches chip #$chipTouches last=$lastTouch\n$patch"
+        // Live module-layer state. Without this, "nothing works" on a device is
+        // indistinguishable from "nothing is enabled" — see melody::diagLine().
+        val diag = try {
+            NativeBridge.nativeDiag()
+        } catch (t: Throwable) {
+            "diag: ? ($t)"
+        }
+        return "strategy=${strategy.tag}  touch #$panelTouches chip #$chipTouches last=$lastTouch\n$diag\n$patch"
     }
 
     private fun buildPanel(): View {

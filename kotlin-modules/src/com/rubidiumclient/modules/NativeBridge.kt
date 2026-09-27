@@ -50,6 +50,13 @@ object NativeBridge {
      */
     external fun nativeSetModuleEnabled(name: String, enabled: Boolean): String
 
+    /**
+     * Live module-layer state for the panel: tick counter, resolved game API
+     * pointers, world-ready latch, enabled modules, and the last KillAura2 scan
+     * funnel. Read-only; never throws.
+     */
+    external fun nativeDiag(): String
+
     /** Human-readable patch-profile state for the panel's status line. */
     external fun nativePatchStatus(): String
 

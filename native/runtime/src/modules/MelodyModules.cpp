@@ -183,6 +183,36 @@ enum class Reject : int {
     Ok = 0, NullOrSelf, NotAttackable, Dead, TypeBlocked, TypeMismatch, NoPosition, OutOfRange
 };
 
+// KillAura2's own funnel. The bot has had one since r29 (g_scanStats, filled
+// by botScan); the module people actually use did not, so "killaura does
+// nothing" had no way to say WHICH stage emptied its target list. Same shape as
+// ScanStats, same caveat: written on the game thread, read by the panel.
+struct AuraStats {
+    int actors{0}, ok{0}, notAttackable{0}, dead{0}, typeBlocked{0},
+        typeMismatch{0}, noPosition{0}, outOfRange{0}, hurtFiltered{0};
+    bool scanned{false};
+    bool playersOnly{false};
+    int rangeX10{0};
+};
+AuraStats g_auraStats;
+std::atomic<long> g_auraAttacks{0};
+std::atomic<long> g_auraScanTick{-1};
+
+// Fill the aura funnel from one scan. Kept next to targetReject so the reason
+// list and the counter list cannot drift apart.
+void auraCountReject(Reject why) {
+    switch (why) {
+        case Reject::Ok: break;
+        case Reject::NullOrSelf: --g_auraStats.actors; break;
+        case Reject::NotAttackable: ++g_auraStats.notAttackable; break;
+        case Reject::Dead: ++g_auraStats.dead; break;
+        case Reject::TypeBlocked: ++g_auraStats.typeBlocked; break;
+        case Reject::TypeMismatch: ++g_auraStats.typeMismatch; break;
+        case Reject::NoPosition: ++g_auraStats.noPosition; break;
+        case Reject::OutOfRange: ++g_auraStats.outOfRange; break;
+    }
+}
+
 Reject targetReject(void* player, void* actor, const Vec3& myPos, float range,
                     bool playersOnly, std::uint32_t myTypeId, std::uintptr_t typePool,
                     std::uint32_t* outTypeId) {
@@ -498,14 +528,28 @@ void tickKillAura2(void* player) {
     static int scanDivider = 0;
     if ((scanDivider++ & 0x1) == 0) {
         targets.clear();
+        // The funnel: `killauraTargetValid` only answers yes/no, which is why a
+        // failed scan was anonymous. Ask targetReject directly so the reason can
+        // be reported (see diagLine()).
+        g_auraStats = AuraStats{};
+        g_auraStats.playersOnly = playersOnly;
+        g_auraStats.rangeX10 = static_cast<int>(effectiveRange * 10.0f);
         for (void* actor : getRuntimeActors(level)) {
-            if (!killauraTargetValid(player, actor, myPos, effectiveRange, playersOnly, myTypeId)) continue;
-            if (useHurttime && recentlyHurt(actor, getHealth(actor))) continue;
+            ++g_auraStats.actors;
+            const Reject why = targetReject(player, actor, myPos, effectiveRange,
+                                            playersOnly, myTypeId, 0, nullptr);
+            if (why != Reject::Ok) { auraCountReject(why); continue; }
+            if (useHurttime && recentlyHurt(actor, getHealth(actor))) {
+                ++g_auraStats.hurtFiltered;
+                continue;
+            }
+            ++g_auraStats.ok;
             Vec3 pos{};
             getPosition(actor, pos);
             const float dx = pos.x - myPos.x, dy = pos.y - myPos.y, dz = pos.z - myPos.z;
             targets.emplace_back(dx * dx + dy * dy + dz * dz, actor);
         }
+        g_auraStats.scanned = true;
         std::sort(targets.begin(), targets.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
     }
@@ -531,6 +575,7 @@ void tickKillAura2(void* player) {
         }
 
         attack(gameMode, target, true);
+        g_auraAttacks.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -1099,6 +1144,74 @@ void onNormalTick(void* localPlayer) {
     if (kotlinbridge::anyKotlinModuleEnabled()) kotlinbridge::dispatchTick(localPlayer);
 
     if (mgr().enabled("ECSDump")) tickEcsDump(localPlayer);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// diagLine() — the in-game panel's instrument panel
+//
+// Built because of a real report: "essentially no module works, not even the
+// killaura". Every stage between "the switch is on" and "a hit lands" had a
+// silent failure path, so there was no way to tell which one fired. This prints
+// them all, in the order they can fail:
+//
+//   tick 12480  api 6/6  world ok  on: KillAura2,Fly
+//   aura[3.0]: seen 12  ok 1  noatk 0  dead 0  rng 11  hurt 0  type 0+0  nopos 0  attacks 3
+//
+// Reading it:
+//   tick not advancing      → the game thread never runs our hook (nothing works)
+//   api 5/6                 → a game API pointer did not resolve; every module
+//                             that needs it refuses to run
+//   world no                → the world-stability gate is holding everything back
+//   on: (none)              → nothing is enabled: a UI/toggle problem, not a module
+//   seen 0                  → the actor list is empty: no entities, or a bad list
+//   seen 12  ok 0  noatk 12 → every actor is filtered by isAttackable — the module
+//                             is fine, the game refuses the target (gamemode)
+//   seen 12  ok 1  rng 11   → the funnel works; the targets are simply far away
+//   ok 3  attacks 0         → the attack was never reached (delay / hurttime filter)
+//   ok 3  attacks 40        → we ARE attacking: look at the server, not the client
+// ════════════════════════════════════════════════════════════════════════════
+std::string diagLine() {
+    const AuraStats s = g_auraStats;   // snapshot; the game thread may be mid-scan
+
+    int apiOk = 0;
+    apiOk += getRuntimeActors ? 1 : 0;
+    apiOk += attack ? 1 : 0;
+    apiOk += isAttackable ? 1 : 0;
+    apiOk += getHealth ? 1 : 0;
+    apiOk += getPosition ? 1 : 0;
+    apiOk += getEntityTypeId ? 1 : 0;
+
+    std::string on;
+    for (const auto& mod : mgr().all()) {
+        if (!mod.enabled) continue;
+        if (!on.empty()) on += ',';
+        on += mod.name;
+    }
+
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), "tick %ld  api %d/6  world %s  on: %s",
+                  static_cast<long>(g_tick), apiOk, g_stableLatch ? "ok" : "no",
+                  on.empty() ? "(none)" : on.c_str());
+
+    char a[384];
+    if (!s.scanned) {
+        std::snprintf(a, sizeof(a), "aura: no scan yet (KillAura2 %s)",
+                      mgr().enabled("KillAura2") ? "enabled" : "off");
+    } else {
+        std::snprintf(a, sizeof(a),
+            "aura[%.1f%s]: seen %d  ok %d  noatk %d  dead %d  rng %d  hurt %d  "
+            "type %d+%d  nopos %d  attacks %ld",
+            s.rangeX10 / 10.0, s.playersOnly ? ",players" : "",
+            s.actors, s.ok, s.notAttackable, s.dead, s.outOfRange, s.hurtFiltered,
+            s.typeBlocked, s.typeMismatch, s.noPosition,
+            g_auraAttacks.load(std::memory_order_relaxed));
+    }
+
+    std::string out = buf;
+    out += '\n';
+    out += a;
+    return out;
 }
 
 } // namespace eclient_runtime::modules::melody
