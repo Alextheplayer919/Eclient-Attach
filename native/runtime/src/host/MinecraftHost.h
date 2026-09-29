@@ -12,8 +12,6 @@ struct HostSnapshot {
     bool started{false};
     bool minecraftLoaded{false};
     bool versionMatched{false};
-    bool renderHookReady{false};
-    bool guiReady{false};
     std::uintptr_t minecraftBase{0};
     std::string minecraftPath{};
     std::string buildId{};
@@ -36,7 +34,7 @@ private:
     void bootstrapLoop();
     bool discoverMinecraft();
     bool verifyTarget();
-    bool installRenderHook();
+    bool initializeHostServices();
     void updateStatus(const char* status);
 
     mutable std::mutex mutex_;

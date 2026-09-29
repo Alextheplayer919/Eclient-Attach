@@ -2,10 +2,8 @@
 
 namespace eclient_runtime::flyinput {
 
-// Shared state for the Fly module's own on-screen fly buttons (UP/DOWN).
-// The GUI writes the button rects (logical/window coords) each frame; the
-// view-layer input route feeds raw pointer events; the fly tick reads the
-// held flags. All state is thread-safe on its own.
+// Reserved input state for a future verified flight control. No ClickGUI or
+// module currently feeds this state; all access remains thread-safe.
 
 // Button geometry in ImGui/window logical coordinates (the same space as
 // the floating menu bar). Centers + diameter.
@@ -19,7 +17,7 @@ Buttons rects();
 void clearRects();
 
 // Feed a pointer event AFTER window->physical scaling. action codes match
-// the InGameGui convention: 0 = down, 1 = move, 2 = up/cancel.
+// the shared convention: 0 = down, 1 = move, 2 = up/cancel.
 // Returns true when this event belongs to a fly button gesture and must be
 // CONSUMED (never delivered to the game or ImGui).
 bool touch(int pointerId, int action, float logicalX, float logicalY);

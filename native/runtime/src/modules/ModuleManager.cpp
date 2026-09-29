@@ -63,90 +63,10 @@ ModuleManager& ModuleManager::instance() {
     return mgr;
 }
 
-// ── Module surface (r25): PvP ONLY ─────────────────────────────────────────
-// What used to be here is gone on purpose, code included: KillAura (the crude
-// 4-block one), Speed, Fly, MotionFly, Step, AutoClickMine, ESP, Noclip, the
-// drown patches, SlowDownTriggers, NoEmoteCooldown and every visual patch.
-//
-// PatchManager still validates ALL 18 byte sites. That validation is the
-// integrity gate for the binary we patch and is deliberately untouched — the
-// toggles above are simply no longer exposed, so a hidden patch can never be
-// toggled by accident, but a wrong binary still fails closed at boot.
-ModuleManager::ModuleManager() : modules_{
-    // ── Combat ────────────────────────────────────────────────────────────
-    // KillAura2: full Melody (1.20.51) KillAura port. Settings match the
-    // Melody module 1:1; the two that need memory we have not discovered yet
-    // fail inert instead of degrading the rest.
-    {"KillAura2", "Melody KillAura port — rotation math, delay, single/multi, A/B vs KillAura", "Combat", false, false, {
-        Setting::real("Range", 3.0f, 1.0f, 12.0f,
-            "Melody Range slider (their min was 3.0; 1.0 left available)"),
-        Setting::real("WallRange", 0.0f, 0.0f, 12.0f,
-            "Melody WallRange. 0 = same as Range. Line-of-sight check is not\n"
-            "ported yet, so any value behaves like Range for now."),
-        Setting::choice("Mode", {"Single", "Multi"}, 0,
-            "Single: attack the closest valid target.\nMulti: attack every valid target in range each attack tick."),
-        Setting::choice("Rotation", {"None", "Silent", "Strafe"}, 0,
-            "Melody Fruit rotations (yaw/pitch math ported verbatim).\n"
-            "Silent: aim the camera rotation at the target — attacks land where\n"
-            "we aim, and your view follows.\n"
-            "Strafe: turn body and head only, your camera stays where you left\n"
-            "it (the closest thing to a silent rotation in-process, where there\n"
-            "is no packet to rewrite)."),
-        Setting::choice("Switch", {"None", "Full", "Silent"}, 0,
-            "Melody weapon-switch mode. Needs inventory access (still being\n"
-            "derived) — Full/Silent currently act as None."),
-        Setting::boolean("Hurttime", false,
-            "Melody Hurttime: skip targets inside damage invulnerability.\n"
-            "Implemented via real-time health-drop tracking (same effect, no\n"
-            "hurtTime field needed)."),
-        Setting::integer("Delay", 2, 0, 20,
-            "Ticks between attacks (Melody default 2). Lower = faster."),
-        Setting::boolean("PlayersOnly", false,
-            "Only attack actors whose entity type id matches the local\n"
-            "player's own (the same classification melody called isPlayer)."),
-    }},
-    {"CriticalHit", "Crit timing hook — registered, pending verification", "Combat", false, false, {}},
-
-    // ── Movement ──────────────────────────────────────────────────────────
-    // REWRITTEN (r25). The old version forced SetSprinting every tick, which
-    // fought the item-use tick and broke gapples. The rewrite only re-asserts
-    // sprint when the player is provably NOT using an item — so it stays inert
-    // until the item-use state is derived (fail-closed, never breaks eating).
-    {"AlwaysSprint", "Keeps sprint active without fighting item use — PENDING item-use offset, inert until then",
-        "Movement", false, false, {}},
-    // Fly (r40): flight through the player's abilities. The engine does the
-    // flying once the ability is granted, so there is no velocity or position
-    // write anywhere in this module — the two approaches that came before it
-    // (state-vector velocity, then a position write) are both gone for good.
-    // memoryBacked=false ON PURPOSE: Fly flies through the player's abilities
-    // (getAbilities/getLayer/setAbility) and writes no bytes at all. It was
-    // flagged true by copy-paste from the deleted patch-era Fly, which made
-    // every toggle call PatchManager::set("Fly") — a name with no spec — and
-    // refuse with "patch profile not validated". See patchCoverageAudit().
-    {"Fly", "Engine flight via player abilities — creative-style, works like the game's own fly",
-        "Movement", false, false, {
-        // Default is FORCE, and that is deliberate. "Creative" only grants
-        // MAY_FLY — permission — and vanilla then waits for a double-tap jump
-        // before the player leaves the ground, so enabling Fly and watching it
-        // do nothing is the expected result of that mode. Apollon splits the
-        // same two switches (creativeFly = setAbility(10) alone, forceCreativeFly
-        // = setAbility(9)) and the force one is the switch that visibly flies.
-        // See docs/APOLLON_RECOVERED.md. Nothing is persisted to disk, so this
-        // default is what every fresh launch gets.
-        Setting::choice("Mode", {"Creative", "Force"}, 1,
-            "Force (default): airborne the moment the module is on.\n"
-            "Creative: only grants permission to fly — you must double-tap jump "
-            "before anything happens. If Fly looked like it did nothing, that "
-            "was this mode."),
-        Setting::boolean("Ladder", false,
-            "Climb walls while flying, as if they were ladders."),
-    }},
-    {"AntiKnockback", "Suppress motion interpolation used by knockback", "Movement", false, true, {}},
-    {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true, {}},
-
-    // ── Dev (hidden in the UI unless dev mode is on) ──────────────────────
-    {"ECSDump", "Dev: ECS component deltas for the local player (2 snapshots, ~2s). Used to derive the rotation / hitbox / item-use components.", "Misc", false, false, {}},
-} {}
+// The ClickGUI foundation ships with no native modules. Retain the manager API
+// so future verified modules have one registration point, but do not expose or
+// activate gameplay behavior until an individual module is reviewed.
+ModuleManager::ModuleManager() : modules_{} {}
 
 const std::vector<ModuleState>& ModuleManager::all() const { return modules_; }
 

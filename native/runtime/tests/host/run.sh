@@ -89,6 +89,7 @@ if [ "$want" = all ] || [ "$want" = coverage ]; then
     # r43 "patch profiles are not validated" bug).  Pure text check, so it runs
     # even when no compiler is around.
     python3 check_module_patch_coverage.py
+    python3 check_clickgui_foundation.py
 fi
 
 if [ "$want" = all ] || [ "$want" = modules ]; then

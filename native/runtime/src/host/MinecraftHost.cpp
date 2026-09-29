@@ -3,15 +3,12 @@
 #include <android/log.h>
 #include <dlfcn.h>
 #include <link.h>
-#include <EGL/egl.h>
 
 #include <chrono>
 #include <cstring>
 #include <thread>
 
-#include "gui/InGameGui.h"
 #include "../bridge/GameBridge.h"
-#include "../input/NativeInputHook.h"
 #include "../profile/PatchManager.h"
 #include "../modules/ModuleManager.h"
 #include "../modules/GameplayModules.h"
@@ -102,12 +99,8 @@ void MinecraftHost::stop() {
         thread_.join();
     }
 
-    InGameGui::shutdown();
-
     std::lock_guard lock(mutex_);
 
-    snapshot_.renderHookReady = false;
-    snapshot_.guiReady = false;
     snapshot_.versionMatched = false;
 
     snapshot_.status =
@@ -196,28 +189,9 @@ bool MinecraftHost::verifyTarget() {
     return true;
 }
 
-bool MinecraftHost::installRenderHook() {
-
-    if (!InGameGui::initialize()) {
-        return false;
-    }
-
-    if (!eclient_runtime::input::initialize()) {
-
-        __android_log_print(
-            ANDROID_LOG_WARN,
-            TAG,
-            "No input hook available; GUI will render but cannot be toggled/touched");
-    }
-
+bool MinecraftHost::initializeHostServices() {
     std::lock_guard lock(mutex_);
-
-    snapshot_.guiReady = true;
-    snapshot_.renderHookReady = true;
-
-    snapshot_.status =
-        "E-Client host initialized inside Minecraft process";
-
+    snapshot_.status = "E-Client host initialized inside Minecraft process";
     return true;
 }
 
@@ -294,18 +268,18 @@ void MinecraftHost::bootstrapLoop() {
             continue;
         }
 
-        if (installRenderHook()) {
+        if (initializeHostServices()) {
 
             __android_log_print(
                 ANDROID_LOG_INFO,
                 TAG,
-                "E-Client 1.21.111 in-game host ready");
+                "E-Client 1.21.111 host ready (no native GUI)");
 
             return;
         }
 
         updateStatus(
-            "GUI initialization failed");
+            "host-service initialization failed");
 
         std::this_thread::sleep_for(
             std::chrono::milliseconds(500));

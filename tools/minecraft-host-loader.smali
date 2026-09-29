@@ -104,6 +104,11 @@
 
 .method public onActivityPaused(Landroid/app/Activity;)V
     .locals 0
+
+    # Drop the small view tree promptly. This avoids retaining an Activity or
+    # its drawable hierarchy while Minecraft is backgrounded or recreated.
+    invoke-static {}, Lcom/rubidiumclient/modules/ui/EClientUi;->detach()V
+
     return-void
 .end method
 

@@ -4,7 +4,7 @@ import android.content.Context
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * ═══ E-Client Kotlin module manager (PvP build, r25) ═══
+ * ═══ E-Client Kotlin module registry (empty ClickGUI foundation) ═══
  *
  * JNI CONTRACT (must not change — libeclient_host.so binds these by name):
  *   ModuleRegistry.tick()V                      ← native tick dispatch
@@ -38,10 +38,10 @@ object ModuleRegistry {
     @JvmStatic
     fun init() {
         if (modules.isNotEmpty()) return
-        modules += Hitbox()
-        modules += AutoTotem()
-        modules += PvpBot()
-        NativeBridge.logLine("ModuleRegistry ready: " + modules.joinToString { it.name })
+        // The ClickGUI foundation deliberately ships without modules. Keep this
+        // registry empty until each future module has a verified game hook and
+        // a reviewed UI contract.
+        NativeBridge.logLine("ModuleRegistry ready: no modules registered")
     }
 
     /** Called with the activity once the UI attaches (also loads prefs). */

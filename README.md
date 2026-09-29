@@ -6,6 +6,14 @@ This repository is the client patch/runtime portion of E-Client. The standalone 
 - Minecraft Bedrock 1.21.111 ARM64 APK supplied by the user.
 - 1.21.111 offset/reference profile derived from the supplied Apollon source.
 
+## Current UI foundation
+
+The legacy native ImGui ClickGUI and its native touch hook have been removed.
+The injected Android view now provides only a small ClickGUI shell that opens to
+an explicit empty state; no native or Kotlin modules are registered or exposed.
+This keeps the APK hook/profile work separate from future module and settings
+work.
+
 ## Build and patch
 
 ```bash

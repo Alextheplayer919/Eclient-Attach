@@ -69,7 +69,7 @@ def main() -> int:
     specs = patch_spec_names(PATCHES.read_text())
     spec_set = set(specs)
 
-    if not rows:
+    if not rows and "ModuleManager::ModuleManager() : modules_{} {}" not in MODULES.read_text():
         print("check_module_patch_coverage: parsed no modules — the table shape changed")
         return 2
     if not specs:
@@ -86,6 +86,8 @@ def main() -> int:
 
     dormant = sorted(spec_set - {n for n, _ in rows})
     print(f"check_module_patch_coverage: {len(rows)} modules, {len(specs)} patch sites")
+    if not rows:
+        print("  empty module foundation: no patch profile is exposed")
     if dormant:
         print(f"  dormant patch profiles (no module drives them): {', '.join(dormant)}")
     if problems:

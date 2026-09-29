@@ -7,8 +7,8 @@
 
 namespace eclient_runtime::debugfiles {
 
-// Feeding the JavaVM: called once from the host bootstrap (InGameGui::setJavaVm
-// already receives it). Stored in a global; all log-file creation goes through
+// Feeding the JavaVM: called once from the host bootstrap. Stored in a global;
+// all log-file creation goes through
 // JNI MediaStore so logs land in the user's public Downloads folder.
 void setJavaVm(JavaVM* vm);
 

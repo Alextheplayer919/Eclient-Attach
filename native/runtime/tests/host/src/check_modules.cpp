@@ -47,6 +47,14 @@ int main() {
     const auto& all = mgr.all();
     std::printf("module toggle matrix — %zu modules in the table\n", all.size());
 
+    if (all.empty()) {
+        std::string why;
+        check(!mgr.setEnabled("NoSuchModule", true, &why) && contains(why, "unknown module"),
+              "empty module foundation refuses unregistered modules");
+        std::printf("  ──────────────────────────────────────────────────────────────\n");
+        return failures == 0 ? 0 : 1;
+    }
+
     // ── 1. every module toggles, both ways, on a validated profile ──────────
     g_stubProfileReady = true;
     for (const auto& m : all) {
