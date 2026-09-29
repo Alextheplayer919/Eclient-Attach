@@ -18,3 +18,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_rubidiumclient_core_runtime_NativeRuntimeBridge_nativeHostStop(JNIEnv*, jclass) {
     eclient_runtime::host::MinecraftHost::instance().stop();
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_rubidiumclient_host_EClientLoaderProvider_nativeTouchReady(JNIEnv* env, jclass) {
+    eclient_runtime::kotlinbridge::bind(env);
+}
