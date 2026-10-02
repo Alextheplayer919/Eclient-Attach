@@ -1,3 +1,10 @@
+> **Superseded in part (2026-10).** The design moved from "memory-backed client, no proxy" to
+> **hybrid-lite**: packets own state and actions, the agent is a read-only sensor. The intents
+> `attack`, `setRotation`, `setInput`, `toggleModule`, `setSetting` and `listModules` below are
+> legacy and no longer used by the app; the new surface is the `camera` object. See
+> `docs/HYBRID_LITE_CONTRACT.md`. Everything about the transport (token, loopback, no
+> `readMem`/`writeMem`, fail-closed) still applies.
+
 # Module SDK — the environment for writing modules
 
 Part of the confirmed design (`docs/PROXY_MERGE_FEASIBILITY.md` §8.7): **Eclient

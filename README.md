@@ -2,6 +2,12 @@
 
 This repository is the client patch/runtime portion of E-Client. The standalone Android launcher/application has been removed.
 
+## Direction (2026-10): hybrid-lite
+
+This runtime is being narrowed to a **read-only sensor** for the Eclient app: packets own state
+and actions; the agent reports the camera and acts as a ground-truth referee. No modules live
+in the game. Contract and derivation order: `docs/HYBRID_LITE_CONTRACT.md`.
+
 ## Inputs
 - Minecraft Bedrock 1.21.111 ARM64 APK supplied by the user.
 - 1.21.111 offset/reference profile derived from the supplied Apollon source.
