@@ -82,3 +82,23 @@ In the app, type `.camera` in chat: it shows the active source (`SENSOR_FOV`, `S
 The app can only be as tight as the push rate: at 20 Hz a fast camera turn lags by up to ~50 ms
 plus the loopback hop. If that matters later, sample on the render thread and push at 60 Hz.
 Do not trade correctness for rate: a stale or guessed camera is worse than none.
+
+## Link requirements for the native bridge (from the app's side)
+
+Verified against `LoopbackBridge.cpp`; the app already tolerates every one of these being absent, so they can
+land in any order. Background and tests: `docs/BRIDGE.md` in the Eclient repo.
+
+1. **Announce yourself**: add `"proto":1,"agent":"<build>"` to every state push (absent ⇒ the app treats you as legacy).
+2. **Never fabricate `t`.** `t` is the game-tick counter. The bridge thread re-sends the last snapshot at 20 Hz even
+   when the game thread is frozen; the app detects that by `t` not changing and marks the data stale. Do not
+   increment it in the bridge thread.
+3. **Send with a timeout** (`SO_SNDTIMEO` ≈ 200 ms) and drop the frame on timeout (latest wins) — a blocking `send()`
+   stalls the whole bridge when the app is slow or frozen (Android 14+ freezes cached apps).
+4. **Newest client wins**: close the previous connection when a new authenticated client arrives. Today `listen(fd, 1)`
+   plus an accept loop that is blocked while serving means a zombie client locks the app out.
+5. **Always answer `ping`** — also when no snapshot exists (menu) and while the game tick is frozen. The app uses the
+   pong, not push traffic, to tell "quiet" from "dead".
+6. Compare the token in constant time (minor).
+7. **Before any actuating intent exists again** (e.g. a memory-based KillAura): stronger authentication, a per-capability
+   `claim`/`release`, a dead-man switch that stops app-driven features after ~1.5 s without a valid line, and an
+   `ttlMs` on every intent. Blueprint: `docs/BRIDGE.md` §7.
