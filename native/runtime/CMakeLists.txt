@@ -41,6 +41,7 @@ add_library(eclient_host SHARED
     src/memory/NativeMemory.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
+    src/modules/flyx/flyx_core.c
     src/profile/PatchManager.cpp
     src/input/NativeInputHook.cpp
     ../vendor/imgui/imgui.cpp
