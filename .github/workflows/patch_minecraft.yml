@@ -275,7 +275,8 @@ jobs:
           echo "Downloading:"
           echo "${{ env.ASSET_NAME }}"
 
-          gh release download \
+          # Stock APK lives on the `minecraft-input` tag, not on latest (which is a patched build).
+          gh release download minecraft-input \
             --repo "${{ github.repository }}" \
             --pattern "${{ env.ASSET_NAME }}" \
             --dir "$RUNNER_TEMP/minecraft"
