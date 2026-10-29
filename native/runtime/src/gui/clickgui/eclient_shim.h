@@ -11,6 +11,7 @@
 #include <sstream>
 #include <map>
 #include <variant>
+#include <random>
 
 // ---------- String obfuscation (original ENCRYPT headers) -> identity for E-Client ----------
 #define OBFUSCATE(x) (x)
@@ -75,8 +76,26 @@ namespace glm {
     inline vec2 operator+(const vec2& a, const vec2& b){return {a.x+b.x,a.y+b.y};}
 }
 
+// ---------- stb_image stub (menu_utils.h needs STBI_rgb_alpha, stbi_load/free) ----------
+#define STBI_rgb_alpha 4
+inline unsigned char* stbi_load(const char*, int*, int*, int*, int){ return nullptr; }
+inline void stbi_load_from_memory(const unsigned char*, int, int*, int*, int*, int){}
+inline void stbi_image_free(void*) {}
+
 // ---------- Minecraft SDK forward decls (originally hook_classes.h) ----------
-struct ClientInstance {};
+// Minimal implementations to satisfy menu.h ESP code (CIA->getViewMatrix etc.)
+struct LevelRendererCamera {
+    vec3_t getCameraPos(){ return vec3_t(0,0,0); }
+    glm::vec2 getFov(){ return glm::vec2(70,70); }
+};
+struct LevelRenderer {
+    LevelRendererCamera* getLevelRendererPlayer(){ static LevelRendererCamera c; return &c; }
+};
+struct ClientInstance {
+    glm::mat4 getViewMatrix(){ return glm::mat4{}; }
+    LevelRenderer* getLevelRenderer(){ static LevelRenderer r; return &r; }
+    std::string getScreenName(){ return \"\"; }
+};
 struct LocalPlayer {};
 struct Player {};
 struct Mob {};
@@ -107,8 +126,4 @@ inline void insertionSortPlayers(std::vector<struct PlayerStruct>& v){}
 inline void EClient_Patches(); // forward decl — implemented in InGameGui.cpp via PatchManager
 #define Patches EClient_Patches
 
-// ---------- Other forward decls that menu.h expects ----------
-inline void RenderESP(ImDrawList*, vec3_t, glm::vec2, glm::mat4) {}
-inline void RenderOreESP(ImDrawList*, vec3_t, glm::vec2, glm::mat4) {}
-inline void RenderDeathPosition(ImDrawList*, vec3_t, glm::vec2, glm::mat4) {}
-inline void DrawBackgroundText(const char*, float, float, struct ImVec4, struct ImVec4, float=5.0f) {}
+// Note: RenderESP/RenderOreESP/RenderDeathPosition/DrawBackgroundText are defined in menu_utils.h — do NOT stub here
