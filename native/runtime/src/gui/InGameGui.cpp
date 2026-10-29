@@ -61,14 +61,13 @@ static int g_pageId = 0; // 0 Movement, 1 Combat, 2 Visuals, 3 Player, 4 Info
 
 // ---------- Helpers (inspired by menu_utils.h but self-contained) ----------
 static void DrawSeparatorToEdge() {
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (!window) return;
     ImGui::Spacing();
     ImVec2 p0 = ImGui::GetCursorScreenPos();
-    // Draw across window content width
-    ImVec2 p1 = ImVec2(window->Pos.x + window->Size.x - 8, p0.y);
-    p0.x = window->Pos.x + 8;
-    window->DrawList->AddLine(p0, p1, ImGui::GetColorU32(ImGuiCol_Separator), 1.5f);
+    ImVec2 winPos = ImGui::GetWindowPos();
+    ImVec2 winSize = ImGui::GetWindowSize();
+    ImVec2 p1 = ImVec2(winPos.x + winSize.x - 8, p0.y);
+    p0.x = winPos.x + 8;
+    ImGui::GetWindowDrawList()->AddLine(p0, p1, ImGui::GetColorU32(ImGuiCol_Separator), 1.5f);
     ImGui::Spacing();
 }
 
