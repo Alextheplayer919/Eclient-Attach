@@ -19,6 +19,7 @@
 #include "dobby.h"
 #include "bridge/GameBridge.h"
 #include "modules/ModuleManager.h"
+#include "modules/GameplayModules.h"
 
 namespace eclient_runtime::host::InGameGui {
 namespace {
@@ -65,7 +66,7 @@ void drawModuleList() {
             if (!ImGui::BeginTabItem(cat)) continue;
             // Fixed height child with scrollbar — touch drag works via mouse drag
             ImGui::BeginChild((std::string("##scroll_") + cat).c_str(),
-                              ImVec2(0, 320), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                              ImVec2(0, 360), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             for (const auto* module : it->second) {
                 bool enabled = module->enabled;
                 ImGui::PushID(module->name.c_str());
@@ -73,6 +74,37 @@ void drawModuleList() {
                     if (!mgr.setEnabled(module->name, enabled)) {
                         enabled = module->enabled;
                     }
+                }
+                // ── FlyX sliders (Apollon-style factors 0.1-2.0) ──────────────────
+                if (module->name == "FlyX" && enabled) {
+                    float h = eclient_runtime::modules::gameplay::getFlyXUpH();
+                    float v = eclient_runtime::modules::gameplay::getFlyXUpV();
+                    ImGui::Indent(12);
+                    if (ImGui::SliderFloat("Up H Factor##FlyX", &h, 0.1f, 2.0f, "%.2fx")) eclient_runtime::modules::gameplay::setFlyXUpH(h);
+                    if (ImGui::SliderFloat("Up V Factor##FlyX", &v, 0.1f, 2.0f, "%.2fx")) eclient_runtime::modules::gameplay::setFlyXUpV(v);
+                    ImGui::Unindent(12);
+                }
+                // ── KillAura full settings (Apollon v4.62) ──────────────────────
+                if (module->name == "KillAura" && enabled) {
+                    ImGui::Indent(12);
+                    float kr = eclient_runtime::modules::gameplay::getKillRange();
+                    float rr = eclient_runtime::modules::gameplay::getRotationsRange();
+                    if (ImGui::SliderFloat("Kill Range##KA", &kr, 1.0f, 10.0f, "%.1f")) eclient_runtime::modules::gameplay::setKillRange(kr);
+                    if (ImGui::SliderFloat("Rotations Range##KA", &rr, 1.0f, 15.0f, "%.1f")) eclient_runtime::modules::gameplay::setRotationsRange(rr);
+                    int at = eclient_runtime::modules::gameplay::getAuraType();
+                    const char* auraNames[] = {"Single","Nearest","Multi"};
+                    if (ImGui::Combo("Aura Type##KA", &at, auraNames, 3)) eclient_runtime::modules::gameplay::setAuraType(at);
+                    int kd = eclient_runtime::modules::gameplay::getMaxKillTick();
+                    if (ImGui::SliderInt("Kill Delay##KA", &kd, 1, 20)) eclient_runtime::modules::gameplay::setMaxKillTick(kd);
+                    bool sw = eclient_runtime::modules::gameplay::getSwing();
+                    if (ImGui::Checkbox("Swing##KA", &sw)) eclient_runtime::modules::gameplay::setSwing(sw);
+                    bool ro = eclient_runtime::modules::gameplay::getRotations();
+                    if (ImGui::Checkbox("Rotations##KA", &ro)) eclient_runtime::modules::gameplay::setRotations(ro);
+                    ImGui::SameLine();
+                    bool hc = eclient_runtime::modules::gameplay::getHurtCheck();
+                    if (ImGui::Checkbox("HurtCheck##KA", &hc)) eclient_runtime::modules::gameplay::setHurtCheck(hc);
+                    ImGui::TextDisabled("TargetLock is separate module (Combat)");
+                    ImGui::Unindent(12);
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("%s\n[%s]%s",
