@@ -197,6 +197,22 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
             logFile("STEP J after End");
         }
         logFile("STEP K minimal End OK");
+    } else if (g_frameCount == 1) {
+        // FRAME 1: safe outer only — bypass all of menu.h's TickFunctions/CreateTexture/BackGroundDots to prove outer Begin works
+        logFile("STEP G frame1 safe outer BeginDraw stub");
+        ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
+        logFile("STEP G1 SetNextWindowSize done");
+        if (ImGui::Begin("E-Client | Minecraft v1.21.111", nullptr, ImGuiWindowFlags_NoResize)) {
+            logFile("STEP G2 inside Begin");
+            g_window = ImGui::GetCurrentWindow();
+            logFile("STEP G3 GetCurrentWindow OK");
+            ImGui::Text("E-Client safe outer — if you see this box it's not black");
+            ImGui::Text("Frame %d scale %.2f", g_frameCount, scaleGlobal);
+            logFile("STEP G4 Text done");
+            ImGui::End();
+            logFile("STEP G5 End done");
+        } else logFile("STEP G2 Begin returned false");
+        logFile("STEP G6 stub done — next frame will try full");
     } else {
         logFile("STEP G full BeginDraw");
         BeginDraw();
