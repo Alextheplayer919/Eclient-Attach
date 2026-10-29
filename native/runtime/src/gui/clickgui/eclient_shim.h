@@ -37,10 +37,11 @@ struct json {
     std::map<std::string, std::string> _data;
     struct Proxy {
         json* j; std::string k;
-        template<typename T> Proxy& operator=(const T& v) { j->_data[k] = std::to_string(v); return *this; }
+        Proxy& operator=(const std::vector<std::string>& v) { j->_data[k] = ""; return *this; }
         Proxy& operator=(const std::string& v) { j->_data[k] = v; return *this; }
         Proxy& operator=(const char* v) { j->_data[k] = v; return *this; }
         Proxy& operator=(bool v) { j->_data[k] = v?"1":"0"; return *this; }
+        template<typename T> Proxy& operator=(const T& v) { j->_data[k] = std::to_string(v); return *this; }
     };
     Proxy operator[](const std::string& k) { return {this,k}; }
     Proxy operator[](const char* k) { return {this,std::string(k)}; }
