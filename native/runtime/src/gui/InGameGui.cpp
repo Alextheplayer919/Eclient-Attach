@@ -9,6 +9,9 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include "dobby.h"
+#include "imgui.h"
+#include "backends/imgui_impl_opengl3.h"
 
 // ---------- E-Client shim + Zeff clickgui (full style, E-Client rebranded) ----------
 // User requested: revert to Zeff's clickgui style (8 pages, full tabs) but keep E-Client title

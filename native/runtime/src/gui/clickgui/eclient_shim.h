@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <variant>
 
 // ---------- String obfuscation (original ENCRYPT headers) -> identity for E-Client ----------
 #define OBFUSCATE(x) (x)
@@ -30,9 +34,6 @@ inline const char* MineLib = "libminecraftpe.so";
 // We only need: json cfg;  cfg["key"]=val;  cfg.value("key",def);  cfg.dump();  json::accept(str);  json::parse(str);
 // For E-Client we don't actually persist config via this mechanism — saveConfig/loadConfig will be no-ops
 // that log instead. So we provide a tiny stub that satisfies the compiler.
-#include <map>
-#include <variant>
-#include <string>
 namespace nlohmann {
 struct json {
     std::map<std::string, std::string> _data;
@@ -53,15 +54,17 @@ struct json {
         if constexpr (std::is_same_v<T, bool>) return it->second=="1" || it->second=="true";
         if constexpr (std::is_same_v<T, int>) { try{ return std::stoi(it->second);}catch(...){ return def; } }
         if constexpr (std::is_same_v<T, float>) { try{ return std::stof(it->second);}catch(...){ return def; } }
+        if constexpr (std::is_same_v<T, double>) { try{ return std::stod(it->second);}catch(...){ return def; } }
         return def;
     }
     // vector<string> specialization
     std::vector<std::string> value(const std::string& k, const std::vector<std::string>& def) const { return def; }
-    std::string dump() const { return "{}"; }
+    std::string dump(int = -1) const { return "{}"; }
     static bool accept(const std::string&) { return false; }
     static json parse(const std::string&) { return {}; }
 };
 }
+using json = nlohmann::json;
 
 // ---------- GLM stubs (original used glm for ESP) ----------
 namespace glm {
