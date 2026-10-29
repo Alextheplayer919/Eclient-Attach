@@ -1,0 +1,30 @@
+CLICKGUI EXTRACTION NOTES — E-Client rebrand
+============================================
+Source: mc-src/Apollon_Client_ImGui/app/src/main/jni/ (extracted from Apollon v4.62)
+Rebranded: E-Client 1.21.111 — original author references and external invite links stripped.
+Status: sanitized and integrated into E-Client (not compiled as standalone).
+
+WHAT'S IN IT
+- menu.h            The clickgui itself. BeginDraw() builds the main window, left side
+                    panel and 8 pages (Movement, Combat, Building, List, Visuals,
+                    Hotkeys, Other, Info) selected via pageId, each with its own tabs.
+                    Also contains TickFunctions(). — REBRANDED: window title is now
+                    E-Client, original author blocks removed, config path is EClient.json.
+- dark_theme.h      embraceTheDarkness(): the purple/black ImGui style.
+- menu_utils.h      UI helpers: BackGroundDots, AddNotification/RenderNotifications,
+                    ImGuiColoredText (Minecraft colour codes), CreateTextureFromMemoryPNG,
+                    DrawSeparatorToWindowEdge, resolution scaling. Also ESP drawing code.
+- variables.h       Globals the widgets bind to (checkboxes, sliders).
+- hotkeys.h, RGB.h  Hotkey panel and RGB colour helper used by the menu.
+- Images/           Embedded PNG icon headers used by menu.h and menu_utils.h.
+- _main_init_excerpt.txt  How main.cpp wires it up (theme init + per-frame
+                    BeginDraw(); RenderNotifications();).
+
+THINGS TO KNOW
+- Widgets are tied directly to the client's feature variables, and menu.h includes the
+  TickFunctions() logic. Stub or strip those to use the menu as a standalone shell.
+- Needs Dear ImGui with Android + GLES3 backends. OBFUSCATE from original has been
+  replaced with identity macro for E-Client (no string obfuscation needed).
+- menu_utils.h mixes pure UI helpers with ESP drawing code.
+- All original author branding and external invite links have been removed per
+  project requirement — client is now E-Client everywhere.
