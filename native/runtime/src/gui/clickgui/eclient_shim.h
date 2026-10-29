@@ -75,10 +75,27 @@ namespace glm {
     inline vec2 operator+(const vec2& a, const vec2& b){return {a.x+b.x,a.y+b.y};}
 }
 
-// ---------- Vector types expected by menu_utils.h ----------
-struct vec2_t { float x,y; };
-struct vec3_t { float x,y,z; };
-struct vec3_ti { int x,y,z; };
+// ---------- Minecraft SDK forward decls (originally hook_classes.h) ----------
+struct ClientInstance {};
+struct LocalPlayer {};
+struct Player {};
+struct Mob {};
+struct Actor {};
+
+// Chams.h globals that variables.h expects (originally defined in Chams.h before variables.h)
+inline bool panic = false;
+inline bool osmtBoost = false;
+inline bool enableRainbow = false;
+inline bool enableRainbowWall = false;
+inline bool xrayCaves = false;
+inline int chamsint = 0;
+inline ImVec4 inWallColor = ImVec4(1,0,0,1);
+inline ImVec4 visibleColor = ImVec4(0,1,0,1);
+
+// ---------- Vector types expected by menu_utils.h (originally Vector.h) ----------
+struct vec2_t { float x,y; vec2_t(float _x=0,float _y=0):x(_x),y(_y){} };
+struct vec3_t { float x,y,z; vec3_t(float _x=0,float _y=0,float _z=0):x(_x),y(_y),z(_z){} vec3_t(const vec2_t& v,float zz=0):x(v.x),y(v.y),z(zz){} };
+struct vec3_ti { int x,y,z; vec3_ti(int _x=0,int _y=0,int _z=0):x(_x),y(_y),z(_z){} };
 
 // ---------- Minimal stubs for functions that menu.h/menu_utils.h expect but E-Client doesn't yet implement ----------
 // These are defined as inline no-ops so the clickgui can compile and render, even if ESP/XRay aren't fully hooked.
