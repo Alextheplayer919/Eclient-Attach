@@ -11,6 +11,9 @@
 #include <atomic>
 #include <vector>
 #include <fstream>
+#include <signal.h>
+#include <execinfo.h>
+#include <unistd.h>
 #include "dobby.h"
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -81,10 +84,24 @@ ImGuiStyle g_baseStyle;
 
 void logFile(const char* msg) {
     __android_log_print(ANDROID_LOG_INFO, TAG, "%s", msg);
-    // also to file you can open on phone without PC
     FILE* f = fopen("/sdcard/Download/EClient_debug.log", "a");
     if (!f) f = fopen("/data/data/com.mojang.minecraftpe/cache/EClient_debug.log", "a");
-    if (f) { fprintf(f, "%s\n", msg); fclose(f); }
+    if (f) { fprintf(f, "%s\n", msg); fflush(f); fclose(f); }
+}
+void crashHandler(int sig) {
+    char b[256]; snprintf(b,sizeof(b),"CRASH signal %d frame %d",sig,g_frameCount);
+    logFile(b);
+    // try to get backtrace
+    void* bt[16]; int n = backtrace(bt, 16);
+    FILE* f = fopen("/sdcard/Download/EClient_crash.log", "w");
+    if (!f) f = fopen("/data/data/com.mojang.minecraftpe/cache/EClient_crash.log", "w");
+    if (f) {
+        fprintf(f,"CRASH %d frame %d\n",sig,g_frameCount);
+        backtrace_symbols_fd(bt,n,fileno(f));
+        fclose(f);
+    }
+    g_crashed = true;
+    // don't kill process, just return — next swap will be passthrough
 }
 
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
@@ -114,7 +131,9 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         bool ok = ImGui_ImplOpenGL3_Init("#version 100");
         logFile(ok ? "IMGUI: Init #version 100 OK" : "IMGUI: Init FAILED");
         if (!ok) { g_crashed = true; return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE; }
-        logFile("IMGUI: ready");
+        // skip Description popup (was crashing at FRAME 0 BeginDraw) — go straight to main menu
+        readMe = true;
+        logFile("IMGUI: ready + readMe=true");
     }
 
     screenWidth = (int)width;
@@ -156,14 +175,12 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         }
     }
 
-    // Render — guarded: if BeginDraw crashes we disable and never blacklist you again
     if (g_frameCount < 5) { char b[64]; snprintf(b,sizeof(b),"FRAME %d BeginDraw", g_frameCount); logFile(b); }
-    // Use a simple guard: if we crash inside, next frame we skip rendering
-    EGLBoolean ret = EGL_FALSE;
-    bool didRender = false;
-    // We can't truly catch SIGSEGV in C++, but we can at least avoid calling Draw if GameBridge says we're not in world
-    // For now always try, but if we detect 3 fast crashes we auto-disable
-    didRender = true;
+    // guard: need valid GL context for ImGui, else it will crash (splash uses different context)
+    const char* ver = (const char*)glGetString(GL_VERSION);
+    if (!ver) { logFile("FRAME: no GL_VERSION, skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
+    if (!ImGui::GetCurrentContext()) { logFile("FRAME: no ImGui context, skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
     BeginDraw();
@@ -171,6 +188,7 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (g_frameCount < 5) { char b[64]; snprintf(b,sizeof(b),"FRAME %d done", g_frameCount); logFile(b); }
     g_frameCount++;
 
     {
@@ -198,6 +216,8 @@ EGLSurface hookedCreateWindowSurface(EGLDisplay display, EGLConfig config, EGLNa
 }
 bool hookSwapBuffers() {
     if (g_originalSwap) return true;
+    signal(SIGSEGV, crashHandler);
+    signal(SIGABRT, crashHandler);
     void* sw = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
     if (!sw) sw = reinterpret_cast<void*>(eglSwapBuffers);
     if (!sw) { logFile("HOOK: eglSwapBuffers not found"); return false; }
@@ -207,7 +227,7 @@ bool hookSwapBuffers() {
     void* cs = dlsym(RTLD_DEFAULT, "eglCreateWindowSurface");
     if (!cs) cs = reinterpret_cast<void*>(eglCreateWindowSurface);
     if (cs) DobbyHook(cs, reinterpret_cast<void*>(hookedCreateWindowSurface), reinterpret_cast<void**>(&g_originalCreateSurface));
-    logFile("HOOK: eglSwapBuffers OK");
+    logFile("HOOK: eglSwapBuffers OK + crash handler");
     return g_originalSwap != nullptr;
 }
 } // namespace
