@@ -1,5 +1,5 @@
 #include "modules/GameplayModules.h"
-#include "modules/ModuleManager.h"
+#include "gui/clickgui/eclient_vars.h"
 #include "profile/Offsets_1_21_111.h"
 #include "memory/NativeMemory.h"
 #include "dobby.h"
@@ -46,7 +46,6 @@ SwingFn swingFn = nullptr;
 std::uintptr_t base = 0;
 
 inline void* fn(std::uint64_t off) { return reinterpret_cast<void*>(base + off); }
-inline bool on(const char* n) { return ModuleManager::instance().enabled(n); }
 
 // ── FlyX ───────────────────────────────────────────────────────────────────
 static FlyXCore g_flyXCore{};
@@ -140,14 +139,7 @@ static bool buildFlyXInput(void* player, FlyXInput* out) {
     return true;
 }
 
-// ── KillAura (Apollon full) ────────────────────────────────────────────────
-static float g_killRange = 4.0f;
-static float g_rotationsRange = 7.0f;
-static int   g_auraType = 1; // 0 Single, 1 Nearest, 2 Multi
-static bool  g_swing = true;
-static bool  g_rotations = true;
-static bool  g_hurtCheck = true;
-static int   g_maxKillTick = 3;
+// ── KillAura — source of truth is Zeff variables.h (killRange etc.) ─────────
 static int   g_currentKillTick = 1;
 static bool  g_canKillAuraDamage = true;
 static float g_auraAngleX = 0.f, g_auraAngleY = 0.f; // pitch, yaw
@@ -186,7 +178,7 @@ static void applyAuraAngle(void* player){
     while (yaw > 180.f) yaw-=360.f; while (yaw < -180.f) yaw+=360.f;
     if (pitch>90.f) pitch=90.f; if(pitch<-90.f) pitch=-90.f;
     // Apollon Intersects: rotations -> setRotationX(pitch) + body/head yaw, targetLock -> setRotationY(yaw)
-    if (g_rotations){
+    if (rotations){
         *(float*)(rotPtr + 0) = pitch;
         if (base){
             auto setBody = reinterpret_cast<void(*)(void*,float)>(fn(SetYBodyRot));
@@ -195,9 +187,9 @@ static void applyAuraAngle(void* player){
             if (setHead) setHead(player, yaw);
         }
     }
-    if (on("TargetLock")){
+    if (targetLock){
         *(float*)(rotPtr + 4) = yaw;
-        if (base && !g_rotations){
+        if (base && !rotations){
             auto setBody = reinterpret_cast<void(*)(void*,float)>(fn(SetYBodyRot));
             auto setHead = reinterpret_cast<void(*)(void*,float)>(fn(SetYHeadRot));
             if (setBody) setBody(player, yaw);
@@ -210,14 +202,14 @@ static void applyAuraAngle(void* player){
 void* hookedNormalTick(void* player) {
     void* result = oldNormalTick ? oldNormalTick(player) : nullptr;
     if (!player) return result;
-    if (on("AlwaysSprint")) reinterpret_cast<void(*)(void*,bool)>(fn(SetSprinting))(player,true);
-    if (on("Step")) reinterpret_cast<void(*)(void*,float)>(fn(InitMaxAutoStep))(player,1.0625f);
-    if (on("Fly") && getAbilities && getLayer && setAbility){
+    if (alwaysSprinting) reinterpret_cast<void(*)(void*,bool)>(fn(SetSprinting))(player,true);
+    if (step) reinterpret_cast<void(*)(void*,float)>(fn(InitMaxAutoStep))(player,1.0625f);
+    if (creativeFly && getAbilities && getLayer && setAbility){
         void* abilities = getAbilities(player);
         void* layer = abilities ? getLayer(abilities, AbilityLayerBase) : nullptr;
         if (layer){ setAbility(layer, AbilityMayFly,true); setAbility(layer, AbilityFlying,true); }
     }
-    if (on("FlyX") && lerpMotion){
+    if (forceCreativeFly && lerpMotion){
         uint64_t now = clockNowNs();
         if (!g_flyXInitialized || now < g_lastTickNs || now - g_lastTickNs > 500000000ull){ spiral_flyx_reset(&g_flyXCore); g_flyXInitialized=true; }
         g_lastTickNs = now;
@@ -227,11 +219,11 @@ void* hookedNormalTick(void* player) {
         }
     }
     // ── KillAura tick gate (Apollon TickFunctions when !useGeyserCooldown)
-    if (on("KillAura") && g_auraType < 2){
-        if (g_maxKillTick > g_currentKillTick && !g_canKillAuraDamage){ g_currentKillTick++; } else { g_canKillAuraDamage=true; g_currentKillTick=1; }
+    if (killAura && auraType < 2){
+        if (maxKillTick > g_currentKillTick && !g_canKillAuraDamage){ g_currentKillTick++; } else { g_canKillAuraDamage=true; g_currentKillTick=1; }
     }
 
-    if (on("KillAura") && getRuntimeActors && attack && isAttackable && getHealth){
+    if (killAura && getRuntimeActors && attack && isAttackable && getHealth){
         void* level = *(void**)((uintptr_t)player + GetLevelField);
         void* gameMode = *(void**)((uintptr_t)player + GetGameModeField);
         void* posPtr = *(void**)((uintptr_t)player + GetPositionField);
@@ -247,28 +239,28 @@ void* hookedNormalTick(void* player) {
                 if (!tPos) continue;
                 float d = hackDistanceTo(posPtr, tPos);
                 // rotationsRange is max scan, killRange is attack
-                bool inRot = d <= g_rotationsRange;
-                bool inKill = d <= g_killRange;
+                bool inRot = d <= rotationsRange;
+                bool inKill = d <= killRange;
                 // Apollon: if rotations||targetLock then push if d <= rotationsRange else if d <= killRange
-                bool useRot = g_rotations || on("TargetLock");
+                bool useRot = rotations || targetLock;
                 if (useRot){ if (inRot) playerList.push_back(actor); }
                 else { if (inKill) playerList.push_back(actor); }
             }
             if (!playerList.empty()){
                 // Ensure killRange <= rotationsRange per Apollon sliders
-                if (g_killRange > g_rotationsRange) g_rotationsRange = g_killRange;
-                switch (g_auraType){
+                if (killRange > rotationsRange) rotationsRange = killRange;
+                switch (auraType){
                     case 0: { // Single — first in list
                         void* tPos = *(void**)((uintptr_t)playerList[0] + GetPositionField);
-                        if (g_rotations || on("TargetLock")){
+                        if (rotations || targetLock){
                             float pitch,yaw; calcPlayerAngle(px,py,pz, *(float*)((uintptr_t)tPos+0), *(float*)((uintptr_t)tPos+4), *(float*)((uintptr_t)tPos+8), pitch,yaw);
                             g_auraAngleX=pitch; g_auraAngleY=yaw; applyAuraAngle(player);
                         }
-                        if (hackDistanceTo(posPtr,tPos) <= g_killRange){
-                            bool canHurt = true; if (g_hurtCheck) canHurt = canBeHurted(playerList[0]);
+                        if (hackDistanceTo(posPtr,tPos) <= killRange){
+                            bool canHurt = true; if (hurtCheck) canHurt = canBeHurted(playerList[0]);
                             if (g_canKillAuraDamage && canHurt){
                                 attack(gameMode, playerList[0], true);
-                                if (g_swing && swingFn) swingFn(player);
+                                if (swing && swingFn) swingFn(player);
                                 g_canKillAuraDamage=false;
                             }
                         }
@@ -279,19 +271,19 @@ void* hookedNormalTick(void* player) {
                         for (void* tgt: playerList){
                             void* tPos = *(void**)((uintptr_t)tgt + GetPositionField);
                             float d = hackDistanceTo(posPtr, tPos);
-                            if (d < best && d <= g_rotationsRange){ best=d; nearest=tgt; if (d <= g_killRange) nearestKill=tgt; }
+                            if (d < best && d <= rotationsRange){ best=d; nearest=tgt; if (d <= killRange) nearestKill=tgt; }
                         }
                         if (nearest){
                             void* tPos = *(void**)((uintptr_t)nearest + GetPositionField);
-                            if (g_rotations || on("TargetLock")){
+                            if (rotations || targetLock){
                                 float pitch,yaw; calcPlayerAngle(px,py,pz, *(float*)((uintptr_t)tPos+0), *(float*)((uintptr_t)tPos+4), *(float*)((uintptr_t)tPos+8), pitch,yaw);
                                 g_auraAngleX=pitch; g_auraAngleY=yaw; applyAuraAngle(player);
                             }
                             if (nearestKill){
-                                bool canHurt=true; if(g_hurtCheck) canHurt=canBeHurted(nearest);
+                                bool canHurt=true; if(hurtCheck) canHurt=canBeHurted(nearest);
                                 if (g_canKillAuraDamage && canHurt){
                                     attack(gameMode, nearest, true);
-                                    if (g_swing && swingFn) swingFn(player);
+                                    if (swing && swingFn) swingFn(player);
                                     g_canKillAuraDamage=false;
                                 }
                             }
@@ -303,22 +295,22 @@ void* hookedNormalTick(void* player) {
                         for (void* tgt: playerList){
                             void* tPos = *(void**)((uintptr_t)tgt + GetPositionField);
                             float d = hackDistanceTo(posPtr, tPos);
-                            if (d < best && d <= g_rotationsRange){ best=d; nearest=tgt; if (d <= g_killRange) nearestKill=tgt; }
+                            if (d < best && d <= rotationsRange){ best=d; nearest=tgt; if (d <= killRange) nearestKill=tgt; }
                         }
                         if (nearest){
                             void* tPos = *(void**)((uintptr_t)nearest + GetPositionField);
-                            if (g_rotations || on("TargetLock")){
+                            if (rotations || targetLock){
                                 float pitch,yaw; calcPlayerAngle(px,py,pz, *(float*)((uintptr_t)tPos+0), *(float*)((uintptr_t)tPos+4), *(float*)((uintptr_t)tPos+8), pitch,yaw);
                                 g_auraAngleX=pitch; g_auraAngleY=yaw; applyAuraAngle(player);
                             }
                             if (nearestKill){
                                 for (void* tgt: playerList){
                                     void* tPos2 = *(void**)((uintptr_t)tgt + GetPositionField);
-                                    if (hackDistanceTo(posPtr,tPos2) > g_killRange) continue;
-                                    if (g_maxKillTick > g_currentKillTick){ g_currentKillTick++; }
+                                    if (hackDistanceTo(posPtr,tPos2) > killRange) continue;
+                                    if (maxKillTick > g_currentKillTick){ g_currentKillTick++; }
                                     else {
-                                        bool canHurt=true; if(g_hurtCheck) canHurt=canBeHurted(tgt);
-                                        if (canHurt){ attack(gameMode, tgt, true); if(g_swing && swingFn) swingFn(player); g_currentKillTick=1; }
+                                        bool canHurt=true; if(hurtCheck) canHurt=canBeHurted(tgt);
+                                        if (canHurt){ attack(gameMode, tgt, true); if(swing && swingFn) swingFn(player); g_currentKillTick=1; }
                                     }
                                 }
                             }
@@ -357,11 +349,11 @@ void shutdown() {}
 // Getters/Setters for GUI
 float getFlyXUpH(){ return g_upHFactor; } void setFlyXUpH(float v){ if(v>=0.1f&&v<=2.0f) g_upHFactor=v; }
 float getFlyXUpV(){ return g_upVFactor; } void setFlyXUpV(float v){ if(v>=0.1f&&v<=2.0f) g_upVFactor=v; }
-float getKillRange(){ return g_killRange; } void setKillRange(float v){ g_killRange=v; if(g_killRange>g_rotationsRange) g_rotationsRange=g_killRange; }
-float getRotationsRange(){ return g_rotationsRange; } void setRotationsRange(float v){ g_rotationsRange=v; if(g_killRange>g_rotationsRange) g_killRange=g_rotationsRange; }
-int getAuraType(){ return g_auraType; } void setAuraType(int v){ if(v>=0&&v<=2) g_auraType=v; }
-bool getSwing(){ return g_swing; } void setSwing(bool v){ g_swing=v; }
-bool getRotations(){ return g_rotations; } void setRotations(bool v){ g_rotations=v; }
-bool getHurtCheck(){ return g_hurtCheck; } void setHurtCheck(bool v){ g_hurtCheck=v; }
-int getMaxKillTick(){ return g_maxKillTick; } void setMaxKillTick(int v){ if(v>=1&&v<=150) g_maxKillTick=v; }
+float getKillRange(){ return killRange; } void setKillRange(float v){ killRange=v; if(killRange>rotationsRange) rotationsRange=killRange; }
+float getRotationsRange(){ return rotationsRange; } void setRotationsRange(float v){ rotationsRange=v; if(killRange>rotationsRange) killRange=rotationsRange; }
+int getAuraType(){ return auraType; } void setAuraType(int v){ if(v>=0&&v<=2) auraType=v; }
+bool getSwing(){ return swing; } void setSwing(bool v){ swing=v; }
+bool getRotations(){ return rotations; } void setRotations(bool v){ rotations=v; }
+bool getHurtCheck(){ return hurtCheck; } void setHurtCheck(bool v){ hurtCheck=v; }
+int getMaxKillTick(){ return maxKillTick; } void setMaxKillTick(int v){ if(v>=1&&v<=150) maxKillTick=v; }
 } // namespace eclient_runtime::modules::gameplay
