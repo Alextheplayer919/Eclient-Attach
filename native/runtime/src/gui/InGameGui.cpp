@@ -140,14 +140,18 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         calcResX = calculateResolutionX(screenWidth, 2480);
         ImGuiStyle& st = ImGui::GetStyle();
         st = g_baseStyle;
-        st.ScaleAllSizes(scaleGlobal * 1.5f);
+        // BIGGER gui: was 1.5f → 1.95f so text/categories breathe
+        st.ScaleAllSizes(scaleGlobal * 1.95f);
+        // more grab area for drag on phone
+        st.TouchExtraPadding = ImVec2(10,10);
         g_lastW = width; g_lastH = height;
         char b[128]; snprintf(b,sizeof(b),"RESIZE %dx%d scale %.2f",width,height,scaleGlobal);
         logFile(b);
     }
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2((float)width, (float)height);
-    io.FontGlobalScale = std::max(1.0f, scaleGlobal * 1.0f);
+    // BIGGER text: was max(1, scale) → scale*1.35 so categories not cramped
+    io.FontGlobalScale = std::max(1.20f, scaleGlobal * 1.35f);
 
     {
         std::lock_guard<std::mutex> lock(g_touchMutex);
@@ -156,8 +160,10 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
                 float sx = s.x*scaleX, sy = s.y*scaleY;
                 g_lastTouchX = sx; g_lastTouchY = sy;
                 io.AddMousePosEvent(sx, sy);
+                // 0=down, 1=move, 2=up/cancel — was only 0/2, so drag never fired
                 if (s.action==0) { g_lastTouchDown=true; io.AddMouseButtonEvent(0,true); }
-                else if (s.action==2) { g_lastTouchDown=false; io.AddMouseButtonEvent(0,false); }
+                else if (s.action==2 || s.action==3) { g_lastTouchDown=false; io.AddMouseButtonEvent(0,false); }
+                else if (s.action==1) { /* move while held — keep button */ io.AddMouseButtonEvent(0, g_lastTouchDown); }
             }
             g_touchQueue.clear();
         } else if (g_lastTouchDown) {
@@ -187,7 +193,8 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     // diagnostic: try minimal draw first to prove ImGui/GL works, then full menu
     // SAFE E-CLIENT MENU — bypasses menu.h's crashing CreateTexture/BackGroundDots, keeps Zeff 8-page style
     auto SafeEClientMenu = [&]() {
-        ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
+        // BIGGER: was 2.5/1.5 (960x720) → 2.0/1.35 so categories breathe; still fits 2400x1080
+        ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.05f, screenHeight / 1.35f), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("E-Client | Minecraft v1.21.111", nullptr, ImGuiWindowFlags_NoResize)) { ImGui::End(); return; }
         g_window = ImGui::GetCurrentWindow();
         // keep Zeff's purple button style, no dots/textures
@@ -197,21 +204,30 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.70f,0,1.00f,0.50f);
         style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.70f,0,1.00f,0.35f);
         style.FrameBorderSize = 0.0f;
-        ImGui::BeginChild("SidePanel", ImVec2(calcResX * 150, 0), false);
+        // WIDER SidePanel: was 150 → 185 so full labels fit
+        ImGui::BeginChild("SidePanel", ImVec2(calcResX * 185, 0), false);
         auto SideBtn = [&](const char* lbl, int id){ 
             style.Colors[ImGuiCol_Button] = (pageId==id)? ImVec4(0.70f,0,1.00f,1.00f) : ImVec4(0,0,0,0);
             style.Colors[ImGuiCol_ButtonHovered] = (pageId==id)? ImVec4(0.70f,0,1.00f,1.00f) : ImVec4(0,0,0,0);
-            if (ImGui::Button(lbl)) pageId=id;
+            // WIDER buttons: was ImGui::Button(lbl) → fill SidePanel
+            float w = ImGui::GetContentRegionAvail().x;
+            if (ImGui::Button(lbl, ImVec2(w, 36 * scaleGlobal))) pageId=id;
             style.Colors[ImGuiCol_Button]=ImVec4(0,0,0,0); style.Colors[ImGuiCol_ButtonHovered]=ImVec4(0,0,0,0);
         };
         SideBtn("Movement",0); SideBtn("Combat",1); SideBtn("Building",2); SideBtn("List",3);
         SideBtn("Visuals",4); SideBtn("Hotkeys",5); SideBtn("Other",6); SideBtn("Info",7);
+        ImGui::Spacing(); ImGui::Separator();
+        // minimize: title-bar drag already works (ACTION_MOVE fix), this hides to corner
+        if (ImGui::Button("— Minimize", ImVec2(ImGui::GetContentRegionAvail().x, 30*scaleGlobal))) {
+            // just collapse to title-bar via ImGui, next tap restores
+            ImGui::SetWindowCollapsed(!ImGui::IsWindowCollapsed(), ImGuiCond_Always);
+        }
         ImGui::EndChild();
         style.Colors[ImGuiCol_Button]=ob; style.Colors[ImGuiCol_ButtonHovered]=oh; style.Colors[ImGuiCol_ButtonActive]=oa; style.FrameBorderSize=2.0f;
         ImGui::SameLine();
         float lh = ImGui::GetWindowHeight(); ImVec2 sv = ImGui::GetCursorScreenPos(); sv.y = ImGui::GetWindowPos().y;
         ImGui::GetWindowDrawList()->AddLine(sv, ImVec2(sv.x, sv.y+lh), ImGui::GetColorU32(ImGuiCol_Separator), scaleGlobal*2.0f);
-        ImGui::SameLine(calcResX * 226);
+        ImGui::SameLine(calcResX * 242);
         ImGui::BeginGroup();
         if (pageId==0) { // Movement
             ImGui::Text("Movement"); ImGui::Separator();
