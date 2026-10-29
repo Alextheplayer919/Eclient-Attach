@@ -267,18 +267,22 @@ void BeginDraw() {
 	     }
 	  } else  {
      #if defined(__aarch64__)
+     ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
      if (ImGui::Begin(OBFUSCATE("E-Client | Minecraft v1.21.111"), NULL, ImGuiWindowFlags_NoResize)) {
      #elif defined(__ARM_ARCH_7A__)
+     ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
      if (ImGui::Begin(OBFUSCATE("E-Client | Minecraft v1.21.111"), NULL, ImGuiWindowFlags_NoResize)) {
      #else
+	 ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
 	 if (ImGui::Begin(OBFUSCATE("E-Client | Minecraft v1.21.111"), NULL, ImGuiWindowFlags_NoResize)) {
      #endif
 		g_window = ImGui::GetCurrentWindow();
 	
-		ImGui::SetWindowSize(ImVec2(screenWidth / 2.5, screenHeight / 1.5));
-		
+		// SetWindowSize inside Begin asserts on newer ImGui — moved to SetNext before Begin
+		// keep window draggable/resizable by user after first use
 		float pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
-		BackGroundDots(250, 2 * pointSize, 5 * pointSize, 100 * pointSize);
+		// BackGroundDots disabled on FRAME 1..3 for SIGABRT bisect — re-enable after stable
+		// BackGroundDots(250, 2 * pointSize, 5 * pointSize, 100 * pointSize);
 		ImGuiStyle& style = ImGui::GetStyle();
         ImVec4 originalButtonColor = style.Colors[ImGuiCol_Button];
         ImVec4 originalButtonHoveredColor = style.Colors[ImGuiCol_ButtonHovered];
