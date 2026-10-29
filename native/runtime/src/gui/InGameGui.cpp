@@ -185,40 +185,85 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     ImGui::NewFrame();
     logFile("STEP E NewFrame OK");
     // diagnostic: try minimal draw first to prove ImGui/GL works, then full menu
-    logFile("STEP F choose draw path");
-    if (g_frameCount == 0) {
-        logFile("STEP G minimal Begin test");
-        if (ImGui::Begin("E-Client Test", nullptr, ImGuiWindowFlags_NoResize)) {
-            logFile("STEP H inside Begin");
-            ImGui::Text("E-Client minimal OK — scale %.2f", scaleGlobal);
-            ImGui::SetWindowSize(ImVec2(600,300));
-            logFile("STEP I before End");
-            ImGui::End();
-            logFile("STEP J after End");
-        }
-        logFile("STEP K minimal End OK");
-    } else if (g_frameCount == 1) {
-        // FRAME 1: safe outer only — bypass all of menu.h's TickFunctions/CreateTexture/BackGroundDots to prove outer Begin works
-        logFile("STEP G frame1 safe outer BeginDraw stub");
+    // SAFE E-CLIENT MENU — bypasses menu.h's crashing CreateTexture/BackGroundDots, keeps Zeff 8-page style
+    auto SafeEClientMenu = [&]() {
         ImGui::SetNextWindowSize(ImVec2(screenWidth / 2.5f, screenHeight / 1.5f), ImGuiCond_FirstUseEver);
-        logFile("STEP G1 SetNextWindowSize done");
-        if (ImGui::Begin("E-Client | Minecraft v1.21.111", nullptr, ImGuiWindowFlags_NoResize)) {
-            logFile("STEP G2 inside Begin");
-            g_window = ImGui::GetCurrentWindow();
-            logFile("STEP G3 GetCurrentWindow OK");
-            ImGui::Text("E-Client safe outer — if you see this box it's not black");
-            ImGui::Text("Frame %d scale %.2f", g_frameCount, scaleGlobal);
-            logFile("STEP G4 Text done");
-            ImGui::End();
-            logFile("STEP G5 End done");
-        } else logFile("STEP G2 Begin returned false");
-        logFile("STEP G6 stub done — next frame will try full");
-    } else {
-        logFile("STEP G full BeginDraw");
-        BeginDraw();
-        RenderNotifications();
-        logFile("STEP K full done");
-    }
+        if (!ImGui::Begin("E-Client | Minecraft v1.21.111", nullptr, ImGuiWindowFlags_NoResize)) { ImGui::End(); return; }
+        g_window = ImGui::GetCurrentWindow();
+        // keep Zeff's purple button style, no dots/textures
+        ImGuiStyle& style = ImGui::GetStyle();
+        ImVec4 ob = style.Colors[ImGuiCol_Button], oh = style.Colors[ImGuiCol_ButtonHovered], oa = style.Colors[ImGuiCol_ButtonActive];
+        style.Colors[ImGuiCol_Button] = ImVec4(0,0,0,0);
+        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.70f,0,1.00f,0.50f);
+        style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.70f,0,1.00f,0.35f);
+        style.FrameBorderSize = 0.0f;
+        ImGui::BeginChild("SidePanel", ImVec2(calcResX * 150, 0), false);
+        auto SideBtn = [&](const char* lbl, int id){ 
+            style.Colors[ImGuiCol_Button] = (pageId==id)? ImVec4(0.70f,0,1.00f,1.00f) : ImVec4(0,0,0,0);
+            style.Colors[ImGuiCol_ButtonHovered] = (pageId==id)? ImVec4(0.70f,0,1.00f,1.00f) : ImVec4(0,0,0,0);
+            if (ImGui::Button(lbl)) pageId=id;
+            style.Colors[ImGuiCol_Button]=ImVec4(0,0,0,0); style.Colors[ImGuiCol_ButtonHovered]=ImVec4(0,0,0,0);
+        };
+        SideBtn("Movement",0); SideBtn("Combat",1); SideBtn("Building",2); SideBtn("List",3);
+        SideBtn("Visuals",4); SideBtn("Hotkeys",5); SideBtn("Other",6); SideBtn("Info",7);
+        ImGui::EndChild();
+        style.Colors[ImGuiCol_Button]=ob; style.Colors[ImGuiCol_ButtonHovered]=oh; style.Colors[ImGuiCol_ButtonActive]=oa; style.FrameBorderSize=2.0f;
+        ImGui::SameLine();
+        float lh = ImGui::GetWindowHeight(); ImVec2 sv = ImGui::GetCursorScreenPos(); sv.y = ImGui::GetWindowPos().y;
+        ImGui::GetWindowDrawList()->AddLine(sv, ImVec2(sv.x, sv.y+lh), ImGui::GetColorU32(ImGuiCol_Separator), scaleGlobal*2.0f);
+        ImGui::SameLine(calcResX * 226);
+        ImGui::BeginGroup();
+        if (pageId==0) { // Movement
+            ImGui::Text("Movement"); ImGui::Separator();
+            ImGui::Checkbox("Always Sprinting", &alwaysSprinting);
+            ImGui::SliderInt("Speed", &speedValue, 1, 50);
+            ImGui::Checkbox("Fly / CreativeFly", &creativeFly);
+            ImGui::Checkbox("No SlowDown", &noSlowDown);
+            ImGui::Checkbox("Noclip", &noclip);
+            ImGui::Checkbox("Anti Knockback", &antiKnockback);
+        } else if (pageId==1) { // Combat
+            ImGui::Text("Combat"); ImGui::Separator();
+            ImGui::Checkbox("Kill Aura", &killAura); if (killAura) { ImGui::SliderFloat("Range", &killRange, 1, 10); ImGui::SliderInt("Tick", &maxKillTick, 1, 10); }
+            ImGui::Checkbox("Mob Aura", &mobAura);
+            ImGui::Checkbox("Anti Bot", &antiBot);
+            ImGui::Checkbox("HitBox Expand", &hitBox); if (hitBox) ImGui::SliderFloat("HitBox", &hitBoxValue, 0.6f, 5.0f);
+        } else if (pageId==2) { // Building
+            ImGui::Text("Building"); ImGui::Separator();
+            ImGui::Checkbox("Fast Bridge", &fastBridge);
+            ImGui::Checkbox("Block Reach", &blockReach);
+            ImGui::Checkbox("Xray Camera", &xrayCam);
+            ImGui::Checkbox("No Hurt Cam", &noHurtCam);
+        } else if (pageId==3) { // List
+            ImGui::Text("List / Players"); ImGui::Separator();
+            ImGui::Checkbox("Player Near", &playerNear);
+            ImGui::Checkbox("ESP Enabled", &esp);
+            ImGui::Text("nearPlayerList: %zu", nearPlayerList.size());
+        } else if (pageId==4) { // Visuals
+            ImGui::Text("Visuals"); ImGui::Separator();
+            ImGui::Checkbox("ESP Box", &espBox); ImGui::Checkbox("ESP Nametag", &espNametag); ImGui::Checkbox("ESP Line", &espLine);
+            ImGui::Checkbox("ESP Health", &espHealth); ImGui::Checkbox("ESP Distance", &espDistance);
+            ImGui::Checkbox("FullBright", &fullBright); ImGui::Checkbox("No Blur", &noBlur);
+            ImGui::Checkbox("Show Position", &showPosition);
+        } else if (pageId==5) { // Hotkeys
+            ImGui::Text("Hotkeys"); ImGui::Separator(); ImGui::TextWrapped("Hotkeys UI stripped — use in-game buttons.");
+            if (ImGui::Button("Panic OFF")) panic=false; ImGui::SameLine(); if (ImGui::Button("Panic ON")) panic=true;
+        } else if (pageId==6) { // Other
+            ImGui::Text("Other"); ImGui::Separator();
+            ImGui::Checkbox("No Cave Vignette", &noCaveVignette); ImGui::Checkbox("No Hurt Cam", &noHurtCam);
+            ImGui::Checkbox("Fog Enable", &fogEnable); if (fogEnable) ImGui::SliderInt("Fog State", &fogState, 0, 3);
+        } else if (pageId==7) { // Info
+            ImGui::Text("E-Client | Minecraft v1.21.111"); ImGui::Separator();
+            ImGui::TextWrapped("Maintained by E-Client Team. Free and open — Alextheplayer919/Eclient-Attach.");
+            ImGui::Text("Build patched-r59 — safe 8-page (icons/dots restored next)");
+            ImGui::Text("Scale %.2f", scaleGlobal);
+            if (ImGui::Button("I READ")) readMe=true;
+        }
+        ImGui::EndGroup();
+        ImGui::End();
+    };
+    logFile("STEP F safe 8-page menu");
+    SafeEClientMenu();
+    logFile("STEP K safe done");
     logFile("STEP L EndFrame");
     ImGui::EndFrame();
     logFile("STEP M Render");
