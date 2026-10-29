@@ -7,8 +7,6 @@ on:
         description: "Minecraft 1.21.111 ARM64 APK release asset name"
         required: true
         default: "Minecraft-1.21.111-arm64-v8a.apk"
-  push:
-    branches: [arena/a1ec7cfb-eclient-attach]
 
 permissions:
   contents: read
