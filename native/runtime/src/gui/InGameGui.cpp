@@ -82,10 +82,15 @@ int g_lastW = 0, g_lastH = 0;
 ImGuiStyle g_baseStyle;
 
 void logFile(const char* msg) {
-    __android_log_print(ANDROID_LOG_INFO, TAG, "%s", msg);
+    __android_log_print(ANDROID_LOG_ERROR, TAG, "%s", msg);
+    // also echo to stderr so tombstone may capture
+    fprintf(stderr, "[EClient] %s\n", msg); fflush(stderr);
     FILE* f = fopen("/sdcard/Download/EClient_debug.log", "a");
     if (!f) f = fopen("/data/data/com.mojang.minecraftpe/cache/EClient_debug.log", "a");
     if (f) { fprintf(f, "%s\n", msg); fflush(f); fclose(f); }
+    // also try /data/data/com.mojang.minecraftpe/files/ which is always writable
+    FILE* f2 = fopen("/data/data/com.mojang.minecraftpe/files/EClient_debug.log", "a");
+    if (f2) { fprintf(f2, "%s\n", msg); fflush(f2); fclose(f2); }
 }
 void crashHandler(int sig) {
     char b[128]; snprintf(b,sizeof(b), "CRASH signal %d frame %d", sig, g_frameCount);
@@ -175,12 +180,30 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
-    BeginDraw();
-    RenderNotifications();
+    // diagnostic: try minimal draw first to prove ImGui/GL works, then full menu
+    if (g_frameCount == 0) {
+        logFile("FRAME 0 minimal Begin test");
+        if (ImGui::Begin("E-Client Test", nullptr, ImGuiWindowFlags_NoResize)) {
+            ImGui::Text("E-Client minimal OK — scale %.2f", scaleGlobal);
+            ImGui::SetWindowSize(ImVec2(600,300));
+            ImGui::End();
+        }
+        logFile("FRAME 0 minimal End OK");
+    } else {
+        BeginDraw();
+        RenderNotifications();
+    }
     ImGui::EndFrame();
     ImGui::Render();
+    // RenderDrawData does GL — guard it
+    if (g_frameCount < 5) logFile("FRAME before RenderDrawData");
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    if (g_frameCount < 5) { char b[64]; snprintf(b,sizeof(b),"FRAME %d done", g_frameCount); logFile(b); }
+    if (g_frameCount < 5) {
+        char b[64]; snprintf(b,sizeof(b),"FRAME %d done", g_frameCount);
+        logFile(b);
+        // dump which path we took
+        if (g_frameCount==0) logFile("FRAME 0 minimal path done — full menu not yet tested");
+    }
     g_frameCount++;
 
     {
