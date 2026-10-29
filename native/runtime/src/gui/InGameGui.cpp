@@ -28,7 +28,8 @@
 #include "clickgui/variables.h"
 #include "clickgui/menu_utils.h"
 #include "clickgui/menu.h"
-#include "clickgui/hotkeys.h"
+// hotkeys.h removed per user: module not in original E-Client, was pulling in AKEYCODE_*/android key handling
+// If you need hotkeys back, re-add <android/keycodes.h> before it — but we keep the build minimal
 
 #include "bridge/GameBridge.h"
 #include "profile/PatchManager.h"
