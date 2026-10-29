@@ -1,8 +1,6 @@
 name: Build E-Client 1.21.111 ARM64
 
 on:
-  push:
-    branches: [arena/a1ec7cfb-eclient-attach]
   workflow_dispatch:
     inputs:
       asset_name:
