@@ -13,12 +13,11 @@ on:
 permissions:
   contents: read
 
-env:
-  ASSET_NAME: ${{ inputs.asset_name || 'Minecraft-1.21.111-arm64-v8a.apk' }}
-
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      ASSET_NAME: ${{ inputs.asset_name || 'Minecraft-1.21.111-arm64-v8a.apk' }}
 
     steps:
 
