@@ -439,11 +439,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -o pipefail
+          cmake --build build/native-android --parallel 2 --verbose 2>&1 | tee /tmp/build.log
+          test ${PIPESTATUS[0]} -eq 0
 
-          cmake \
-            --build build/native-android \
-            --parallel 2 \
-            --verbose
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_id }}
+          path: /tmp/build.log
+          if-no-files-found: warn
+          retention-days: 7
 
       # ============================================================
       # VERIFY NATIVE BUILD
