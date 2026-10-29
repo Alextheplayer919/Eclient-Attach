@@ -173,31 +173,44 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     }
 
     if (g_frameCount < 5) { char b[64]; snprintf(b,sizeof(b),"FRAME %d BeginDraw", g_frameCount); logFile(b); }
-    // guard: need valid GL context for ImGui, else it will crash (splash uses different context)
+    logFile("STEP A glGetString");
     const char* ver = (const char*)glGetString(GL_VERSION);
-    if (!ver) { logFile("FRAME: no GL_VERSION, skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
-    if (!ImGui::GetCurrentContext()) { logFile("FRAME: no ImGui context, skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
-
+    if (!ver) { logFile("STEP A-no GL_VERSION skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
+    { char b[128]; snprintf(b,sizeof(b),"STEP A GL_VERSION=%.64s", ver); logFile(b); }
+    logFile("STEP B GetCurrentContext");
+    if (!ImGui::GetCurrentContext()) { logFile("STEP B-no ctx skip"); return g_originalSwap ? g_originalSwap(display,surface) : EGL_FALSE; }
+    logFile("STEP C ImGui_ImplOpenGL3_NewFrame");
     ImGui_ImplOpenGL3_NewFrame();
+    logFile("STEP D ImGui::NewFrame");
     ImGui::NewFrame();
+    logFile("STEP E NewFrame OK");
     // diagnostic: try minimal draw first to prove ImGui/GL works, then full menu
+    logFile("STEP F choose draw path");
     if (g_frameCount == 0) {
-        logFile("FRAME 0 minimal Begin test");
+        logFile("STEP G minimal Begin test");
         if (ImGui::Begin("E-Client Test", nullptr, ImGuiWindowFlags_NoResize)) {
+            logFile("STEP H inside Begin");
             ImGui::Text("E-Client minimal OK — scale %.2f", scaleGlobal);
             ImGui::SetWindowSize(ImVec2(600,300));
+            logFile("STEP I before End");
             ImGui::End();
+            logFile("STEP J after End");
         }
-        logFile("FRAME 0 minimal End OK");
+        logFile("STEP K minimal End OK");
     } else {
+        logFile("STEP G full BeginDraw");
         BeginDraw();
         RenderNotifications();
+        logFile("STEP K full done");
     }
+    logFile("STEP L EndFrame");
     ImGui::EndFrame();
+    logFile("STEP M Render");
     ImGui::Render();
     // RenderDrawData does GL — guard it
-    if (g_frameCount < 5) logFile("FRAME before RenderDrawData");
+    logFile("STEP N before RenderDrawData");
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    logFile("STEP O after RenderDrawData");
     if (g_frameCount < 5) {
         char b[64]; snprintf(b,sizeof(b),"FRAME %d done", g_frameCount);
         logFile(b);
