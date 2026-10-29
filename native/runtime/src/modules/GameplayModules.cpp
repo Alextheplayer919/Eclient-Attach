@@ -10,6 +10,10 @@
 #include <vector>
 #include <time.h>
 
+extern "C" float spiral_flyx_sin(float a) { return sinf(a); }
+extern "C" float spiral_flyx_cos(float a) { return cosf(a); }
+extern "C" float spiral_flyx_sqrt(float v) { return sqrtf(v); }
+
 namespace eclient_runtime::modules::gameplay {
 namespace {
 constexpr const char* TAG = "EClientGameplay";
@@ -42,10 +46,6 @@ inline void* fn(std::uint64_t off) { return reinterpret_cast<void*>(base + off);
 inline bool on(const char* n) { return ModuleManager::instance().enabled(n); }
 
 // ── FlyX helpers — adapted from D4Cplus/Spiral, pinned to 1.21.111 offsets ─────────
-extern "C" float spiral_flyx_sin(float a) { return sinf(a); }
-extern "C" float spiral_flyx_cos(float a) { return cosf(a); }
-extern "C" float spiral_flyx_sqrt(float v) { return sqrtf(v); }
-
 static FlyXCore g_flyXCore{};
 static bool g_flyXInitialized = false;
 static uint64_t g_lastTickNs = 0;
@@ -129,28 +129,11 @@ static bool buildFlyXInput(void* player, FlyXInput* out) {
         uint8_t fwd = *(uint8_t*)(move+0x0d), back = *(uint8_t*)(move+0x0e);
         uint8_t left = *(uint8_t*)(move+0x0f), right = *(uint8_t*)(move+0x10);
         if (fwd>1||back>1||left>1||right>1) return false;
-        strafe = (float)((int)left - (int)right); // note: original was left-right? keep strafe as x
-        // Actually original: strafe = left - right? Check flyx_bindings: strafe = (left - right) via 0xf - 0x10
-        // forward = 0xd - 0xe (forward - back)
+        strafe = (float)((int)left - (int)right);
         forward = (float)((int)fwd - (int)back);
-        // Re-map to consistent axes if no analog: we already set
-        // If still zero, that's fine (not moving)
-        if (fabsf(strafe)<=0.001f && fabsf(forward)<=0.001f) {
-            strafe = 0; forward = 0;
-        }
-        // Digital fallback uses same convention; keep it
-        // But original code set strafe = 0xf - 0x10, forward = 0xd - 0xe, so above is correct
-    } else {
-        // we already have strafe/forward
     }
-    // Copy into FlyXInput (note: FlyXInput.strafe = x, forward = y)
-    out->strafe = hasAxes ? strafe : ((float)((int)*(uint8_t*)(move+0x0f) - (int)*(uint8_t*)(move+0x10)));
-    // actually override: if hasAxes false we already handled, but to avoid confusion:
-    if (hasAxes) { out->strafe = strafe; out->forward = forward; }
-    else {
-        out->strafe = (float)((int)*(uint8_t*)(move+0x0f) - (int)*(uint8_t*)(move+0x10));
-        out->forward = (float)((int)*(uint8_t*)(move+0x0d) - (int)*(uint8_t*)(move+0x0e));
-    }
+    out->strafe = strafe;
+    out->forward = forward;
 
     uint8_t jump = *(uint8_t*)(move+0x98), sneak = *(uint8_t*)(move+0x94), inWaterFlag = *(uint8_t*)(move+0x99);
     if (jump>1||sneak>1||inWaterFlag>1) return false;
@@ -191,9 +174,11 @@ static void applyTargetLock(void* player, void* target) {
     while (yaw < -180.f) yaw += 360.f;
     if (pitch > 90.f) pitch = 90.f;
     if (pitch < -90.f) pitch = -90.f;
-    // Write to Actor rotation Vec2 {yaw,pitch}
+    // ActorRotation layout: prevYaw@0, yaw@4, prevPitch@8, pitch@12 — set both current and prev for immediate effect
     *(float*)(rotPtr + 0) = yaw;
-    *(float*)(rotPtr + 4) = pitch;
+    *(float*)(rotPtr + 4) = yaw;
+    *(float*)(rotPtr + 8) = pitch;
+    *(float*)(rotPtr + 12) = pitch;
     // Also drive body/head if helpers present
     if (base) {
         auto setBody = reinterpret_cast<void(*)(void*,float)>(fn(SetYBodyRot));
