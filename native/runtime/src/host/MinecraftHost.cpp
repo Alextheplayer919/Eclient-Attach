@@ -3,15 +3,18 @@
 #include <android/log.h>
 #include <dlfcn.h>
 #include <link.h>
+#include <EGL/egl.h>
 
 #include <chrono>
 #include <cstring>
 #include <thread>
 
+#include "gui/InGameGui.h"
 #include "../bridge/GameBridge.h"
+#include "../input/NativeInputHook.h"
 #include "../profile/PatchManager.h"
-#include "../modules/ModuleManager.h"
 #include "../modules/GameplayModules.h"
+#include "../modules/ModuleManager.h"
 
 namespace eclient_runtime::host {
 namespace {
@@ -99,8 +102,12 @@ void MinecraftHost::stop() {
         thread_.join();
     }
 
+    InGameGui::shutdown();
+
     std::lock_guard lock(mutex_);
 
+    snapshot_.renderHookReady = false;
+    snapshot_.guiReady = false;
     snapshot_.versionMatched = false;
 
     snapshot_.status =
@@ -189,9 +196,28 @@ bool MinecraftHost::verifyTarget() {
     return true;
 }
 
-bool MinecraftHost::initializeHostServices() {
+bool MinecraftHost::installRenderHook() {
+
+    if (!InGameGui::initialize()) {
+        return false;
+    }
+
+    if (!eclient_runtime::input::initialize()) {
+
+        __android_log_print(
+            ANDROID_LOG_WARN,
+            TAG,
+            "No input hook available; GUI will render but cannot be toggled/touched");
+    }
+
     std::lock_guard lock(mutex_);
-    snapshot_.status = "E-Client host initialized inside Minecraft process";
+
+    snapshot_.guiReady = true;
+    snapshot_.renderHookReady = true;
+
+    snapshot_.status =
+        "E-Client host initialized inside Minecraft process";
+
     return true;
 }
 
@@ -248,9 +274,8 @@ void MinecraftHost::bootstrapLoop() {
             continue;
         }
 
-        // Wiring audit: a module that claims memoryBacked with no patch profile
-        // can never be toggled, and the only symptom used to be a refusal at the
-        // first toggle that blamed validation. Say it once, at boot, by name.
+        // Wiring audit: Minecraft progress — detect modules that claim memoryBacked
+        // with no patch profile. Kept from r28 Minecraft work.
         for (const auto& problem : eclient_runtime::modules::ModuleManager::instance()
                                        .patchCoverageAudit()) {
             __android_log_print(ANDROID_LOG_ERROR, "EClientPatches",
@@ -268,18 +293,18 @@ void MinecraftHost::bootstrapLoop() {
             continue;
         }
 
-        if (initializeHostServices()) {
+        if (installRenderHook()) {
 
             __android_log_print(
                 ANDROID_LOG_INFO,
                 TAG,
-                "E-Client 1.21.111 host ready (no native GUI)");
+                "E-Client 1.21.111 in-game host ready");
 
             return;
         }
 
         updateStatus(
-            "host-service initialization failed");
+            "GUI initialization failed");
 
         std::this_thread::sleep_for(
             std::chrono::milliseconds(500));
