@@ -14,34 +14,20 @@
 #include "backends/imgui_impl_opengl3.h"
 
 // ---------- E-Client shim + Zeff clickgui (full style, E-Client rebranded) ----------
-// User requested: revert to Zeff's clickgui style (8 pages, full tabs) but keep E-Client title
-// and no Zeff/Discord links, and adapt client to it (variables.h as source of truth).
-// We include the shim first, then the Zeff files in original order. Only this TU includes
-// variables.h/menu.h, so globals are defined once. GameplayModules reads them via extern.
 #include "clickgui/eclient_shim.h"
-
-// Zeff's RGB helper (defines redd/greenn/bluee and performRGBChange)
 #include "clickgui/RGB.h"
 #include "clickgui/dark_theme.h"
-
-// nlohmann json stub is already in eclient_shim.h, so variables.h can use `json cfg;`
 #include "clickgui/variables.h"
 #include "clickgui/menu_utils.h"
 #include "clickgui/menu.h"
-// hotkeys.h removed per user: module not in original E-Client, was pulling in AKEYCODE_*/android key handling
-// If you need hotkeys back, re-add <android/keycodes.h> before it — but we keep the build minimal
+// hotkeys.h intentionally omitted — was uninvolved module (AKEYCODE_*) per user
 
 #include "bridge/GameBridge.h"
 #include "profile/PatchManager.h"
 
-// Implement Patches() bridging: Zeff's menu calls Patches() every frame, we forward to PatchManager
 void EClient_Patches() {
     auto& pm = eclient_runtime::profile::PatchManager::instance();
-    // In-menu: Zeff restores some patches while menu open — we keep same logic but via PatchManager
-    // For E-Client we treat all patch-backed modules as fail-closed: only enable if PatchManager has spec
-    // and the corresponding bool is true && !panic
     if (inMenu) {
-        // Zeff restores camera patches while inMenu — we do same to avoid visual glitch when menu open
         pm.set("NoHurtCam", false);
         pm.set("NoCamDistortion", false);
         pm.set("NoBoatRotation", false);
@@ -51,7 +37,6 @@ void EClient_Patches() {
         pm.set("XrayCameraThird", false);
         return;
     }
-    // Normal patch application — map Zeff bools -> E-Client patch names
     pm.set("NoHurtCam", noHurtCam && !panic);
     pm.set("NoCamDistortion", noCamDist && !panic);
     pm.set("NoBoatRotation", noBoatRotation && !panic);
@@ -61,7 +46,6 @@ void EClient_Patches() {
     pm.set("XrayCameraThird", xrayCam && !panic);
     pm.set("AntiKnockback", antiKnockback && !panic);
     pm.set("NoSlowDown", noSlowDown && !panic);
-    // offDrown maps to both water/lava (Zeff has single offDrown, we have two)
     pm.set("NoWaterDrown", offDrown && !panic);
     pm.set("NoLavaDrown", offDrown && !panic);
     pm.set("Noclip", noclip && !panic);
@@ -70,7 +54,6 @@ void EClient_Patches() {
     pm.set("NoBlur", noBlur && !panic);
     pm.set("FullBright", (fullBright || xrayDefault) && !panic);
     pm.set("NoCaveVignette", noCaveVignette && !panic);
-    // Font patches are not applicable to E-Client (leave as restore)
 }
 
 namespace eclient_runtime::host::InGameGui {
@@ -80,7 +63,6 @@ std::mutex g_mutex;
 std::atomic_bool g_ready{false};
 std::atomic_bool g_imguiReady{false};
 
-// Touch handling (same as before, but now driven by Zeff's expected inMenu/inHudScreen flags)
 struct TouchSample { float x{0}, y{0}; int action{0}; };
 std::mutex g_touchMutex;
 std::vector<TouchSample> g_touchQueue;
@@ -92,6 +74,11 @@ SwapBuffersFn g_originalSwap = nullptr;
 std::atomic<int> g_physicalWidth{0}, g_physicalHeight{0};
 std::mutex g_rectMutex;
 ImVec2 g_lastWindowPos{0,0}, g_lastWindowSize{0,0};
+
+// HOTFIX: track last size, only scale once (was scaling every frame → exponential style explosion → black/crash)
+int g_lastW = 0, g_lastH = 0;
+bool g_styleScaled = false;
+ImGuiStyle g_baseStyle;
 
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     if (!g_ready.load()) return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
@@ -109,30 +96,33 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         ImGui::CreateContext();
         ImGuiIO& io0 = ImGui::GetIO();
         io0.IniFilename = nullptr;
-        // Zeff's init: Classic style + embraceTheDarkness()
         ImGui::StyleColorsClassic();
         embraceTheDarkness();
-        ImGuiStyle& st = ImGui::GetStyle();
-        st.TouchExtraPadding = ImVec2(6,6);
-        // Zeff used #version 100, we use 300 es for E-Client GLES3
-        ImGui_ImplOpenGL3_Init("#version 300 es");
-        __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client ClickGUI (Zeff style, E-Client rebranded) initialized");
-        // Zeff's variables: readMe controls initial Description popup — we keep it (user must click I READ)
-        // For E-Client we could set readMe=true to skip, but user wanted Zeff style, so keep popup
+        g_baseStyle = ImGui::GetStyle();
+        g_baseStyle.TouchExtraPadding = ImVec2(6,6);
+        // HOTFIX: use #version 100 like original Zeff (was #version 300 es → shader fail on some GPUs → black)
+        ImGui_ImplOpenGL3_Init("#version 100");
+        __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client ClickGUI (Zeff style, hotfix)");
     }
 
-    // Update screen globals that Zeff's menu.h/menu_utils.h rely on (originally set in main.cpp's swap hook)
     screenWidth = (int)width;
     screenHeight = (int)height;
-    scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
-    calcResX = calculateResolutionX(screenWidth, 2480);
-    // Apply style scaling (Zeff did: style.ScaleAllSizes(scaleGlobal*3.5); io.FontGlobalScale=scaleGlobal)
-    ImGui::GetStyle().ScaleAllSizes(scaleGlobal * 0.5f); // mild scaling, avoid over-scale every frame
+    // HOTFIX: only recompute scale when size actually changes, and apply style scaling once
+    if (width != g_lastW || height != g_lastH) {
+        scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
+        calcResX = calculateResolutionX(screenWidth, 2480);
+        ImGuiStyle& st = ImGui::GetStyle();
+        st = g_baseStyle;
+        // Zeff did *3.5, we use *1.5 for safety (was *0.5 every frame → explosion)
+        st.ScaleAllSizes(scaleGlobal * 1.5f);
+        g_lastW = width; g_lastH = height;
+        g_styleScaled = true;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Resize %dx%d scale %.2f", width, height, scaleGlobal);
+    }
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2((float)width, (float)height);
-    io.FontGlobalScale = std::max(1.0f, scaleGlobal * 1.2f);
+    io.FontGlobalScale = std::max(1.0f, scaleGlobal * 1.0f);
 
-    // Input: feed touch queue to ImGui (Zeff used direct touch, we use queue from NativeInputHook)
     {
         std::lock_guard<std::mutex> lock(g_touchMutex);
         if (!g_touchQueue.empty()) {
@@ -156,34 +146,24 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         }
     }
 
-    // Zeff's per-frame: ImGui_ImplOpenGL3_NewFrame(); ImGui::NewFrame(); BeginDraw(); RenderNotifications(); EndFrame etc.
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
 
-    // Zeff's menu manages its own window (BeginDraw creates "Description" or "E-Client | Minecraft 1.21.111")
-    // We just call it — it handles inMenu/panic logic internally
     BeginDraw();
     RenderNotifications();
 
     ImGui::EndFrame();
     ImGui::Render();
-    glClear(GL_COLOR_BUFFER_BIT);
+    // HOTFIX: removed glClear() — was wiping Minecraft's scene → black screen
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-    // Update rect for hit-test (use g_window if available, else approximate)
     {
         std::lock_guard<std::mutex> lock(g_rectMutex);
         if (g_window) {
             g_lastWindowPos = g_window->Pos;
             g_lastWindowSize = g_window->Size;
-        } else {
-            // fallback: use InGameGui's own tracking of E-Client window if g_window not set yet
-            // Zeff's menu sets g_window = ImGui::GetCurrentWindow() inside BeginDraw
         }
     }
-
-    // Zeff's menu also handles tick logic via TickFunctions() and performRGBChange() at end of BeginDraw
-    // Those are already called inside BeginDraw() in menu.h (see end of BeginDraw)
 
     return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
 }
@@ -211,7 +191,7 @@ bool hookSwapBuffers() {
 }
 } // namespace
 
-void toggleMenu() { /* Zeff's menu is always present after readMe, not volume-key toggled */ }
+void toggleMenu() {}
 void toggleCollapsed() {}
 void setCollapsed(bool) {}
 bool isCollapsed() { return false; }
@@ -233,7 +213,7 @@ bool initialize() {
     if (g_ready.load()) return true;
     if (!hookSwapBuffers()) { __android_log_print(ANDROID_LOG_ERROR, TAG, "eglSwapBuffers hook failed"); return false; }
     g_ready.store(true);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client host ready (Zeff clickgui style, E-Client rebranded, variables.h as source of truth)");
+    __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client host ready (hotfix)");
     return true;
 }
 void shutdown(){
