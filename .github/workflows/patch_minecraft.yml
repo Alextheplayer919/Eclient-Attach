@@ -452,6 +452,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Publish build log to release (on failure)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Build failed — publishing log to release for debugging"
+          gh release create "buildlog-${{ github.run_id }}" --title "Build log ${{ github.run_id }}" --notes "Build log for failed run ${{ github.run_id }} commit ${{ github.sha }}" --target "${{ github.sha }}" || true
+          gh release upload "buildlog-${{ github.run_id }}" /tmp/build.log --clobber || true
+          echo "=== BUILD LOG (last 800 lines) ==="
+          tail -n 800 /tmp/build.log || cat /tmp/build.log || true
+
       # ============================================================
       # VERIFY NATIVE BUILD
       # ============================================================
