@@ -26,15 +26,12 @@ constexpr const char* TAG = "EClientGui";
 std::mutex g_mutex;
 std::atomic_bool g_ready{false};
 std::atomic_bool g_imguiReady{false};
-std::atomic_bool g_menuOpen{false};
+std::atomic_bool g_collapsed{true}; // start minimized — only name panel visible
 
-// Queued touch events: input thread pushes, render thread drains in order.
-// A single atomic pair was overwriting DOWN with UP between frames, so ImGui
-// never saw a complete click.
 struct TouchSample {
     float x{0};
     float y{0};
-    int action{0}; // 0=down, 1=move, 2=up/cancel
+    int action{0};
 };
 std::mutex g_touchMutex;
 std::vector<TouchSample> g_touchQueue;
@@ -47,33 +44,33 @@ SwapBuffersFn g_originalSwap = nullptr;
 std::atomic<int> g_physicalWidth{0};
 std::atomic<int> g_physicalHeight{0};
 
+// Last frame window rect for hit-testing (in display pixels)
+std::mutex g_rectMutex;
+ImVec2 g_lastWindowPos{0, 0};
+ImVec2 g_lastWindowSize{0, 0};
+
 void drawModuleList() {
     auto& mgr = eclient_runtime::modules::ModuleManager::instance();
     const auto& modules = mgr.all();
-
-    // Group by category while preserving registration order.
     static const char* kOrder[] = {"Combat", "Movement", "Visual", "Player", "Misc"};
     std::unordered_map<std::string, std::vector<const eclient_runtime::modules::ModuleState*>> byCat;
     for (const auto& m : modules) {
         const std::string cat = m.category.empty() ? "Misc" : m.category;
         byCat[cat].push_back(&m);
     }
-
     if (ImGui::BeginTabBar("##cats", ImGuiTabBarFlags_FittingPolicyScroll)) {
         for (const char* cat : kOrder) {
             auto it = byCat.find(cat);
             if (it == byCat.end() || it->second.empty()) continue;
             if (!ImGui::BeginTabItem(cat)) continue;
-
+            // Fixed height child with scrollbar — touch drag works via mouse drag
             ImGui::BeginChild((std::string("##scroll_") + cat).c_str(),
                               ImVec2(0, 320), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             for (const auto* module : it->second) {
                 bool enabled = module->enabled;
-                // Larger hit target for touch.
                 ImGui::PushID(module->name.c_str());
                 if (ImGui::Checkbox(module->name.c_str(), &enabled)) {
                     if (!mgr.setEnabled(module->name, enabled)) {
-                        // Revert visual if patch layer rejected the change.
                         enabled = module->enabled;
                     }
                 }
@@ -110,7 +107,6 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
             ImGuiIO& io0 = ImGui::GetIO();
             io0.IniFilename = nullptr;
             io0.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-            // Touch-friendly: windows can be moved from anywhere, larger frame padding.
             ImGui::StyleColorsDark();
             ImGuiStyle& style = ImGui::GetStyle();
             style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
@@ -127,7 +123,6 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
         io.FontGlobalScale = std::max(1.5f, static_cast<float>(std::min(width, height)) / 360.0f);
 
-        // Drain the touch queue in arrival order so DOWN/MOVE/UP sequences reach ImGui.
         {
             std::lock_guard lock(g_touchMutex);
             if (!g_touchQueue.empty()) {
@@ -144,15 +139,12 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
                         g_lastTouchDown = false;
                         io.AddMouseButtonEvent(0, false);
                     }
-                    // action == 1 (move): position only, button state unchanged
                 }
                 g_touchQueue.clear();
             } else if (g_lastTouchDown) {
-                // Finger still down with no new events: keep position + button.
                 io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
                 io.AddMouseButtonEvent(0, true);
             } else if (g_lastTouchX >= 0.0f) {
-                // After release keep last hover for a frame so ImGui can finish click.
                 io.AddMousePosEvent(g_lastTouchX, g_lastTouchY);
                 io.AddMouseButtonEvent(0, false);
             } else {
@@ -164,32 +156,57 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
 
-        const bool open = g_menuOpen.load();
-        if (open) {
-            const float winW = std::min(480.0f, static_cast<float>(width) * 0.92f);
-            const float winH = std::min(520.0f, static_cast<float>(height) * 0.85f);
-            ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowPos(ImVec2(static_cast<float>(width) * 0.04f,
-                                           static_cast<float>(height) * 0.06f),
-                                    ImGuiCond_FirstUseEver);
+        // Persistent window — always present, collapsible to title bar
+        const bool collapsed = g_collapsed.load();
+        const float winW = collapsed ? 260.0f : std::min(480.0f, static_cast<float>(width) * 0.92f);
+        const float winH = collapsed ? 42.0f : std::min(520.0f, static_cast<float>(height) * 0.85f);
+        ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(width) * 0.04f,
+                                       static_cast<float>(height) * 0.06f),
+                                ImGuiCond_FirstUseEver);
 
-            bool keepOpen = open;
-            ImGui::Begin("E-Client 1.21.111", &keepOpen,
-                         ImGuiWindowFlags_NoCollapse);
+        // NoCollapse false so title bar is interactive; we handle collapse ourselves
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        if (collapsed) flags |= ImGuiWindowFlags_NoResize;
 
-            const auto bridge = eclient_runtime::GameBridge::instance().snapshot();
-            ImGui::Text("Minecraft: %s", bridge.libraryLoaded ? "YES" : "NO");
-            ImGui::Text("Build: %s", bridge.buildId.empty() ? "unknown" : bridge.buildId.c_str());
-            ImGui::TextDisabled("Volume Up = toggle menu | drag scrollbar to scroll");
-            ImGui::Separator();
+        // Use a single window that we manually collapse: header is always visible
+        bool windowOpen = true;
+        if (ImGui::Begin("E-Client 1.21.111", &windowOpen, flags)) {
+            {
+                std::lock_guard lock(g_rectMutex);
+                g_lastWindowPos = ImGui::GetWindowPos();
+                g_lastWindowSize = ImGui::GetWindowSize();
+            }
 
-            drawModuleList();
+            // Header row: title + minimize/maximize button
+            // Make the whole title bar draggable and clickable to toggle
+            ImVec2 cursor = ImGui::GetCursorScreenPos();
+            ImVec2 winPos = ImGui::GetWindowPos();
+            ImVec2 winSize = ImGui::GetWindowSize();
 
-            ImGui::Separator();
-            ImGui::TextDisabled("Patches fail closed if the 1.21.111 profile does not match.");
-            ImGui::End();
-            if (!keepOpen) g_menuOpen.store(false);
+            // Invisible button covering title bar for toggle (height ~ 32)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.25f, 0.27f, 1.0f));
+            std::string headerLabel = collapsed ? "E-Client 1.21.111  [+]##hdr" : "E-Client 1.21.111  [-]##hdr";
+            // Header button spans full width minus close
+            if (ImGui::Button(headerLabel.c_str(), ImVec2(-1, 0))) {
+                g_collapsed.store(!collapsed);
+            }
+            ImGui::PopStyleColor(3);
+
+            if (!collapsed) {
+                const auto bridge = eclient_runtime::GameBridge::instance().snapshot();
+                ImGui::Text("Minecraft: %s", bridge.libraryLoaded ? "YES" : "NO");
+                ImGui::Text("Build: %s", bridge.buildId.empty() ? "unknown" : bridge.buildId.c_str());
+                ImGui::TextDisabled("Tap header to minimize | drag scrollbar to scroll");
+                ImGui::Separator();
+                drawModuleList();
+                ImGui::Separator();
+                ImGui::TextDisabled("Patches fail closed if 1.21.111 profile mismatches.");
+            }
         }
+        ImGui::End();
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -220,7 +237,6 @@ bool hookSwapBuffers() {
                   reinterpret_cast<void**>(&g_originalSwap)) != RS_SUCCESS) {
         return false;
     }
-
     void* createSymbol = dlsym(RTLD_DEFAULT, "eglCreateWindowSurface");
     if (!createSymbol) createSymbol = reinterpret_cast<void*>(eglCreateWindowSurface);
     if (createSymbol) {
@@ -231,7 +247,17 @@ bool hookSwapBuffers() {
 }
 } // namespace
 
-void toggleMenu() { g_menuOpen.store(!g_menuOpen.load()); }
+void toggleMenu() { g_collapsed.store(!g_collapsed.load()); }
+void toggleCollapsed() { g_collapsed.store(!g_collapsed.load()); }
+void setCollapsed(bool c) { g_collapsed.store(c); }
+bool isCollapsed() { return g_collapsed.load(); }
+bool isTouchOnGui(float x, float y) {
+    std::lock_guard lock(g_rectMutex);
+    if (g_lastWindowSize.x <= 0 || g_lastWindowSize.y <= 0) return false;
+    return x >= g_lastWindowPos.x && x <= g_lastWindowPos.x + g_lastWindowSize.x &&
+           y >= g_lastWindowPos.y && y <= g_lastWindowPos.y + g_lastWindowSize.y;
+}
+bool menuOpen() { return !g_collapsed.load(); }
 
 void setPhysicalWindowSize(int width, int height) {
     g_physicalWidth.store(width);
@@ -240,12 +266,9 @@ void setPhysicalWindowSize(int width, int height) {
 
 void submitTouch(float x, float y, int action) {
     std::lock_guard lock(g_touchMutex);
-    // Cap queue so a stuck input thread cannot grow without bound.
     if (g_touchQueue.size() > 64) g_touchQueue.erase(g_touchQueue.begin(), g_touchQueue.begin() + 32);
     g_touchQueue.push_back(TouchSample{x, y, action});
 }
-
-bool menuOpen() { return g_menuOpen.load(); }
 
 bool initialize() {
     std::lock_guard lock(g_mutex);
@@ -255,15 +278,15 @@ bool initialize() {
         return false;
     }
     g_ready.store(true);
-    g_menuOpen.store(false);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "Render host ready");
+    g_collapsed.store(true); // start minimized as requested
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Render host ready (persistent, minimized)");
     return true;
 }
 
 void shutdown() {
     std::lock_guard lock(g_mutex);
     g_ready.store(false);
-    g_menuOpen.store(false);
+    g_collapsed.store(true);
     {
         std::lock_guard tlock(g_touchMutex);
         g_touchQueue.clear();

@@ -11,12 +11,14 @@ ModuleManager& ModuleManager::instance() {
 ModuleManager::ModuleManager() : modules_{
     // Combat
     {"KillAura", "Nearest attackable actor within 4 blocks", "Combat", true, false},
+    {"TargetLock", "Lock view to KillAura target (requires KillAura)", "Combat", true, false},
     {"CriticalHit", "Attack-state hook; pending verification", "Combat", true, false},
     {"AutoClickMine", "Skip the automatic mining cooldown routine", "Combat", false, true},
 
     // Movement
     {"Speed", "Movement hook using the validated 1.21.111 movement routine", "Movement", true, false},
     {"Fly", "Player ability hook using the validated 1.21.111 ability layout", "Movement", true, false},
+    {"FlyX", "Bypass fly with glide/bypass (from FlyX native, glide -0.1266, bypass 1.09-1.15)", "Movement", true, false},
     {"AlwaysSprint", "Force LocalPlayer sprint state", "Movement", true, false},
     {"Step", "Raise the player auto-step height", "Movement", true, false},
     {"NoSlowDown", "Disable item/block movement slowdown", "Movement", false, true},

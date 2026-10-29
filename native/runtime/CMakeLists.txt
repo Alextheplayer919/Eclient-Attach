@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(eclient_runtime LANGUAGES CXX)
+project(eclient_runtime LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ set(ECLIENT_COMMON_SOURCES
     src/memory/NativeMemory.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
+    src/modules/flyx/flyx_core.c
     src/profile/PatchManager.cpp
 )
 

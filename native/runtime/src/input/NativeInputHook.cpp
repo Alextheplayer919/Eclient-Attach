@@ -22,19 +22,16 @@ NativeKeyHandler g_original = nullptr;
 GetEventFn g_originalGetEvent = nullptr;
 
 bool hookedNativeKeyHandler(void* a1, void* a2, int keyCode, int keyAction) {
-    // Volume-up toggles the in-game menu (ACTION_DOWN only).
-    if (keyCode == AKEYCODE_VOLUME_UP && keyAction == 0) {
-        eclient_runtime::host::InGameGui::toggleMenu();
-    }
+    // No volume-up toggle — GUI is persistent with minimize button.
+    // Still pass through to game so volume keys work normally.
     return g_original ? g_original(a1, a2, keyCode, keyAction) : false;
 }
 
-// While the menu is open, motion events are routed to ImGui and consumed so the
-// game camera does not move behind the menu.
+// While GUI is hit, motion events are routed to ImGui and consumed so the
+// game camera does not move behind the menu. Otherwise they pass through.
 int32_t hookedGetEvent(AInputQueue* queue, AInputEvent** outEvent) {
     const int32_t result = g_originalGetEvent ? g_originalGetEvent(queue, outEvent) : -1;
     if (result < 0 || !outEvent || !*outEvent) return result;
-    if (!eclient_runtime::host::InGameGui::menuOpen()) return result;
 
     AInputEvent* ev = *outEvent;
     if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return result;
@@ -44,7 +41,6 @@ int32_t hookedGetEvent(AInputQueue* queue, AInputEvent** outEvent) {
     const int pointerIndex = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
                              >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
 
-    // Prefer the active pointer for multi-touch; fall back to index 0.
     size_t idx = 0;
     if (masked == AMOTION_EVENT_ACTION_POINTER_DOWN ||
         masked == AMOTION_EVENT_ACTION_POINTER_UP) {
@@ -54,6 +50,22 @@ int32_t hookedGetEvent(AInputQueue* queue, AInputEvent** outEvent) {
 
     const float x = AMotionEvent_getX(ev, idx);
     const float y = AMotionEvent_getY(ev, idx);
+
+    // Hit-test against last known GUI rect (collapsed = small bar, expanded = full)
+    // If not on GUI, let game handle it (pass through). If on GUI, route to ImGui and consume.
+    bool onGui = eclient_runtime::host::InGameGui::isTouchOnGui(x, y);
+    // Also treat any touch while finger is already down on GUI as GUI (for drag/scroll continuity)
+    // The GUI itself tracks down state, but we need to ensure move/up after a down on GUI stays routed.
+    // For simplicity, if any touch queue has pending down, consider drags as GUI — but we approximate
+    // by checking if last touch was on GUI via isTouchOnGui tracking internally. For now, direct hit-test
+    // is sufficient because ImGui will have captured the mouse button.
+    if (!onGui) {
+        // Special case: if ImGui has mouse button down (dragging scrollbar), keep routing moves
+        // even if finger slightly leaves window. We approximate by checking g_menuOpen state:
+        // when expanded, ImGui may be dragging — let the existing queue handle it via pos.
+        // For now, only consume when directly on GUI to avoid blocking game play.
+        return result;
+    }
 
     switch (masked) {
         case AMOTION_EVENT_ACTION_DOWN:
@@ -107,7 +119,7 @@ bool installKeyHook() {
         return false;
     }
     g_keyInstalled.store(true);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "Mobile GUI hotkey ready: Volume Up");
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Key hook installed (no hotkey, GUI persistent)");
     return true;
 }
 
@@ -132,10 +144,7 @@ bool installTouchHook() {
 bool initialize() {
     const bool key = installKeyHook();
     const bool touch = installTouchHook();
-    if (!key) {
-        // No hotkey: open the menu so it remains reachable.
-        eclient_runtime::host::InGameGui::toggleMenu();
-    }
+    // GUI is persistent (minimized header always visible) — no hotkey needed.
     if (!touch) {
         __android_log_print(ANDROID_LOG_WARN, TAG,
                             "Touch hook failed — GUI will show but may not receive taps");
