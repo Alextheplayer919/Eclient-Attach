@@ -245,51 +245,9 @@ cp \
     "$LOADER_SOURCE" \
     "$LOADER_DIR/EClientLoaderProvider.smali"
 
-# View-layer touch tap for the GUI (libminecraftpe.so 1.21.111 imports no
-# AInputQueue API, so touch delivery must happen in Java via the decor view).
-cp \
-    "$ROOT/tools/minecraft-touch-listener.smali" \
-    "$LOADER_DIR/EClientTouchListener.smali"
-
 echo "Loader installed:"
 echo "$LOADER_DIR/EClientLoaderProvider.smali"
-echo "$LOADER_DIR/EClientTouchListener.smali"
 echo
-
-# Kotlin module layer (optional): dex-compiled Kotlin source produced by
-# tools/build-kotlin-modules.sh.
-#
-# r16 lesson #1: Minecraft is already multidex (ships classes2..classesN.dex)
-# — stomping one = instant pre-splash crash. So the dex goes in under the
-# NEXT FREE index: smali dirs decode 1:1 (smali = classes.dex,
-# smali_classes2 = classes2.dex, ...) ⇒ next = dir count + 1.
-# r16 lesson #2: apktool does NOT reliably pack files added to decoded/unknown
-# post-decode — so the injection happens AFTER `apktool b`, appended straight
-# into the unsigned APK zip (before zipalign/apksigner, so the v2 signature
-# covers it).
-KOTLIN_INSTALLED=0
-if [[ -n "${KOTLIN_DEX_FILE:-}" ]] && [[ -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]]; then
-    head -c 4 "$KOTLIN_DEX_FILE" | grep -q "dex" || {
-        echo "ERROR: KOTLIN_DEX_FILE is not a dex file."
-        exit 1
-    }
-    SMALI_DIRS=$(find "$DECODED" -maxdepth 1 -type d -name 'smali*' | wc -l)
-    if [[ "$SMALI_DIRS" -lt 1 ]]; then
-        echo "ERROR: no smali dirs in decoded APK — cannot compute dex index."
-        exit 1
-    fi
-    NEXT_INDEX=$((SMALI_DIRS + 1))
-    KOTLIN_DEX_NAME="classes${NEXT_INDEX}.dex"
-    # Paranoia: the slot we are about to take must not already exist.
-    if [[ -d "$DECODED/smali_classes${NEXT_INDEX}" ]]; then
-        echo "ERROR: index $NEXT_INDEX collides with an existing smali dir."
-        exit 1
-    fi
-    KOTLIN_INSTALLED=1
-    echo "Kotlin module layer staged (game already has $SMALI_DIRS dex(es)):"
-    echo "will append $KOTLIN_DEX_NAME to the unsigned APK after apktool b."
-    echo
-fi
 
 # ============================================================
 # Install native library
@@ -354,32 +312,6 @@ name_attr = f"{{{ANDROID_NS}}}name"
 authority_attr = f"{{{ANDROID_NS}}}authorities"
 exported_attr = f"{{{ANDROID_NS}}}exported"
 init_order_attr = f"{{{ANDROID_NS}}}initOrder"
-
-# ---------------------------------------------------------------------------
-# r26: "Display over other apps".
-#
-# The Views overlay has three mount rungs (panel sub-window / injected view /
-# overlay window). The overlay rung is the most robust of the three — it does
-# not depend on the activity token, survives activity recreation, and cannot be
-# z-ordered behind the game — but it needs this permission. It is requested,
-# never required: if the user does not grant it, the GUI still comes up through
-# the other two rungs and simply offers a one-tap GRANT button.
-# ---------------------------------------------------------------------------
-
-overlay_permission = "android.permission.SYSTEM_ALERT_WINDOW"
-
-has_overlay_permission = any(
-    item.get(name_attr) == overlay_permission
-    for item in root.findall("uses-permission")
-)
-
-if not has_overlay_permission:
-    permission = ET.Element("uses-permission")
-    permission.set(name_attr, overlay_permission)
-    root.insert(0, permission)
-    print(f"Added {overlay_permission}.")
-else:
-    print(f"{overlay_permission} already present.")
 
 provider_name = "com.rubidiumclient.host.EClientLoaderProvider"
 provider_authority = "com.rubidiumclient.eclientloader"
@@ -453,33 +385,6 @@ grep -q \
         exit 1
     }
 
-grep -q \
-    'Landroid/view/View$OnTouchListener;' \
-    "$LOADER_DIR/EClientTouchListener.smali" || {
-        echo "ERROR: Touch listener smali missing its OnTouchListener interface."
-        exit 1
-    }
-
-grep -q \
-    'nativeGuiTouch(IIFF)Z' \
-    "$LOADER_DIR/EClientTouchListener.smali" || {
-        echo "ERROR: Touch listener smali does not call nativeGuiTouch (multi-pointer ABI)."
-        exit 1
-    }
-
-if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
-    grep -q \
-        'Lcom/rubidiumclient/modules/ModuleRegistry;->init()V' \
-        "$LOADER_DIR/EClientLoaderProvider.smali" || {
-            echo "ERROR: Kotlin layer was installed but the loader never calls ModuleRegistry.init."
-            exit 1
-        }
-    [[ -z "${KOTLIN_DEX_NAME:-}" || ! -f "${KOTLIN_DEX_FILE:-/nonexistent}" ]] && {
-        echo "ERROR: Kotlin dex payload is not staged."
-        exit 1
-    }
-fi
-
 echo "Loader verified."
 echo
 
@@ -535,19 +440,7 @@ if not found:
         " in AndroidManifest.xml"
     )
 
-overlay_ok = any(
-    item.get(name_attr) == "android.permission.SYSTEM_ALERT_WINDOW"
-    for item in root.findall("uses-permission")
-)
-
-if not overlay_ok:
-    raise RuntimeError(
-        "SYSTEM_ALERT_WINDOW is missing from AndroidManifest.xml"
-        " (the overlay mount rung would be unavailable)."
-    )
-
 print("Manifest provider verified.")
-print("Manifest overlay permission verified.")
 PY
 
 echo
@@ -573,38 +466,6 @@ echo
 echo "Unsigned APK created:"
 ls -lh "$BUILT_APK"
 echo
-
-if [[ "$KOTLIN_INSTALLED" -eq 1 ]]; then
-    # Append the Kotlin dex at APK root under the next free multidex name,
-    # then re-verify: (a) it's present, (b) ALL original game dexes are
-    # still there (exactly one entry added, none replaced).
-    python3 - "$BUILT_APK" "$KOTLIN_DEX_FILE" "$KOTLIN_DEX_NAME" "$NEXT_INDEX" <<'PY'
-import sys, zipfile
-apk, dex_src, dex_name, next_idx = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-with zipfile.ZipFile(apk) as z:
-    dexes = sorted(n for n in z.namelist()
-                   if "/" not in n and n.startswith("classes") and n.endswith(".dex"))
-if dex_name in dexes:
-    print(f"ERROR: {dex_name} already exists in the built APK — refusing to overwrite "
-          f"(dex list: {dexes})")
-    sys.exit(1)
-expected = ["classes.dex"] + [f"classes{i}.dex" for i in range(2, next_idx)]
-if dexes != expected:
-    print(f"ERROR: unexpected baseline dex layout {dexes} (expected {expected})")
-    sys.exit(1)
-with open(dex_src, "rb") as f:
-    payload = f.read()
-assert payload[:4] == b"dex\n", "KOTLIN_DEX_FILE is not a dex"
-with zipfile.ZipFile(apk, "a", zipfile.ZIP_DEFLATED) as z:
-    z.writestr(dex_name, payload)
-with zipfile.ZipFile(apk) as z:
-    final = sorted(n for n in z.namelist()
-                   if "/" not in n and n.startswith("classes") and n.endswith(".dex"))
-assert final == expected + [dex_name], f"post-append layout wrong: {final}"
-print(f"Kotlin dex appended as {dex_name} ({len(payload)/1024/1024:.1f} MB).")
-print(f"APK dex files ({len(final)}): {final}")
-PY
-fi
 
 # ============================================================
 # 8. Verify resources.arsc
@@ -660,15 +521,7 @@ echo
 
 echo "[9/11] Preparing signing key..."
 
-# Shared debug keystore, committed to this PRIVATE repo: every builder
-# (CI, PC, phone) produces the SAME signature, so patched builds install
-# OVER the previous build with no uninstall step. Debug-grade key, not a
-# secret — its only purpose is a stable cert for sideloading.
-# If the file is ever missing, it is regenerated (note: a regenerated key
-# produces a DIFFERENT signature -> uninstall old build first in that case).
-KEYSTORE="$ROOT/.signing/eclient-debug.p12"
-
-mkdir -p "$(dirname "$KEYSTORE")"
+KEYSTORE="$WORK/eclient-debug.keystore"
 
 if [[ ! -f "$KEYSTORE" ]]; then
 
@@ -676,14 +529,13 @@ if [[ ! -f "$KEYSTORE" ]]; then
         -genkeypair \
         -v \
         -keystore "$KEYSTORE" \
-        -storetype PKCS12 \
         -storepass android \
         -keypass android \
-        -alias eclient \
+        -alias androiddebugkey \
         -keyalg RSA \
         -keysize 2048 \
-        -validity 10950 \
-        -dname "CN=E-Client Debug,O=E-Client,C=US"
+        -validity 10000 \
+        -dname "CN=Android Debug,O=Android,C=US"
 
 fi
 
@@ -732,7 +584,7 @@ apksigner sign \
     --ks "$KEYSTORE" \
     --ks-pass pass:android \
     --key-pass pass:android \
-    --ks-key-alias eclient \
+    --ks-key-alias androiddebugkey \
     --v1-signing-enabled true \
     --v2-signing-enabled true \
     --v3-signing-enabled true \

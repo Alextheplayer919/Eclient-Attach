@@ -1,5 +1,4 @@
 #include "modules/GameplayModules.h"
-#include "modules/MelodyModules.h"
 #include "modules/ModuleManager.h"
 #include "profile/Offsets_1_21_111.h"
 #include "memory/NativeMemory.h"
@@ -16,60 +15,71 @@ using namespace eclient_runtime::profile::mc_1_21_111;
 
 using NormalTickFn = void* (*)(void*);
 using SpeedFn = void (*)(void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*,void*);
+using GetAbilitiesFn = void* (*)(void*);
+using GetLayerFn = void* (*)(void*, int);
+using SetAbilityFn = void (*)(void*, int, bool);
+using GetRuntimeActorFn = std::vector<void*> (*)(void*);
+using AttackFn = void (*)(void*, void*, bool);
+using IsAttackableFn = bool (*)(void*);
+using GetHealthFn = int (*)(void*);
 
 NormalTickFn oldNormalTick = nullptr;
 SpeedFn oldSpeed = nullptr;
+GetAbilitiesFn getAbilities = nullptr;
+GetLayerFn getLayer = nullptr;
+SetAbilityFn setAbility = nullptr;
+GetRuntimeActorFn getRuntimeActors = nullptr;
+AttackFn attack = nullptr;
+IsAttackableFn isAttackable = nullptr;
+GetHealthFn getHealth = nullptr;
 std::uintptr_t base = 0;
 
 inline void* fn(std::uint64_t off) { return reinterpret_cast<void*>(base + off); }
 inline bool on(const char* n) { return ModuleManager::instance().enabled(n); }
 
-// ---------------------------------------------------------------------------
-// AlwaysSprint (rewritten r25)
-//
-// The previous version called SetSprinting(player, true) on EVERY tick. That is
-// exactly what broke gapples: while an item is in use the engine sets sprint
-// false each tick, and re-forcing it fights the item-use tick, so the eat never
-// completes.
-//
-// The rewrite refuses to fight the engine. It only re-asserts sprint when the
-// player is provably NOT using an item. That state is not derived yet, so the
-// module stays INERT — fail-closed, the same policy the memory patches use —
-// instead of silently breaking item use. The seam is these two constants in
-// profile/Offsets_1_21_111.h; when they land with disassembly evidence this
-// starts working with no other change.
-// ---------------------------------------------------------------------------
-
-bool itemUseStateKnown() {
-    return UsingItemFlagOffset != 0 && UsingItemFlagMask != 0;
-}
-
-// true  = provably not using an item (safe to force sprint)
-// false = unknown, unreadable, or item in use (hands off)
-bool sprintSafeFor(void* player) {
-    if (!player || !itemUseStateKnown()) return false;
-    std::uint32_t flags = 0;
-    if (!memory::NativeMemory::instance().read(
-            reinterpret_cast<std::uintptr_t>(player) + UsingItemFlagOffset,
-            &flags, sizeof(flags))) {
-        return false;
-    }
-    return (flags & UsingItemFlagMask) == 0;
-}
-
 void* hookedNormalTick(void* player) {
     void* result = oldNormalTick ? oldNormalTick(player) : nullptr;
     if (!player) return result;
 
-    if (on("AlwaysSprint") && sprintSafeFor(player)) {
+    // Sprint and step are simple LocalPlayer calls with verified 1.21.111 addresses.
+    if (on("AlwaysSprint")) {
         using Fn = void (*)(void*, bool);
         reinterpret_cast<Fn>(fn(SetSprinting))(player, true);
     }
+    if (on("Step")) {
+        using Fn = void (*)(void*, float);
+        reinterpret_cast<Fn>(fn(InitMaxAutoStep))(player, 1.0625f);
+    }
 
-    // Melody ports (KillAura2, ECSDump) run after the vanilla-behaving logic
-    // above; the Kotlin module dispatch happens inside melody::onNormalTick so
-    // everything shares one world-stability gate.
-    melody::onNormalTick(player);
+    if (on("Fly") && getAbilities && getLayer && setAbility) {
+        void* abilities = getAbilities(player);
+        void* layer = abilities ? getLayer(abilities, 2) : nullptr;
+        if (layer) setAbility(layer, 10, true);
+    }
+
+    if (on("KillAura") && getRuntimeActors && attack && isAttackable && getHealth) {
+        void* level = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetLevelField);
+        void* gameMode = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetGameModeField);
+        void* posField = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(player) + GetPositionField);
+        if (level && gameMode && posField) {
+            const float px = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(posField));
+            const float py = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(posField) + 4);
+            const float pz = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(posField) + 8);
+            void* best = nullptr;
+            float bestDist2 = 16.0f; // 4 blocks squared
+            for (void* actor : getRuntimeActors(level)) {
+                if (!actor || actor == player || !isAttackable(actor) || getHealth(actor) <= 0) continue;
+                void* targetPos = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(actor) + GetPositionField);
+                if (!targetPos) continue;
+                const float dx = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(targetPos)) - px;
+                const float dy = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(targetPos)+4) - py;
+                const float dz = *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(targetPos)+8) - pz;
+                const float d2 = dx*dx + dy*dy + dz*dz;
+                if (d2 < bestDist2) { bestDist2 = d2; best = actor; }
+            }
+            if (best) attack(gameMode, best, true);
+        }
+    }
     return result;
 }
 
@@ -88,22 +98,25 @@ bool initialize() {
     if (!memory::NativeMemory::instance().locateModule("libminecraftpe.so", info)) return false;
     base = info.base;
 
-    if (!melody::initialize(base)) {
-        __android_log_print(ANDROID_LOG_ERROR, TAG, "Melody modules failed to bind");
-        return false;
-    }
+    // Only bind ability helpers when the offset table supplies non-zero values.
+    if (GetAbilities) getAbilities = reinterpret_cast<GetAbilitiesFn>(fn(GetAbilities));
+    if (GetLayer)     getLayer     = reinterpret_cast<GetLayerFn>(fn(GetLayer));
+    if (SetAbility)   setAbility   = reinterpret_cast<SetAbilityFn>(fn(SetAbility));
+
+    getRuntimeActors = reinterpret_cast<GetRuntimeActorFn>(fn(GetRuntimeActor));
+    attack           = reinterpret_cast<AttackFn>(fn(Attack));
+    isAttackable     = reinterpret_cast<IsAttackableFn>(fn(IsAttackable));
+    getHealth        = reinterpret_cast<GetHealthFn>(fn(GetHealth));
+
     if (DobbyHook(fn(NormalTick), reinterpret_cast<void*>(hookedNormalTick), reinterpret_cast<void**>(&oldNormalTick)) != RS_SUCCESS) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "NormalTick hook failed");
         return false;
     }
-    // SpeedHack stays hooked as a pure pass-through ON PURPOSE: the hook set is
-    // part of the verified boot chain (docs/DO_NOT_BREAK.md). The Speed module
-    // is no longer exposed, so this only ever calls the original exactly once.
     if (DobbyHook(fn(SpeedHack), reinterpret_cast<void*>(hookedSpeed), reinterpret_cast<void**>(&oldSpeed)) != RS_SUCCESS) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "Speed hook failed");
         return false;
     }
-    __android_log_print(ANDROID_LOG_INFO, TAG, "1.21.111 gameplay hooks installed: NormalTick + SpeedHack(passthrough)");
+    __android_log_print(ANDROID_LOG_INFO, TAG, "1.21.111 gameplay hooks installed: Speed/Fly/KillAura/Step/Sprint");
     return true;
 }
 void shutdown() {}

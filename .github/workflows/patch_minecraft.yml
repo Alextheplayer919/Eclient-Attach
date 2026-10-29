@@ -9,9 +9,7 @@ on:
         default: "Minecraft-1.21.111-arm64-v8a.apk"
 
 permissions:
-  # write: the final step publishes the patched APK to the `patched` release
-  # so a phone can grab it from one fixed URL (no artifact-zip unpacking).
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -273,11 +271,7 @@ jobs:
           echo "Downloading:"
           echo "${{ inputs.asset_name }}"
 
-          # Pinned to the dedicated input release: without a tag,
-          # `gh release download` resolves the LATEST release — which would
-          # become our own `patched` output release after the first run and
-          # break every subsequent build.
-          gh release download "minecraft-input" \
+          gh release download \
             --repo "${{ github.repository }}" \
             --pattern "${{ inputs.asset_name }}" \
             --dir "$RUNNER_TEMP/minecraft"
@@ -492,21 +486,6 @@ jobs:
       # PATCH MINECRAFT
       # ============================================================
 
-      # ============================================================
-      # KOTLIN MODULE LAYER
-      # Compile kotlin-modules/ (plain Kotlin) -> classes2.dex; the patch
-      # step injects it via apktool's unknown/ passthrough. C++ modules are
-      # unaffected; the two share the in-game menu and tick.
-      # ============================================================
-
-      - name: Build Kotlin modules to dex
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x tools/build-kotlin-modules.sh
-          tools/build-kotlin-modules.sh
-          echo "KOTLIN_DEX_FILE=$PWD/kotlin-modules/build/classes2.dex" >> "$GITHUB_ENV"
-
       - name: Patch Minecraft APK
         shell: bash
         run: |
@@ -703,75 +682,27 @@ jobs:
           echo "=============================================="
 
       # ============================================================
-      # PUBLISH PATCHED APK — NEW RELEASE PER BUILD
-      # ============================================================
-      # Every run creates its own release (tag patched-r<run_number>), so
-      # build history and rollbacks are preserved instead of clobbering one
-      # asset. The newest build is marked `latest`, giving a stable phone URL:
-      #   releases/latest/download/eclient-minecraft-1.21.111-arm64.apk
-      # Old patched-r* releases are pruned, newest 5 kept (each APK is
-      # ~323 MB). Other releases (minecraft-input, runtime-*) are never
-      # touched by the pruner.
+      # UPLOAD PATCHED APK
       # ============================================================
 
-      - name: Publish patched APK to a new per-build release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          APK="out/eclient-minecraft-1.21.111-arm64.apk"
-
-          test -s "$APK"
-
-          TAG="patched-r${{ github.run_number }}"
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-
-          gh release create "$TAG" "$APK" \
-            --title "Patched Minecraft 1.21.111 — build r${{ github.run_number }}" \
-            --notes "CI build r${{ github.run_number }} from commit ${SHORT_SHA}. Stock 1.21.111 ARM64 input (SHA-pinned). Signed with the shared debug key (v1+v2+v3) — installs over any previous build of this repo." \
-            --latest
-
-          echo "Published:"
-          gh release view "$TAG"
+      - name: Upload patched Minecraft APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: E-Client-Minecraft-1.21.111-ARM64
+          path: out/eclient-minecraft-1.21.111-arm64.apk
+          if-no-files-found: error
+          retention-days: 30
 
       # ============================================================
-      # PRUNE OLD PER-BUILD RELEASES
+      # UPLOAD NATIVE BUILD
       # ============================================================
 
-      - name: Prune old patched releases (keep newest 5)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          KEEP=5
-
-          gh api "repos/${{ github.repository }}/releases?per_page=100" \
-            --jq '.[].tag_name' \
-            | grep -E '^patched-r[0-9]+$' \
-            | sort -t r -k 2 -nr \
-            > /tmp/patched_tags.txt || true
-
-          COUNT=0
-          while IFS= read -r TAG_TO_PRUNE; do
-
-            if [ -z "$TAG_TO_PRUNE" ]; then
-              continue
-            fi
-
-            COUNT=$((COUNT + 1))
-
-            if [ "$COUNT" -le "$KEEP" ]; then
-              continue
-            fi
-
-            echo "Pruning old build release: $TAG_TO_PRUNE"
-            gh release delete "$TAG_TO_PRUNE" --yes || true
-
-          done < /tmp/patched_tags.txt
-
-          echo "Kept newest $KEEP patched builds."
-
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: E-Client-Native-ARM64
+          path: |
+            build/native-android/**/*.so
+            build/native-android/**/*.a
+          if-no-files-found: warn
+          retention-days: 30

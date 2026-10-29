@@ -15,15 +15,9 @@ endif()
 
 set(ECLIENT_COMMON_SOURCES
     src/main.cpp
-    src/bridge/DebugFiles.cpp
     src/bridge/GameBridge.cpp
     src/bridge/LoopbackBridge.cpp
-    src/bridge/AgentState.cpp
-    src/kotlin/KotlinBridge.cpp
-    src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
-    src/modules/FlyInput.cpp
-    src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
     src/profile/PatchManager.cpp
@@ -41,28 +35,50 @@ target_link_options(eclient_runtime PRIVATE "-Wl,-z,max-page-size=16384")
 add_library(eclient_host SHARED
     src/host/JniBootstrap.cpp
     src/host/MinecraftHost.cpp
-    src/bridge/DebugFiles.cpp
+    src/gui/InGameGui.cpp
     src/bridge/GameBridge.cpp
-    src/bridge/AgentState.cpp
-    src/kotlin/KotlinBridge.cpp
-    src/memory/ComponentWalk.cpp
     src/memory/NativeMemory.cpp
-    src/modules/FlyInput.cpp
-    src/modules/MelodyModules.cpp
     src/modules/ModuleManager.cpp
     src/modules/GameplayModules.cpp
     src/profile/PatchManager.cpp
+    src/input/NativeInputHook.cpp
+    ../vendor/imgui/imgui.cpp
+    ../vendor/imgui/imgui_draw.cpp
+    ../vendor/imgui/imgui_tables.cpp
+    ../vendor/imgui/imgui_widgets.cpp
+    ../vendor/imgui/backends/imgui_impl_opengl3.cpp
+    ../vendor/imgui/backends/imgui_impl_android.cpp
     ../vendor/arm64hook/And64InlineHook.cpp
 )
 target_include_directories(eclient_host PRIVATE
     src
+    ../vendor/imgui
+    ../vendor/imgui/backends
     ../vendor/dobby
     ../vendor/arm64hook
 )
 target_compile_options(eclient_host PRIVATE -Wall -Wextra -fvisibility=hidden -fvisibility-inlines-hidden)
+# Dear ImGui's Android/GLES backend and the Dobby/And64 sources are vendored:
+# silence their warnings instead of failing the build on them.
+# Minecraft Bedrock renders with GLES 3, so the ImGui renderer must be built for ES3
+# (without this it falls back to the desktop-GL loader, which does not exist on Android).
+set_source_files_properties(
+    ../vendor/imgui/imgui.cpp
+    ../vendor/imgui/imgui_draw.cpp
+    ../vendor/imgui/imgui_tables.cpp
+    ../vendor/imgui/imgui_widgets.cpp
+    ../vendor/imgui/backends/imgui_impl_opengl3.cpp
+    ../vendor/imgui/backends/imgui_impl_android.cpp
+    ../vendor/arm64hook/And64InlineHook.cpp
+    PROPERTIES COMPILE_FLAGS "-w")
+target_compile_definitions(eclient_host PRIVATE IMGUI_IMPL_OPENGL_ES3)
 target_link_options(eclient_host PRIVATE "-Wl,-z,max-page-size=16384")
 
 find_library(log-lib log REQUIRED)
+find_library(egl-lib EGL REQUIRED)
+find_library(gles-lib GLESv2 REQUIRED)
+find_library(gles3-lib GLESv3 REQUIRED)
+find_library(android-lib android REQUIRED)
 
 set(DOBBY_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/dobby/libdobby.a)
 
@@ -72,6 +88,10 @@ target_link_libraries(eclient_runtime PRIVATE
 )
 target_link_libraries(eclient_host PRIVATE
     ${log-lib}
+    ${egl-lib}
+    ${gles-lib}
+    ${gles3-lib}
+    ${android-lib}
     ${DOBBY_LIB}
 )
 
