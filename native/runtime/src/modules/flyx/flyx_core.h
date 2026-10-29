@@ -16,6 +16,9 @@ typedef struct {
     FlyXBool bypass_phase, alternate_tick;
 } FlyXCore;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Implemented by the existing native engine's libm PLTs, or libm in host tests.
 float spiral_flyx_sin(float angle);
 float spiral_flyx_cos(float angle);
@@ -23,4 +26,7 @@ float spiral_flyx_sqrt(float value);
 void spiral_flyx_reset(FlyXCore *state);
 FlyXBool spiral_flyx_plan(FlyXCore *state, const FlyXInput *input,
                         float up_h_factor, float up_v_factor, FlyXVec3 *result);
+#ifdef __cplusplus
+}
+#endif
 #endif
