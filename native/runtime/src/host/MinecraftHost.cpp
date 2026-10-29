@@ -14,6 +14,7 @@
 #include "../input/NativeInputHook.h"
 #include "../profile/PatchManager.h"
 #include "../modules/GameplayModules.h"
+#include "../modules/ModuleManager.h"
 
 namespace eclient_runtime::host {
 namespace {
