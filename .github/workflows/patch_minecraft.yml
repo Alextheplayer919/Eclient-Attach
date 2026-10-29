@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ASSET_NAME: ${{ inputs.asset_name || 'Minecraft-1.21.111-arm64-v8a.apk' }}
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -268,14 +271,14 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/minecraft"
 
-          APK="$RUNNER_TEMP/minecraft/${{ inputs.asset_name }}"
+          APK="$RUNNER_TEMP/minecraft/${{ env.ASSET_NAME }}"
 
           echo "Downloading:"
-          echo "${{ inputs.asset_name }}"
+          echo "${{ env.ASSET_NAME }}"
 
           gh release download \
             --repo "${{ github.repository }}" \
-            --pattern "${{ inputs.asset_name }}" \
+            --pattern "${{ env.ASSET_NAME }}" \
             --dir "$RUNNER_TEMP/minecraft"
 
           if [ ! -f "$APK" ]; then
@@ -305,7 +308,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$RUNNER_TEMP/minecraft/${{ inputs.asset_name }}"
+          APK="$RUNNER_TEMP/minecraft/${{ env.ASSET_NAME }}"
 
           EXPECTED_SHA256="69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59"
 
@@ -336,7 +339,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$RUNNER_TEMP/minecraft/${{ inputs.asset_name }}"
+          APK="$RUNNER_TEMP/minecraft/${{ env.ASSET_NAME }}"
           EXTRACT="$RUNNER_TEMP/minecraft/original"
 
           rm -rf "$EXTRACT"
@@ -496,7 +499,7 @@ jobs:
           # Make absolutely certain Apktool is available in this step.
           export PATH="$HOME/.local/bin:$PATH"
 
-          APK="$RUNNER_TEMP/minecraft/${{ inputs.asset_name }}"
+          APK="$RUNNER_TEMP/minecraft/${{ env.ASSET_NAME }}"
           OUTPUT="$PWD/out/eclient-minecraft-1.21.111-arm64.apk"
 
           test -f "$APK"
