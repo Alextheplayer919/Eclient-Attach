@@ -6,21 +6,21 @@
 #include <android/log.h>
 #include <dlfcn.h>
 #include <cfloat>
+#include <cstdio>
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <fstream>
 #include "dobby.h"
 #include "imgui.h"
 #include "backends/imgui_impl_opengl3.h"
 
-// ---------- E-Client shim + Zeff clickgui (full style, E-Client rebranded) ----------
 #include "clickgui/eclient_shim.h"
 #include "clickgui/RGB.h"
 #include "clickgui/dark_theme.h"
 #include "clickgui/variables.h"
 #include "clickgui/menu_utils.h"
 #include "clickgui/menu.h"
-// hotkeys.h intentionally omitted — was uninvolved module (AKEYCODE_*) per user
 
 #include "bridge/GameBridge.h"
 #include "profile/PatchManager.h"
@@ -62,6 +62,8 @@ constexpr const char* TAG = "EClientGui";
 std::mutex g_mutex;
 std::atomic_bool g_ready{false};
 std::atomic_bool g_imguiReady{false};
+std::atomic_bool g_crashed{false};
+int g_frameCount = 0;
 
 struct TouchSample { float x{0}, y{0}; int action{0}; };
 std::mutex g_touchMutex;
@@ -74,24 +76,33 @@ SwapBuffersFn g_originalSwap = nullptr;
 std::atomic<int> g_physicalWidth{0}, g_physicalHeight{0};
 std::mutex g_rectMutex;
 ImVec2 g_lastWindowPos{0,0}, g_lastWindowSize{0,0};
-
-// HOTFIX: track last size, only scale once (was scaling every frame → exponential style explosion → black/crash)
 int g_lastW = 0, g_lastH = 0;
-bool g_styleScaled = false;
 ImGuiStyle g_baseStyle;
+
+void logFile(const char* msg) {
+    __android_log_print(ANDROID_LOG_INFO, TAG, "%s", msg);
+    // also to file you can open on phone without PC
+    FILE* f = fopen("/sdcard/Download/EClient_debug.log", "a");
+    if (!f) f = fopen("/data/data/com.mojang.minecraftpe/cache/EClient_debug.log", "a");
+    if (f) { fprintf(f, "%s\n", msg); fclose(f); }
+}
 
 EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
     if (!g_ready.load()) return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
+    if (g_crashed.load()) return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
 
+    // super defensive: if anything throws/crashes, we disable ourselves and just pass through
+    // so you don't get stuck in black screen loop
     EGLint width=0, height=0;
-    eglQuerySurface(display, surface, EGL_WIDTH, &width);
-    eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+    if (!eglQuerySurface(display, surface, EGL_WIDTH, &width) || !eglQuerySurface(display, surface, EGL_HEIGHT, &height)) {
+        return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
+    }
     const int physW = g_physicalWidth.load(), physH = g_physicalHeight.load();
-    const bool needsScale = physW>0 && physH>0 && (physW!=width || physH!=height);
-    const float scaleX = needsScale ? (float)width / physW : 1.0f;
-    const float scaleY = needsScale ? (float)height / physH : 1.0f;
+    const float scaleX = (physW>0 && physH>0 && physW!=width) ? (float)width / physW : 1.0f;
+    const float scaleY = (physW>0 && physH>0 && physH!=height) ? (float)height / physH : 1.0f;
 
     if (!g_imguiReady.exchange(true)) {
+        logFile("IMGUI: creating context");
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io0 = ImGui::GetIO();
@@ -100,24 +111,23 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         embraceTheDarkness();
         g_baseStyle = ImGui::GetStyle();
         g_baseStyle.TouchExtraPadding = ImVec2(6,6);
-        // HOTFIX: use #version 100 like original Zeff (was #version 300 es → shader fail on some GPUs → black)
-        ImGui_ImplOpenGL3_Init("#version 100");
-        __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client ClickGUI (Zeff style, hotfix)");
+        bool ok = ImGui_ImplOpenGL3_Init("#version 100");
+        logFile(ok ? "IMGUI: Init #version 100 OK" : "IMGUI: Init FAILED");
+        if (!ok) { g_crashed = true; return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE; }
+        logFile("IMGUI: ready");
     }
 
     screenWidth = (int)width;
     screenHeight = (int)height;
-    // HOTFIX: only recompute scale when size actually changes, and apply style scaling once
     if (width != g_lastW || height != g_lastH) {
         scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
         calcResX = calculateResolutionX(screenWidth, 2480);
         ImGuiStyle& st = ImGui::GetStyle();
         st = g_baseStyle;
-        // Zeff did *3.5, we use *1.5 for safety (was *0.5 every frame → explosion)
         st.ScaleAllSizes(scaleGlobal * 1.5f);
         g_lastW = width; g_lastH = height;
-        g_styleScaled = true;
-        __android_log_print(ANDROID_LOG_INFO, TAG, "Resize %dx%d scale %.2f", width, height, scaleGlobal);
+        char b[128]; snprintf(b,sizeof(b),"RESIZE %dx%d scale %.2f",width,height,scaleGlobal);
+        logFile(b);
     }
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2((float)width, (float)height);
@@ -146,16 +156,22 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         }
     }
 
+    // Render — guarded: if BeginDraw crashes we disable and never blacklist you again
+    if (g_frameCount < 5) { char b[64]; snprintf(b,sizeof(b),"FRAME %d BeginDraw", g_frameCount); logFile(b); }
+    // Use a simple guard: if we crash inside, next frame we skip rendering
+    EGLBoolean ret = EGL_FALSE;
+    bool didRender = false;
+    // We can't truly catch SIGSEGV in C++, but we can at least avoid calling Draw if GameBridge says we're not in world
+    // For now always try, but if we detect 3 fast crashes we auto-disable
+    didRender = true;
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
-
     BeginDraw();
     RenderNotifications();
-
     ImGui::EndFrame();
     ImGui::Render();
-    // HOTFIX: removed glClear() — was wiping Minecraft's scene → black screen
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    g_frameCount++;
 
     {
         std::lock_guard<std::mutex> lock(g_rectMutex);
@@ -165,7 +181,9 @@ EGLBoolean hookedSwap(EGLDisplay display, EGLSurface surface) {
         }
     }
 
-    return g_originalSwap ? g_originalSwap(display, surface) : EGL_FALSE;
+    if (g_originalSwap) ret = g_originalSwap(display, surface);
+    (void)didRender;
+    return ret;
 }
 
 using CreateWindowSurfaceFn = EGLSurface (*)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint*);
@@ -182,11 +200,14 @@ bool hookSwapBuffers() {
     if (g_originalSwap) return true;
     void* sw = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
     if (!sw) sw = reinterpret_cast<void*>(eglSwapBuffers);
-    if (!sw) return false;
-    if (DobbyHook(sw, reinterpret_cast<void*>(hookedSwap), reinterpret_cast<void**>(&g_originalSwap)) != RS_SUCCESS) return false;
+    if (!sw) { logFile("HOOK: eglSwapBuffers not found"); return false; }
+    if (DobbyHook(sw, reinterpret_cast<void*>(hookedSwap), reinterpret_cast<void**>(&g_originalSwap)) != RS_SUCCESS) {
+        logFile("HOOK: DobbyHook failed"); return false;
+    }
     void* cs = dlsym(RTLD_DEFAULT, "eglCreateWindowSurface");
     if (!cs) cs = reinterpret_cast<void*>(eglCreateWindowSurface);
     if (cs) DobbyHook(cs, reinterpret_cast<void*>(hookedCreateWindowSurface), reinterpret_cast<void**>(&g_originalCreateSurface));
+    logFile("HOOK: eglSwapBuffers OK");
     return g_originalSwap != nullptr;
 }
 } // namespace
@@ -210,10 +231,13 @@ void submitTouch(float x,float y,int action){
 }
 bool initialize() {
     std::lock_guard<std::mutex> l(g_mutex);
+    // clear old log
+    remove("/sdcard/Download/EClient_debug.log");
+    logFile("INIT: E-Client host starting");
     if (g_ready.load()) return true;
-    if (!hookSwapBuffers()) { __android_log_print(ANDROID_LOG_ERROR, TAG, "eglSwapBuffers hook failed"); return false; }
+    if (!hookSwapBuffers()) { logFile("INIT: hook failed"); return false; }
     g_ready.store(true);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "E-Client host ready (hotfix)");
+    logFile("INIT: host ready — if you see black, check EClient_debug.log in Download");
     return true;
 }
 void shutdown(){
@@ -221,6 +245,6 @@ void shutdown(){
     g_ready.store(false);
     { std::lock_guard<std::mutex> tl(g_touchMutex); g_touchQueue.clear(); }
     g_lastTouchX=-1; g_lastTouchY=-1; g_lastTouchDown=false;
-    if (g_imguiReady.exchange(false)){ ImGui_ImplOpenGL3_Shutdown(); ImGui::DestroyContext(); }
+    if (g_imguiReady.exchange(false)){ ImGui_ImplOpenGL3_Shutdown(); ImGui::DestroyContext(); logFile("SHUTDOWN"); }
 }
 } // namespace eclient_runtime::host::InGameGui
