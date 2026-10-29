@@ -341,9 +341,13 @@ void setCollapsed(bool) {}
 bool isCollapsed() { return false; }
 bool isTouchOnGui(float x, float y) {
     std::lock_guard<std::mutex> l(g_rectMutex);
-    if (g_lastWindowSize.x<=0) return false;
-    return x>=g_lastWindowPos.x && x<=g_lastWindowPos.x+g_lastWindowSize.x &&
-           y>=g_lastWindowPos.y && y<=g_lastWindowPos.y+g_lastWindowSize.y;
+    // FIX r61: rect is 0 until first frame renders → first DOWN never counted as onGui,
+    // so drag/switch never started. Assume center area is GUI until rect known.
+    if (g_lastWindowSize.x<=0) return true;
+    // expand hit by 20px for finger slop + extra for bigger 185-wide SidePanel
+    const float pad = 25 * std::max(1.0f, scaleGlobal);
+    return x>=g_lastWindowPos.x - pad && x<=g_lastWindowPos.x+g_lastWindowSize.x + pad &&
+           y>=g_lastWindowPos.y - pad && y<=g_lastWindowPos.y+g_lastWindowSize.y + pad;
 }
 bool menuOpen() { return true; }
 void setPhysicalWindowSize(int w,int h){ g_physicalWidth.store(w); g_physicalHeight.store(h); }

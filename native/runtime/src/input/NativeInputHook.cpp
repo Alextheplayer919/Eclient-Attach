@@ -7,6 +7,7 @@
 #include <atomic>
 
 #include "dobby.h"
+#include "imgui.h"
 #include "gui/InGameGui.h"
 #include "bridge/GameBridge.h"
 
@@ -51,22 +52,14 @@ int32_t hookedGetEvent(AInputQueue* queue, AInputEvent** outEvent) {
     const float x = AMotionEvent_getX(ev, idx);
     const float y = AMotionEvent_getY(ev, idx);
 
-    // Hit-test against last known GUI rect (collapsed = small bar, expanded = full)
-    // If not on GUI, let game handle it (pass through). If on GUI, route to ImGui and consume.
     bool onGui = eclient_runtime::host::InGameGui::isTouchOnGui(x, y);
-    // Also treat any touch while finger is already down on GUI as GUI (for drag/scroll continuity)
-    // The GUI itself tracks down state, but we need to ensure move/up after a down on GUI stays routed.
-    // For simplicity, if any touch queue has pending down, consider drags as GUI — but we approximate
-    // by checking if last touch was on GUI via isTouchOnGui tracking internally. For now, direct hit-test
-    // is sufficient because ImGui will have captured the mouse button.
-    if (!onGui) {
-        // Special case: if ImGui has mouse button down (dragging scrollbar), keep routing moves
-        // even if finger slightly leaves window. We approximate by checking g_menuOpen state:
-        // when expanded, ImGui may be dragging — let the existing queue handle it via pos.
-        // For now, only consume when directly on GUI to avoid blocking game play.
-        return result;
+    bool wantCapture = false;
+    if (ImGui::GetCurrentContext()) {
+        ImGuiIO& io = ImGui::GetIO();
+        wantCapture = io.WantCaptureMouse || ImGui::IsAnyItemActive() || io.MouseDown[0];
     }
 
+    // Always give ImGui the pos so hover works even when not consumed
     switch (masked) {
         case AMOTION_EVENT_ACTION_DOWN:
         case AMOTION_EVENT_ACTION_POINTER_DOWN:
@@ -84,7 +77,9 @@ int32_t hookedGetEvent(AInputQueue* queue, AInputEvent** outEvent) {
             break;
     }
 
-    // Consume so Minecraft does not also process the gesture.
+    // Consume only when actually on GUI or ImGui is dragging — otherwise game keeps its touches
+    bool consume = onGui || wantCapture;
+    if (!consume) return result;
     AInputQueue_finishEvent(queue, ev, 1);
     *outEvent = nullptr;
     return -1;
