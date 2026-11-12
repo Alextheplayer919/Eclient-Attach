@@ -23,7 +23,9 @@ replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/a
             saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));
             lastSave = now;
         }''')
-replace('        BeginDraw();', '''        BeginDraw();
+replace('        BeginDraw();', '''        eclient_fly2_adapter::beginFrame();
+        BeginDraw();
+        eclient_fly2_adapter::finishFrame();
         if (g_window) {
             eclientX.store((int)g_window->Pos.x); eclientY.store((int)g_window->Pos.y);
             eclientW.store((int)g_window->Size.x); eclientH.store((int)g_window->Size.y);
@@ -31,6 +33,9 @@ replace('        BeginDraw();', '''        BeginDraw();
 # Queue touch transitions on the GL thread for ImGui's event processing: directly
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
+replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"')
+replace('    return old_NormalTick(thiz);\n}\n\nvoid *(*old_PlayerAuthInputPacket)', '    void* result = old_NormalTick(thiz);\n    eclient_fly2_adapter::tick(thiz);\n    return result;\n}\n\nvoid *(*old_PlayerAuthInputPacket)')
+replace('oxorany("§l§0[§5Apollon Client§0]§r Good Luck, Have Fun!")', 'oxorany("[E-Client] Good luck and have fun!")')
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)
 s=s[:start]+'''JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject) {
@@ -89,7 +94,26 @@ menu_replace('\t\t\t\t                ImGui::PopID();\n\t\t\t\t\t\t\t}', '\t\t\t
 menu_replace('\t\t\t\t\t\tImGui::EndChild();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));', '\t\t\t\t\t\tImGui::EndChild();\n                        ImGui::PopStyleColor();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));')
 menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))')
 menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));\n\t\t\t\t    ImGui::EndTabBar();', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t    ImGui::EndTabBar();')
+# Remove the old intro and social pages, keeping the one-time startup credit in
+# the Android lifecycle adapter. Keep only E-Client/version information in Info.
+intro_start = m.index('\t if (!readMe) {')
+intro_end = m.index('\t  } else  {\n     #if defined(__aarch64__)', intro_start)
+m = m[:intro_start] + m[intro_end + len('\t  } else  {\n') :]
+menu_replace('        ImGui::End();\n\t}\n        ImGui::PopStyleVar();', '        ImGui::End();\n        ImGui::PopStyleVar();')
+start_info = m.index('            case 7:')
+end_info = m.index('                break;', start_info)
+m = m[:start_info] + '            case 7:\n                ImGui::Text("E-Client | Minecraft 1.21.111");\n' + m[end_info:]
+for social_header in ('YT', 'Telegram', 'Discord'):
+    menu_replace(f'#include "Images/{social_header}.h"\n', '')
+for icon in ('youtube', 'telegram', 'discord'):
+    import re
+    m, count = re.subn(r'^.*(?:static GLint ' + icon + r'_icon|if \(!' + icon + r'_icon\)).*\n', '', m, flags=re.M)
+    if count != 2: raise ValueError('social icon source changed: ' + icon)
+menu_replace('\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creativeFly);', '                        eclient_fly2_adapter::draw();\n\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creativeFly);')
 menu.write_text(m)
 mk = jni / 'Android.mk'
-m = mk.read_text().replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
+import shutil
+for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h'):
+    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
+m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
 mk.write_text(m)

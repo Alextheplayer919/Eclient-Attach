@@ -18,6 +18,7 @@ import com.mojang.minecraftpe.platforms.Platform2;
 public final class ApollonOverlay implements Application.ActivityLifecycleCallbacks {
     private static final String TAG = "EClientApollon";
     private static boolean registered;
+    private static boolean credited;
     private final Handler handler = new Handler();
     private Activity activity;
     private WindowManager wm;
@@ -113,7 +114,13 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         }
         touch = null; surface = null; wm = null; activity = null;
     }
-    @Override public void onActivityResumed(Activity a) { mount(a); }
+    @Override public void onActivityResumed(Activity a) {
+        if (!credited) {
+            credited = true;
+            Toast.makeText(a, "E-Client: Apollon source code by ZEFF", Toast.LENGTH_LONG).show();
+        }
+        mount(a);
+    }
     @Override public void onActivityPaused(Activity a) { if (activity == a) unmount(); }
     @Override public void onActivityCreated(Activity a, Bundle b) {}
     @Override public void onActivityStarted(Activity a) {}
