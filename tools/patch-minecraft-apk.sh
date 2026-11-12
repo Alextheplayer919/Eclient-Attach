@@ -28,7 +28,7 @@ DECODED="$WORK/mc"
 BUILT_APK="$WORK/eclient-unsigned.apk"
 ALIGNED_APK="$WORK/eclient-aligned.apk"
 
-LOADER_SOURCE="$ROOT/tools/minecraft-host-loader.smali"
+LOADER_SOURCE="${ECLIENT_LOADER_SOURCE:-$ROOT/tools/minecraft-host-loader.smali}"
 
 LOADER_CLASS="com.rubidiumclient.host.EClientLoaderProvider"
 LOADER_AUTHORITY="com.rubidiumclient.eclientloader"
@@ -466,6 +466,22 @@ echo
 echo "Unsigned APK created:"
 ls -lh "$BUILT_APK"
 echo
+
+# Optional adapter dex, appended before zipalign and signing. Never overwrite a
+# Minecraft dex entry; Android loads all classesN.dex files automatically.
+if [[ -n "${ECLIENT_EXTRA_DEX:-}" ]]; then
+    test -s "$ECLIENT_EXTRA_DEX"
+    python3 - "$BUILT_APK" "$ECLIENT_EXTRA_DEX" <<'PYDEX'
+import re, sys, zipfile
+apk, dex = sys.argv[1:]
+with zipfile.ZipFile(apk, 'a', allowZip64=True) as z:
+    nums = [1 if n == 'classes.dex' else int(m.group(1))
+            for n in z.namelist() if (m := re.fullmatch(r'classes(\d*)\.dex', n)) and (n == 'classes.dex' or m.group(1))]
+    name = f'classes{max(nums, default=1) + 1}.dex'
+    z.write(dex, name, compress_type=zipfile.ZIP_DEFLATED)
+    print('Added adapter:', name)
+PYDEX
+fi
 
 # ============================================================
 # 8. Verify resources.arsc
