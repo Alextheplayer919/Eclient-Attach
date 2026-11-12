@@ -66,6 +66,8 @@ jobs:
           "$RUNNER_TEMP/placement-forward-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/focused_events_test.cpp -o "$RUNNER_TEMP/focused-events-test"
           "$RUNNER_TEMP/focused-events-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/crystal_break_selection_test.cpp -o "$RUNNER_TEMP/crystal-break-selection-test"
+          "$RUNNER_TEMP/crystal-break-selection-test"
       - name: Inspect pinned native placement entrypoints
         run: |
           APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"

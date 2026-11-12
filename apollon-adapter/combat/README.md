@@ -97,3 +97,15 @@ Inventory/offhand changes are **not automatically captured**: their native
 bindings are unknown. Optional buttons record explicitly user-reported markers,
 not verified game events. Log path, coordinate privacy, size and persistence
 caveats are the same as above. No new inventory hook or game action is invoked.
+
+## One-shot crystal break test
+
+Combat > Crystal break test arms a single attack attempt for 10 seconds. On a
+ready game tick it finds the nearest existing crystal actor within 4 blocks and
+calls Apollon's existing GameMode::attack wrapper once, then disarms. It cancels
+on panic, leaving the world, or an unready tick. No actor pointer is retained
+across ticks. "Attack sent" means only that the native call was made, not that
+Minecraft or a server accepted it. This uses an upstream ABI that has not been
+independently verified on device; a crash is possible. Crystal explosions can
+kill players and damage worlds. Use only a disposable test world. It does not
+place crystals, target players, handle inventory or implement Crystal Aura.

@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'const eclient::combat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6}' in main
     assert 'eclient::combat::forwardPlacement(old_GameMode_FastBridge, args)' in main
     assert 'int (*old_GameMode_FastBridge)(int a1' not in main
+    assert 'eclient_crystal_break_test::tick(player, gameReady);' in main
+    assert '"Crystal break test"' in menu
+    assert (jni / 'crystal_break_test.h').exists()
     resize = main.split('Platform2_resize(JNIEnv* env, jobject obj, jint width, jint height) {', 1)[1].split('void Patches()', 1)[0]
     assert 'static bool isLoaded' not in resize
     assert 'ImGui::PopItemWidth();' in transformed
