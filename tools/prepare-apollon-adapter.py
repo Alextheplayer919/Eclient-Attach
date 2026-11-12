@@ -13,6 +13,12 @@ def replace(old, new):
         raise ValueError(f'expected one source occurrence, got {s.count(old)}: {old[:100]!r}')
     s = s.replace(old, new, 1)
 replace('#include <jni.h>', '#include <jni.h>\n#include <atomic>\n#include <android/log.h>')
+# JNI escapes underscores in Java method names as _1. Rename both the forward
+# declaration and definition, otherwise Android cannot resolve imgui_Shutdown.
+old_jni = 'Java_com_mojang_minecraftpe_platforms_Platform2_imgui_Shutdown'
+if s.count(old_jni) != 2:
+    raise ValueError('unexpected imgui_Shutdown JNI declaration count')
+s = s.replace(old_jni, 'Java_com_mojang_minecraftpe_platforms_Platform2_imgui_1Shutdown')
 replace('bool g_Initialized = false;', '''bool g_Initialized = false;
 static std::atomic<int> eclientX{0}, eclientY{0}, eclientW{0}, eclientH{0};''')
 replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/app_lib"));\n        saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));', '''        static auto lastSave = std::chrono::steady_clock::now();

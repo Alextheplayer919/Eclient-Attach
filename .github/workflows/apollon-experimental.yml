@@ -8,6 +8,7 @@ on:
       - tools/build-apollon-apk.sh
       - tools/prepare-apollon-adapter.py
       - tools/check-apollon-target.py
+      - tools/check-apollon-jni.py
       - tools/patch-minecraft-apk.sh
 permissions:
   contents: read

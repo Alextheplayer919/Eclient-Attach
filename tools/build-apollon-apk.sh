@@ -18,6 +18,10 @@ python3 "$ROOT/tools/prepare-apollon-adapter.py" "$JNI"
 "$NDK/ndk-build" NDK_PROJECT_PATH="$WORK" APP_BUILD_SCRIPT="$JNI/Android.mk" \
  NDK_APPLICATION_MK="$JNI/Application.mk" APP_ABI=arm64-v8a \
  NDK_LIBS_OUT="$WORK/libs" NDK_OUT="$WORK/obj" -j"$(getconf _NPROCESSORS_ONLN)"
+# Verify Java/native entrypoints on the actual linked library, before packaging.
+mapfile -t NM_TOOLS < <(find "$NDK/toolchains/llvm/prebuilt" -path '*/bin/llvm-nm' -type f -print)
+[[ ${#NM_TOOLS[@]} == 1 ]] || { echo "Expected one NDK llvm-nm" >&2; exit 1; }
+python3 "$ROOT/tools/check-apollon-jni.py" "${NM_TOOLS[0]}" "$WORK/libs/arm64-v8a/libeclient_host.so"
 mkdir -p "$WORK/classes" "$WORK/dex" "$(dirname "$OUTPUT")"
 mapfile -d '' JAVA_FILES < <(find "$ROOT/apollon-adapter/java" -name '*.java' -print0)
 javac -source 8 -target 8 -classpath "$ANDROID_SDK_ROOT/platforms/android-35/android.jar" \
