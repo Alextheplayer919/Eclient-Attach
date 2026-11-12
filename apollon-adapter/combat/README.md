@@ -109,3 +109,18 @@ Minecraft or a server accepted it. This uses an upstream ABI that has not been
 independently verified on device; a crash is possible. Crystal explosions can
 kill players and damage worlds. Use only a disposable test world. It does not
 place crystals, target players, handle inventory or implement Crystal Aura.
+
+## Client-only simulated practice target
+
+Combat > Practice target spawns a local overlay figure three blocks in front of
+the player, with simulated health and unlimited totems. It is a virtual target,
+not a Minecraft Actor, and is never sent to the server. It does not collide or
+receive real damage. The figure is projected with the same view matrix as ESP,
+so it may draw through blocks. It is removed when the world is unavailable.
+
+Crystal break test can optionally limit its one-shot attack to crystals within
+four blocks of this virtual target. A sent attack request near the target adds
+one simulated pop; this does not verify an explosion, model actual damage or
+consume a real totem. This demonstrates the local target and real break action
+working together; it does not implement Crystal Aura, placement, Baseplate,
+real-player selection, or inventory switching.

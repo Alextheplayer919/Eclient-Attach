@@ -8,12 +8,15 @@
 namespace eclient_crystal_break_test {
 enum Status { idle, armed, sent, expired, cancelled };
 static std::atomic<int> status{idle};
+static std::atomic<bool> targetPractice{false};
 static std::atomic<long long> deadlineNs{0};
 static long long nowNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 static void draw() {
+    bool target = targetPractice.load();
+    if (ImGui::Checkbox("Only crystals near practice target", &target)) targetPractice.store(target);
     const int current = status.load();
     ImGui::TextWrapped("Experimental one-shot: attacks the nearest end crystal within 4 blocks. No player targeting or placement.");
     ImGui::TextWrapped("Explosion can kill you and damage the world or other players. Use a disposable test world. Native attack is not device-verified.");
@@ -41,14 +44,21 @@ static void tick(LocalPlayer* player, bool ready) {
     GameMode* game = player->getGameMode();
     vec3_t* p = player->getPosition();
     if (!level || !game || !p || !std::isfinite(p->x) || !std::isfinite(p->y) || !std::isfinite(p->z)) return;
+    const bool onlyPractice = targetPractice.load();
+    const auto target = eclient_practice_target::snapshot();
+    if (onlyPractice && !target.active) return;
     Mob* nearest = nullptr;
+    float hitX=0, hitY=0, hitZ=0;
     float best = std::numeric_limits<float>::infinity();
     for (auto* actor : level->getRuntimeActorList()) {
         if (!actor || actor == player || actor->getEntityTypeId() != 71) continue;
         vec3_t* pos = actor->getPosition();
         if (!pos) continue;
+        if (onlyPractice && !eclient::combat::closerCrystal(
+            eclient::combat::crystalDistanceSquared(target.x,target.y,target.z,pos->x,pos->y,pos->z),
+            std::numeric_limits<float>::infinity())) continue;
         const float d2 = eclient::combat::crystalDistanceSquared(p->x,p->y,p->z,pos->x,pos->y,pos->z);
-        if (eclient::combat::closerCrystal(d2, best)) { best = d2; nearest = actor; }
+        if (eclient::combat::closerCrystal(d2, best)) { best = d2; nearest = actor; hitX=pos->x; hitY=pos->y; hitZ=pos->z; }
     }
     if (!nearest || nowNs() >= deadlineNs.load()) return;
     int expected = armed;
@@ -56,5 +66,6 @@ static void tick(LocalPlayer* player, bool ready) {
     // Uses the same attack wrapper as Apollon's existing aura modules.
     // This is an attempt, not evidence that the server accepted the attack.
     game->attack(nearest, true);
+    eclient_practice_target::simulateAttack(hitX, hitY, hitZ);
 }
 }
