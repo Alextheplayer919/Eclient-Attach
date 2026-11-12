@@ -24,10 +24,13 @@ replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/a
             lastSave = now;
         }''')
 replace('        BeginDraw();', '''        BeginDraw();
-        if (!panic && g_window) {
+        if (g_window) {
             eclientX.store((int)g_window->Pos.x); eclientY.store((int)g_window->Pos.y);
             eclientW.store((int)g_window->Size.x); eclientH.store((int)g_window->Size.y);
         } else { eclientW.store(0); eclientH.store(0); }''')
+# Queue touch transitions on the GL thread for ImGui's event processing: directly
+# changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
+replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)
 s=s[:start]+'''JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject) {
@@ -61,7 +64,31 @@ validate = 'static bool eclientValidateTarget() {\n#if defined(__aarch64__)\n'+'
 replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
 p.write_text(s)
 menu = jni / 'menu.h'
-m = menu.read_text().replace('The Apollon Client v4.62 | APK (x64 Bit) | Minecraft v1.21.111', 'E-Client | Apollon v4.62 | Minecraft 1.21.111')
+m = menu.read_text()
+def menu_replace(old, new, expected=1):
+    global m
+    if m.count(old) != expected:
+        raise ValueError(f"unexpected menu source occurrence count: {m.count(old)} for {old[:80]!r}")
+    m = m.replace(old, new)
+menu_replace('The Apollon Client v4.62 | APK (x64 Bit) | Minecraft v1.21.111', 'E-Client | Apollon v4.62 | Minecraft 1.21.111')
+# Panic must still disable modules, but should not make the only menu disappear.
+menu_replace('void BeginDraw() {\n    if (!panic) {', 'void BeginDraw() {\n    {')
+menu_replace('\t if (!readMe) {', '\t const int eclientColorDepth = ImGui::GetCurrentContext()->ColorStack.Size;\n\t if (!readMe) {')
+menu_replace('if (ImGui::Begin(OBFUSCATE("Description"), NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {\n\t\t\t g_window = ImGui::GetCurrentWindow();', 'bool eclientDraw = ImGui::Begin(OBFUSCATE("Description"), NULL, ImGuiWindowFlags_NoResize);\n\t\t g_window = ImGui::GetCurrentWindow();\n\t\t if (eclientDraw) {')
+# ImGui::End is mandatory even when a window is collapsed. The upstream source
+# omitted it, and popped the title style by enum value instead of count.
+menu_replace('\t     }\n\t  } else  {\n     #if defined(__aarch64__)', '\t     }\n         ImGui::PopStyleColor(ImGui::GetCurrentContext()->ColorStack.Size - eclientColorDepth);\n         ImGui::End();\n\t  } else  {\n     #if defined(__aarch64__)')
+for title in ('E-Client | Apollon v4.62 | Minecraft 1.21.111', 'The Apollon Client v4.62 | APK (x32 Bit) | Minecraft v1.21.111', 'The Apollon Client v4.62 | APK (x86_64 Bit) | Minecraft v1.21.111'):
+    menu_replace(f'if (ImGui::Begin(OBFUSCATE("{title}"), NULL, ImGuiWindowFlags_NoResize)) {{', f'bool eclientDraw = ImGui::Begin(OBFUSCATE("{title}"), NULL, ImGuiWindowFlags_NoResize);')
+menu_replace('#endif\n\t\tg_window = ImGui::GetCurrentWindow();\n\t\n\t\tImGui::SetWindowSize', '#endif\n\t\tg_window = ImGui::GetCurrentWindow();\n        if (eclientDraw) {\n\t\tImGui::SetWindowSize')
+menu_replace('\t\tImGui::PopStyleVar(ImGuiStyleVar_WindowTitleAlign);\n    }\n\t}\n\t}', '    }\n        ImGui::PopStyleColor(ImGui::GetCurrentContext()->ColorStack.Size - eclientColorDepth);\n        ImGui::End();\n\t}\n        ImGui::PopStyleVar();\n\t}')
+# Balance colors inside the upstream list and introductory tabs before their
+# corresponding child/tab closes, not merely at the end of the outer window.
+menu_replace('\t\t\t\t     ImGui::EndTabItem();\n\t\t\t\t}\n', '\t\t\t\t ImGui::PopStyleColor(2);\n\t\t\t\t ImGui::EndTabItem();\n\t\t\t\t}\n', expected=2)
+menu_replace('\t\t\t\t                ImGui::PopID();\n\t\t\t\t\t\t\t}', '\t\t\t\t                ImGui::PopID();\n                                ImGui::PopStyleColor();\n\t\t\t\t\t\t\t}')
+menu_replace('\t\t\t\t\t\tImGui::EndChild();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));', '\t\t\t\t\t\tImGui::EndChild();\n                        ImGui::PopStyleColor();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));')
+menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))')
+menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));\n\t\t\t\t    ImGui::EndTabBar();', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t    ImGui::EndTabBar();')
 menu.write_text(m)
 mk = jni / 'Android.mk'
 m = mk.read_text().replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
