@@ -148,15 +148,15 @@ menu_replace('\t\t\t\t                ImGui::PopID();\n\t\t\t\t\t\t\t}', '\t\t\t
 menu_replace('\t\t\t\t\t\tImGui::EndChild();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));', '\t\t\t\t\t\tImGui::EndChild();\n                        ImGui::PopStyleColor();\n\t\t\t\t        ImGui::EndTabItem();\n\t\t\t\t    }\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 1, 1, 1));')
 menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 0, 1));\n\t\t\t\t\tif (ImGui::BeginTabItem(OBFUSCATE("Bots")))')
 menu_replace('\t\t\t\t\tImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));\n\t\t\t\t    ImGui::EndTabBar();', '\t\t\t\t\tImGui::PopStyleColor();\n\t\t\t\t    ImGui::EndTabBar();')
-# Remove the old intro and social pages, keeping the one-time startup credit in
-# the Android lifecycle adapter. Keep only E-Client/version information in Info.
+# Remove the old intro and social pages. Source credit remains in Info without
+# a startup toast.
 intro_start = m.index('\t if (!readMe) {')
 intro_end = m.index('\t  } else  {\n     #if defined(__aarch64__)', intro_start)
 m = m[:intro_start] + m[intro_end + len('\t  } else  {\n') :]
 menu_replace('        ImGui::End();\n\t}\n        ImGui::PopStyleVar();', '        ImGui::End();\n        ImGui::PopStyleVar();')
 start_info = m.index('            case 7:')
 end_info = m.index('                break;', start_info)
-m = m[:start_info] + '            case 7:\n                ImGui::Text("E-Client | Minecraft 1.21.111");\n' + m[end_info:]
+m = m[:start_info] + '            case 7:\n                ImGui::Text("E-Client | Minecraft 1.21.111");\n                ImGui::TextWrapped("Based on Apollon source code by ZEFF.");\n' + m[end_info:]
 for social_header in ('YT', 'Telegram', 'Discord'):
     menu_replace(f'#include "Images/{social_header}.h"\n', '')
 for icon in ('youtube', 'telegram', 'discord'):

@@ -31,7 +31,6 @@ import com.mojang.minecraftpe.platforms.Platform2;
 public final class ApollonOverlay implements Application.ActivityLifecycleCallbacks {
     private static final String TAG = "EClientApollon";
     private static boolean registered;
-    private static boolean credited;
     private static boolean logInitialized;
     private static File privateLog;
     private static boolean combatLogInitialized;
@@ -302,10 +301,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         touch = null; surface = null; wm = null; activity = null;
     }
     @Override public void onActivityResumed(Activity a) {
-        if (!credited) {
-            credited = true;
-            Toast.makeText(a, "E-Client: Apollon source code by ZEFF", Toast.LENGTH_LONG).show();
-        }
         handler.removeCallbacks(retryMount);
         resumedActivity = a;
         mountAttempts = 0;

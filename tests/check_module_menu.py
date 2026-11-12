@@ -27,6 +27,9 @@ with tempfile.TemporaryDirectory() as tmp:
     resize = main.split('Platform2_resize(JNIEnv* env, jobject obj, jint width, jint height) {', 1)[1].split('void Patches()', 1)[0]
     assert 'static bool isLoaded' not in resize
     assert 'ImGui::PopItemWidth();' in transformed
+    assert transformed.count('Based on Apollon source code by ZEFF.') == 1
+    overlay = (root / 'apollon-adapter/java/com/rubidiumclient/host/ApollonOverlay.java').read_text()
+    assert 'Apollon source code by ZEFF' not in overlay
     for category in (0, 1, 2, 4, 6):
         assert not re.search(r'case\s+' + str(category) + r'\s*:', transformed), category
     for category in (3, 5, 7): assert re.search(r'case\s+' + str(category) + r'\s*:', transformed), category
