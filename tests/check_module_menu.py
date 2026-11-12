@@ -24,6 +24,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclientBaseStyle = ImGui::GetStyle();' in main
     assert 'style = eclientBaseStyle;' in main
     assert 'std::max(style.ScrollbarSize, 18.0f)' in main
+    assert 'const eclient::combat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6}' in main
+    assert 'eclient::combat::forwardPlacement(old_GameMode_FastBridge, args)' in main
+    assert 'int (*old_GameMode_FastBridge)(int a1' not in main
     resize = main.split('Platform2_resize(JNIEnv* env, jobject obj, jint width, jint height) {', 1)[1].split('void Patches()', 1)[0]
     assert 'static bool isLoaded' not in resize
     assert 'ImGui::PopItemWidth();' in transformed

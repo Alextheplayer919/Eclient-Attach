@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include "block_names.h"
 #include "base_search.h"
+#include "placement_forward.h"
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
 static std::mutex logMutex;
@@ -19,7 +20,7 @@ static void draw() {
     bool on = enabled.load();
     if (ImGui::Button(on ? "Stop diagnostics" : "Start diagnostics")) enabled.store(!on);
     ImGui::TextWrapped("Read-only test: manually place and break crystals and obsidian. This is not Crystal Aura or Fake Player.");
-    ImGui::TextWrapped("Log: Downloads/combat-test.txt. It includes nearby entity types, relative locations and block observations, not player names.");
+    ImGui::TextWrapped("Log: Downloads/combat-test.txt. Placement calls can include block coordinates; no player names are logged.");
 }
 // Match Apollon's Xray hook: BlockType+8 is a native std::string containing
 // a tile description name. Validate both object and characters before use.
@@ -41,6 +42,30 @@ static std::string blockName(BlockType* type) {
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == ':' || c == '-')) return {};
     }
     return std::string(name, length);
+}
+// Placement candidate was identified in the pinned binary. Log only while
+// diagnostics are enabled; never change the arguments or call behavior.
+static void placement(const eclient::combat::PlacementArgs& args, std::uint64_t result, bool repeated) {
+    if (!enabled.load()) return;
+    std::lock_guard<std::mutex> lock(logMutex);
+    if (path.empty()) return;
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    if (std::ftell(f) > 1024*1024) { std::fclose(f); f = std::fopen(path.c_str(), "w"); if (!f) return; }
+    struct Int3 { int x,y,z; } pos{};
+    struct Float3 { float x,y,z; } hit{};
+    const bool positionRead = eclient::fly2::probe::read(args.a2, pos);
+    const bool vectorRead = eclient::fly2::probe::read(args.a4, hit);
+    // a2 is a position-like pointer in the disassembly; a4's role and the
+    // rest of the signature remain candidates, not confirmed semantics.
+    std::fprintf(f, "time=%lld placement_call arg3=%u arg6=%u result=%llu repeated=%d arg1_present=%d arg5_present=%d",
+        (long long)std::time(nullptr), args.a3, args.a6, (unsigned long long)result, repeated ? 1 : 0,
+        args.a1 != 0 ? 1 : 0, args.a5 != 0 ? 1 : 0);
+    if (positionRead) std::fprintf(f," candidate_block=%d,%d,%d",pos.x,pos.y,pos.z);
+    if (vectorRead && std::isfinite(hit.x) && std::isfinite(hit.y) && std::isfinite(hit.z))
+        std::fprintf(f," candidate_vector=%.3f,%.3f,%.3f",hit.x,hit.y,hit.z);
+    std::fprintf(f,"\n");
+    std::fclose(f);
 }
 static void tick(LocalPlayer* player, bool ready) {
     if (!enabled.load() || !ready || !player || panic || inMenu) return;

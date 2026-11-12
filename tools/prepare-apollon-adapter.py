@@ -89,6 +89,26 @@ helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool game
 '''
 s = s[:normal_start] + helper + normal + s[normal_end:]
 
+# The ARM64 binary's placement entry uses x0-x2, w3, x4-x5 and w6.
+# Upstream's six int arguments truncate pointers and drop w6; preserve the
+# full registers. Argument semantics and safe synthetic invocation are NOT known.
+replace('''int (*old_GameMode_FastBridge)(int a1, int a2, int *a3, int a4, int a5, int a6);
+int GameMode_FastBridge(int a1, int a2, int *a3, int a4, int a5, int a6) {
+\tif (panic) return old_GameMode_FastBridge(a1, a2, a3, a4, a5, a6);
+\tif (fastBridge) {
+\t\told_GameMode_FastBridge(a1, a2, a3, a4, a5, a6);
+\t\treturn 0;
+\t}
+    return old_GameMode_FastBridge(a1, a2, a3, a4, a5, a6);
+}''', '''eclient::combat::PlacementFn old_GameMode_FastBridge;
+std::uint64_t GameMode_FastBridge(std::uintptr_t a0, std::uintptr_t a1, std::uintptr_t a2,
+                                  std::uint32_t a3, std::uintptr_t a4, std::uintptr_t a5, std::uint32_t a6) {
+    const eclient::combat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6};
+    const auto result = eclient::combat::forwardPlacement(old_GameMode_FastBridge, args);
+    eclient_combat_diagnostics::placement(args, result, false);
+    // Preserve the original adapter's FastBridge return policy.
+    return (!panic && fastBridge) ? 0 : result;
+}''')
 replace('oxorany("§l§0[§5Apollon Client§0]§r Good Luck, Have Fun!")', 'oxorany("[E-Client] Good luck and have fun!")')
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)
@@ -183,7 +203,7 @@ import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'combat_diagnostics.h', jni / 'combat_diagnostics.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'block_names.h', jni / 'block_names.h')
-for file in ('base_search.h', 'crystal_plan.h'):
+for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)

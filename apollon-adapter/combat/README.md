@@ -66,3 +66,21 @@ The search is opt-in under Crystal test and has no game actions.
 it is not a visible player and is not connected to the game. A local-only
 player still needs a real client actor factory/lifecycle and integration with
 module targeting and actual explosion observations.
+
+## Placement-call tracing (experimental)
+
+Static disassembly of the exact APK's ARM64 entry at 0x0ccc3650 shows use of
+x0/x1/x2, w3, x4/x5 and w6. This disproves upstream's six-argument mostly-int
+wrapper, but does not by itself identify all parameter types or prove safe
+synthetic calls. The wrapper now forwards all seven observed registers using
+pointer-width fields and the return register, with a pinned entry-byte check.
+FastBridge's existing return policy is preserved. Actual use is device-untested.
+
+When Crystal test diagnostics are enabled, each observed manual useItemOn
+candidate call writes its result, two scalar arguments, pointer-presence flags,
+and, if readable, candidate block coordinates and a candidate float vector to
+`Downloads/combat-test.txt`. **These can include absolute world coordinates.**
+No raw pointers, inventory contents or names are recorded. The logger does not
+identify slot changes, infer an inventory layout, call the function itself, or
+spawn a fake entity. It logs an observed call even if the action was rejected;
+only subsequent world observations establish whether anything changed.

@@ -19,6 +19,7 @@ EXPECTED = {
         'LavaDrown', 'Noclip', 'XrayCameraThird')},
     'NoBlur1': 'ffc305d1', 'NoBlur2': 'ff0305d1',
     'VignetteRenderer': 'ff4302d1', 'LerpMotion': '080441f9',
+    'FastBridge': 'fd7bbaa9fc6f01a9',
     'AutoClickMine': 'fd7bbea9', 'IsEmoting': '810b8052edcdec17',
     'FullBright': 'fd7bbfa9fd030091080040f9',
 }
