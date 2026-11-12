@@ -1,4 +1,5 @@
 #include "../apollon-adapter/fly/fly2.h"
+#include "../apollon-adapter/fly/fly2_limits.h"
 #include <cassert>
 #include <cmath>
 #include <limits>
@@ -20,4 +21,9 @@ int main() {
     i.forward = std::numeric_limits<float>::quiet_NaN(); assert(plan(s,i,c,out) == Result::invalid);
     i.forward = 0; assert(plan(s,i,c,out) == Result::primed);
     reset(s); assert(plan(s,i,c,out) == Result::primed);
+    float x = 3, y = -2, z = 4;
+    assert(capVelocity(x,y,z, Limits{20,10,20}));
+    assert(near(std::hypot(x,z), 1) && near(y,-1));
+    x = 0; y = 0; z = 0; assert(!capVelocity(x,y,z, Limits{})); // hover stays hover
+    x = NAN; assert(!capVelocity(x,y,z, Limits{}));
 }

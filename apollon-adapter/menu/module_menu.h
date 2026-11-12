@@ -1,0 +1,118 @@
+#pragma once
+// Included after Apollon's variables and Fly2 adapter. All toggles reference the
+// existing module variables; category selection never toggles a module.
+namespace eclient_module_menu {
+struct Module { const char* name; bool* toggle; int settings; };
+enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS };
+static Module movement[] = {
+    {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
+    {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
+    {"No SlowDown",&noSlowDown,SIMPLE},{"No Web",&offSlowdownTrigger,SIMPLE},{"No Jump Delay",&noJumpDelay,SIMPLE},
+    {"Fast Fall",&fastFall,SIMPLE},{"Step",&step,SIMPLE},{"Noclip",&noclip,SIMPLE},{"No Water",&offWaterTrigger,SIMPLE},
+    {"Strafe",&strafe,SIMPLE},{"No Drowning",&offDrown,SIMPLE}
+};
+static Module combat[] = {{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
+    {"Target Lock",&targetLock,SIMPLE},{"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
+    {"Auto Clicker",&autoClicker,AUTOCLICK},{"Anti Knockback",&antiKnockback,SIMPLE},{"Anti Bot",&antiBot,SIMPLE}};
+static Module building[] = {{"Auto Mine",&clickAutoMine,SIMPLE},{"Auto Build",&fastBridge,SIMPLE},{"Block Reach",&blockReach,SIMPLE}};
+static Module visuals[] = {{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},{"Xray Caves",&xrayCaves,SIMPLE},{"Xray Camera",&xrayCam,SIMPLE},
+    {"ESP",&esp,ESP},{"FOV",&enableFov,FOV},{"FullBright",&fullBright,SIMPLE},{"FPS Boost",&osmtBoost,SIMPLE},
+    {"Freelook",&look360,SIMPLE},{"No Hurt Cam",&noHurtCam,SIMPLE},{"No Cam Distortion",&noCamDist,SIMPLE},
+    {"No Boat Rotation Limit",&noBoatRotation,SIMPLE},{"No Sleep Vignette",&noCamSleep,SIMPLE},
+    {"Place Camera",&placeCam,SIMPLE},{"Anti Invisible",&antiInvis,SIMPLE},{"Derp",&derp,SIMPLE},
+    {"No Blur",&noBlur,SIMPLE},{"Anti Blindness",&antiBlind,SIMPLE},{"Paperdoll",&showPaperdoll,SIMPLE},
+    {"No Cave Vignette",&noCaveVignette,SIMPLE},{"Death Position",&deathPosition,SIMPLE},
+    {"Show Position",&showPosition,POSITION},{"Near Players",&playerNear,PLAYERS}};
+static Module other[] = {{"Marketplace",&unlockMarket,SIMPLE},{"Fast Drop",&fastDrop,SIMPLE},{"No Emote Cooldown",&noEmoteCooldown,SIMPLE}};
+static int selected[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+static Module* list(int category, int& count) {
+#define LIST(n, a) case n: count = IM_ARRAYSIZE(a); return a
+    switch (category) { LIST(0,movement); LIST(1,combat); LIST(2,building); LIST(4,visuals); LIST(6,other); default: count=0; return nullptr; }
+#undef LIST
+}
+static void row(int category) {
+    int count = 0; Module* modules = list(category, count);
+    if (!modules) return;
+    ImGui::BeginChild("##module-row", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ScrollbarSize + 4), false, ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::Selectable("Classic", selected[category] == -1, 0, ImVec2(ImGui::CalcTextSize("Classic").x + ImGui::GetStyle().FramePadding.x * 2, ImGui::GetFrameHeight()))) selected[category] = -1;
+    for (int i = 0; i < count; ++i) {
+        ImGui::SameLine(); ImGui::PushID(i);
+        if (ImGui::Selectable(modules[i].name, selected[category] == i, 0, ImVec2(ImGui::CalcTextSize(modules[i].name).x + ImGui::GetStyle().FramePadding.x * 2, ImGui::GetFrameHeight()))) selected[category] = i;
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+}
+static void auraSettings(bool mob) {
+    if (mob) {
+        ImGui::SliderFloat("Mob range", &mobAuraRange, 1, 10, "%.1f");
+        if (!useGeyserCooldown) ImGui::SliderInt("Mob delay", &maxMobAuraTick, 1, 150);
+    } else {
+        if (ImGui::SliderFloat("Kill range", &killRange, 1, 10, "%.1f") && killRange > rotationsRange) rotationsRange = killRange;
+        ImGui::SliderFloat("Rotation range", &rotationsRange, 1, 100, "%.1f");
+        if (rotationsRange < killRange) rotationsRange = killRange;
+        if (!useGeyserCooldown) ImGui::SliderInt("Kill delay", &maxKillTick, 1, 150);
+    }
+    ImGui::Checkbox("Use Geyser cooldown", &useGeyserCooldown);
+    if (!useGeyserCooldown && (mob || !emulateNativeAttack)) ImGui::Combo("Aura type", &auraType, AuraType, IM_ARRAYSIZE(AuraType));
+    else { ImGui::Combo("Aura type", &auraType, AuraTypeGeyser, IM_ARRAYSIZE(AuraTypeGeyser)); if (auraType == 2) auraType = 1; }
+    ImGui::Checkbox("Swing", &swing);
+    if (mob || !emulateNativeAttack) { ImGui::Checkbox("Rotations", &rotations); ImGui::Checkbox("Target Lock", &targetLock); }
+    ImGui::Checkbox("Hurt Check", &hurtCheck);
+    if (!mob) ImGui::Checkbox("Simulate Native Attack", &emulateNativeAttack);
+    if (mob) ImGui::TextWrapped("Mob filters are available in Classic > Mobs > Mob List.");
+}
+static bool page(int category) {
+    int count = 0; Module* modules = list(category, count);
+    if (!modules || selected[category] < 0 || selected[category] >= count) return false;
+    Module& m = modules[selected[category]];
+    ImGui::BeginChild("##module-settings", ImVec2(0,0), false);
+    ImGui::TextUnformatted(m.name); ImGui::Separator();
+    if (m.settings == FLY2) eclient_fly2_adapter::draw();
+    else if (m.settings == SPEED || m.settings == WATER || m.settings == LAVA) {
+        int* v = m.settings == SPEED ? &speedValue : m.settings == WATER ? &waterSpeedValue : &lavaSpeedValue;
+        bool active = *v != 1;
+        if (ImGui::Button(active ? "Disable" : "Enable")) *v = active ? 1 : 2;
+        ImGui::SameLine(); ImGui::TextUnformatted(active ? "Enabled" : "Disabled");
+        ImGui::SliderInt("Multiplier", v, 1, 50);
+    } else if (m.settings == JUMP) {
+        bool active = jumpValue != 1.0f;
+        if (ImGui::Button(active ? "Disable" : "Enable")) jumpValue = active ? 1.0f : 2.0f;
+        ImGui::SameLine(); ImGui::TextUnformatted(active ? "Enabled" : "Disabled");
+        ImGui::SliderFloat("Multiplier", &jumpValue, 1, 50, "%.1f");
+    } else if (m.settings == GRAVITY) {
+        bool active = gravityValue != -0.08f;
+        if (ImGui::Button(active ? "Disable" : "Enable")) gravityValue = active ? -0.08f : 0.0f;
+        ImGui::SameLine(); ImGui::TextUnformatted(active ? "Enabled" : "Disabled");
+        ImGui::SliderFloat("Gravity", &gravityValue, -0.08f, 0.08f, "%.2f");
+    } else if (m.settings == CHAMS) {
+        bool active = chamsint != 0;
+        if (ImGui::Button(active ? "Disable" : "Enable")) chamsint = active ? 0 : 1;
+        ImGui::SameLine(); ImGui::TextUnformatted(active ? "Enabled" : "Disabled");
+        ImGui::Combo("Mode", &chamsint, Chams, IM_ARRAYSIZE(Chams));
+        if (chamsint > 1) { ImGui::ColorEdit3("Visible color", (float*)&visibleColor); ImGui::Checkbox("Rainbow", &enableRainbow); }
+        if (chamsint == 6 || chamsint == 7) { ImGui::ColorEdit3("Wall color", (float*)&inWallColor); ImGui::Checkbox("Wall rainbow", &enableRainbowWall); }
+    } else {
+        bool active = *m.toggle;
+        if (ImGui::Button(active ? "Disable" : "Enable")) {
+            *m.toggle = !active;
+            if (m.settings == XRAY) rebuildChunkGeometry = true;
+            if (m.toggle == &antiBlind && *m.toggle && fogState == 0) fogState = 1;
+        }
+        ImGui::SameLine(); ImGui::TextUnformatted(active ? "Enabled" : "Disabled");
+        switch (m.settings) {
+        case AURA: auraSettings(false); break;
+        case MOBAURA: auraSettings(true); break;
+        case HITBOX: ImGui::SliderFloat("Size", &hitBoxValue, 0.6f, 10.0f, "%.1f"); break;
+        case AUTOCLICK: ImGui::SliderInt("Delay", &maxAutoClickTick, 1, 150); break;
+        case FOV: ImGui::SliderFloat("FOV", &fov, -90, 90, "%.0f"); break;
+        case POSITION: ImGui::SliderFloat("X", &offsetTextPosX,-1500,1500,"%.0f"); ImGui::SliderFloat("Y", &offsetTextPosY,-1000,1000,"%.0f"); break;
+        case PLAYERS: ImGui::SliderFloat("X", &offsetTextPlayerNearPosX,-1500,1500,"%.0f"); ImGui::SliderFloat("Y", &offsetTextPlayerNearPosY,-1000,1000,"%.0f"); break;
+        case ESP: ImGui::Checkbox("Box",&espBox); ImGui::Checkbox("Line",&espLine); ImGui::Checkbox("Distance",&espDistance); ImGui::Checkbox("Nametag",&espNametag); ImGui::Checkbox("Health",&espHealth); ImGui::Checkbox("Platform",&espPlatform); break;
+        case XRAY: ImGui::TextWrapped("Ore filters are available in Classic > Xray."); break;
+        default: ImGui::TextUnformatted("No additional settings."); break;
+        }
+    }
+    ImGui::EndChild();
+    return true;
+}
+}

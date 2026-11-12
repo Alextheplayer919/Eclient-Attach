@@ -1,7 +1,10 @@
 #include <cassert>
 namespace ImGui {
-bool Checkbox(const char*, bool*) { return false; }
+bool Button(const char*) { return false; }
+void SameLine() {}
+void TextUnformatted(const char*) {}
 void TextWrapped(const char*, ...) {}
+bool SliderFloat(const char*, float*, float, float, const char*) { return false; }
 }
 bool panic = false, inMenu = false, forceCreativeFly = false, creativeFly = false;
 struct LayeredAbilities {
@@ -17,6 +20,7 @@ struct LocalPlayer {
     Abilities* getAbilities() { return &abilities; }
     bool isAttackableGamemode() { return survival; }
 };
+#define ECLIENT_FLY2_TEST
 #include "../apollon-adapter/fly/fly2_adapter.h"
 int main() {
     using namespace eclient_fly2_adapter;
