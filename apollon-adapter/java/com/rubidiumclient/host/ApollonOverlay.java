@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
+import android.graphics.Rect;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
@@ -11,6 +14,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.WindowInsets;
 import android.widget.Toast;
 import com.mojang.minecraftpe.platforms.Platform2;
 
@@ -25,10 +29,29 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     private Platform2 surface;
     private View touch;
     private WindowManager.LayoutParams touchParams;
+    private boolean keyboardVisible;
     private final Runnable reposition = new Runnable() {
         @Override public void run() {
             if (touch == null || surface == null) return;
             try {
+                boolean ime = isKeyboardVisible();
+                if (ime != keyboardVisible) {
+                    if (ime) {
+                        // Never hold a Fly2/menu press across an IME transition.
+                        surface.queueEvent(() -> Platform2.MotionEventClick(false, -1, -1));
+                        touchParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                        touch.setVisibility(View.GONE);
+                    } else {
+                        touchParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                    }
+                    wm.updateViewLayout(touch, touchParams);
+                    keyboardVisible = ime;
+                    Log.i(TAG, ime ? "Keyboard visible; menu touch suspended" : "Keyboard closed; menu touch restored");
+                }
+                if (ime) {
+                    handler.postDelayed(this, 20);
+                    return;
+                }
                 String[] rect = Platform2.getWindowRect().split("\\|");
                 int x = Integer.parseInt(rect[0]), y = Integer.parseInt(rect[1]);
                 int w = Integer.parseInt(rect[2]), h = Integer.parseInt(rect[3]);
@@ -51,6 +74,23 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
             handler.postDelayed(this, 20);
         }
     };
+    private boolean isKeyboardVisible() {
+        if (activity == null) return false;
+        View decor = activity.getWindow().getDecorView();
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsets insets = decor.getRootWindowInsets();
+            if (insets != null) return insets.isVisible(WindowInsets.Type.ime());
+        }
+        // Older Android: use the visible display frame as a fallback. Avoid
+        // treating a smaller split-screen window as a permanently open IME.
+        if (activity.isInMultiWindowMode()) return false;
+        Rect visible = new Rect();
+        decor.getWindowVisibleDisplayFrame(visible);
+        Point display = new Point();
+        activity.getWindowManager().getDefaultDisplay().getRealSize(display);
+        int threshold = (int)(120 * activity.getResources().getDisplayMetrics().density);
+        return visible.bottom > visible.top && display.y - visible.bottom > threshold;
+    }
     public static void install(Context context) {
         if (registered) return;
         Context app = context.getApplicationContext();
@@ -64,7 +104,11 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                 PixelFormat.TRANSLUCENT);
         p.token = activity.getWindow().getDecorView().getWindowToken();
         p.gravity = Gravity.TOP | Gravity.LEFT;
+        // With NOT_FOCUSABLE alone Android normally layers the panel ABOVE
+        // the IME. ALT_FOCUSABLE_IM keeps it behind the keyboard without
+        // making this panel focusable or taking the game's text focus.
         p.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM |
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
         return p;
     }
@@ -72,6 +116,7 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         if (activity == a) return;
         unmount();
         activity = a;
+        keyboardVisible = false;
         wm = a.getWindowManager();
         try {
             surface = new Platform2(a);
