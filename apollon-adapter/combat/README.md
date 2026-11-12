@@ -84,3 +84,16 @@ No raw pointers, inventory contents or names are recorded. The logger does not
 identify slot changes, infer an inventory layout, call the function itself, or
 spawn a fake entity. It logs an observed call even if the action was rejected;
 only subsequent world observations establish whether anything changed.
+
+## Focused test
+
+Combat > Focused test is a separate, mutually exclusive logging mode. It records
+placement-candidate calls and changes in the count of crystal actors within 12
+blocks, sampled up to four times per second. It omits broad block and actor
+snapshots. Count changes can mean actors entered or left range, not necessarily
+placement or destruction, and quick events can occur between samples. The
+placement hook cannot identify the item, so unrelated item uses can appear.
+Inventory/offhand changes are **not automatically captured**: their native
+bindings are unknown. Optional buttons record explicitly user-reported markers,
+not verified game events. Log path, coordinate privacy, size and persistence
+caveats are the same as above. No new inventory hook or game action is invoked.

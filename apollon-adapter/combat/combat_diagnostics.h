@@ -3,6 +3,7 @@
 // calls. Does not spawn, attack, switch inventory or place anything.
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
@@ -11,16 +12,53 @@
 #include "block_names.h"
 #include "base_search.h"
 #include "placement_forward.h"
+#include "focused_events.h"
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
+static std::atomic<bool> focused{false};
+static std::atomic<unsigned> focusedSession{0};
 static std::mutex logMutex;
 static std::string path;
 static void setLogPath(const char* value) { std::lock_guard<std::mutex> lock(logMutex); path = value; }
 static void draw() {
     bool on = enabled.load();
-    if (ImGui::Button(on ? "Stop diagnostics" : "Start diagnostics")) enabled.store(!on);
+    if (ImGui::Button(on ? "Stop diagnostics" : "Start diagnostics")) {
+        if (!on) focused.store(false);
+        enabled.store(!on);
+    }
     ImGui::TextWrapped("Read-only test: manually place and break crystals and obsidian. This is not Crystal Aura or Fake Player.");
     ImGui::TextWrapped("Log: Downloads/combat-test.txt. Placement calls can include block coordinates; no player names are logged.");
+}
+// Manual markers are explicitly labelled: these are not detected inventory events.
+static void marker(const char* label) {
+    std::lock_guard<std::mutex> lock(logMutex);
+    if (path.empty()) return;
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    std::fprintf(f, "time=%lld manual_marker=%s\n", (long long)std::time(nullptr), label);
+    std::fclose(f);
+}
+static void drawFocused() {
+    bool on = focused.load();
+    if (ImGui::Button(on ? "Stop focused test" : "Start focused test")) {
+        if (!on) {
+            enabled.store(false);
+            ++focusedSession;
+            focused.store(true);
+            marker("focused_test_started_inventory_not_automatically_observed");
+        } else {
+            focused.store(false);
+            marker("focused_test_stopped");
+        }
+    }
+    ImGui::TextWrapped("Focused log: placement calls and nearby crystal count changes only. A count drop is not proof of destruction.");
+    ImGui::TextWrapped("Inventory and offhand changes are not detected yet. Optional buttons below add manual markers, not game events.");
+    if (focused.load()) {
+        if (ImGui::Button("Mark totem moved")) marker("user_reports_totem_moved");
+        if (ImGui::Button("Mark obsidian moved")) marker("user_reports_obsidian_moved");
+        if (ImGui::Button("Mark crystal moved")) marker("user_reports_crystal_moved");
+    }
+    ImGui::TextWrapped("Downloads/combat-test.txt; placement calls may contain world coordinates and can include other items.");
 }
 // Match Apollon's Xray hook: BlockType+8 is a native std::string containing
 // a tile description name. Validate both object and characters before use.
@@ -46,7 +84,7 @@ static std::string blockName(BlockType* type) {
 // Placement candidate was identified in the pinned binary. Log only while
 // diagnostics are enabled; never change the arguments or call behavior.
 static void placement(const eclient::combat::PlacementArgs& args, std::uint64_t result, bool repeated) {
-    if (!enabled.load()) return;
+    if (!enabled.load() && !focused.load()) return;
     std::lock_guard<std::mutex> lock(logMutex);
     if (path.empty()) return;
     FILE* f = std::fopen(path.c_str(), "a");
@@ -67,7 +105,38 @@ static void placement(const eclient::combat::PlacementArgs& args, std::uint64_t 
     std::fprintf(f,"\n");
     std::fclose(f);
 }
+static void focusedTick(LocalPlayer* player, bool ready) {
+    if (!focused.load() || !ready || !player || panic || inMenu) return;
+    static unsigned session = 0;
+    static eclient::combat::CrystalCountEvents events;
+    static std::chrono::steady_clock::time_point last{};
+    const unsigned current = focusedSession.load();
+    if (session != current) { session = current; events.reset(); last = {}; }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(250)) return;
+    last = now;
+    Level* level = player->getLevel();
+    vec3_t* p = player->getPosition();
+    if (!level || !p || !std::isfinite(p->x) || !std::isfinite(p->y) || !std::isfinite(p->z)) return;
+    int count = 0;
+    for (auto* actor : level->getRuntimeActorList()) {
+        if (!actor || actor == player || actor->getEntityTypeId() != 71) continue;
+        vec3_t* pos = actor->getPosition();
+        if (!pos || !std::isfinite(pos->x) || !std::isfinite(pos->y) || !std::isfinite(pos->z)) continue;
+        const float x=pos->x-p->x, y=pos->y-p->y, z=pos->z-p->z;
+        if (x*x+y*y+z*z <= 12.0f*12.0f) ++count;
+    }
+    if (!events.update(count)) return;
+    std::lock_guard<std::mutex> lock(logMutex);
+    if (path.empty() || !focused.load() || focusedSession.load() != current) return;
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    if (std::ftell(f) > 1024*1024) { std::fclose(f); f = std::fopen(path.c_str(), "w"); if (!f) return; }
+    std::fprintf(f, "time=%lld nearby_crystal_count=%d radius=12 (observation_not_destruction_proof)\n", (long long)std::time(nullptr), count);
+    std::fclose(f);
+}
 static void tick(LocalPlayer* player, bool ready) {
+    focusedTick(player, ready);
     if (!enabled.load() || !ready || !player || panic || inMenu) return;
     static std::time_t last = 0;
     const auto now = std::time(nullptr);
