@@ -29,9 +29,7 @@ replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/a
             saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));
             lastSave = now;
         }''')
-replace('        BeginDraw();', '''        eclient_fly2_adapter::beginFrame();
-        BeginDraw();
-        eclient_fly2_adapter::finishFrame();
+replace('        BeginDraw();', '''        BeginDraw();
         if (g_window) {
             eclientX.store((int)g_window->Pos.x); eclientY.store((int)g_window->Pos.y);
             eclientW.store((int)g_window->Size.x); eclientH.store((int)g_window->Size.y);
@@ -40,7 +38,23 @@ replace('        BeginDraw();', '''        eclient_fly2_adapter::beginFrame();
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
 replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"')
-replace('    return old_NormalTick(thiz);\n}\n\nvoid *(*old_PlayerAuthInputPacket)', '    void* result = old_NormalTick(thiz);\n    eclient_fly2_adapter::tick(thiz);\n    return result;\n}\n\nvoid *(*old_PlayerAuthInputPacket)')
+# Run cleanup even on Apollon's early panic/menu/death exits. The original
+# tick runs first so its Creative Fly bookkeeping cannot undo Fly2 this frame.
+normal_start = s.index('void *NormalTick(LocalPlayer *thiz) {')
+normal_end = s.index('\nvoid *(*old_PlayerAuthInputPacket)', normal_start)
+normal = s[normal_start:normal_end]
+if normal.count('return old_NormalTick(thiz);') != 4:
+    raise ValueError('unexpected Apollon NormalTick exits')
+normal = normal.replace('return old_NormalTick(thiz);', 'return eclientFly2TickAndReturn(thiz, false);', 3)
+normal = normal.replace('return old_NormalTick(thiz);', 'return eclientFly2TickAndReturn(thiz, true);', 1)
+helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool gameReady) {
+    void* result = old_NormalTick(player);
+    eclient_fly2_adapter::tick(player, gameReady);
+    return result;
+}
+'''
+s = s[:normal_start] + helper + normal + s[normal_end:]
+
 replace('oxorany("§l§0[§5Apollon Client§0]§r Good Luck, Have Fun!")', 'oxorany("[E-Client] Good luck and have fun!")')
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)

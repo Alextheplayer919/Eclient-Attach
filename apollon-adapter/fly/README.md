@@ -1,44 +1,28 @@
-# Fly2 experiment
+# Fly2 experimental flight
 
-`fly2.cpp` translates the calculation in the supplied `Fly2Module.smali.txt`.
-The source is a KiwiMods/Cloudburst module: it watches outgoing
-`PlayerAuthInputPacket`s and injects a client-bound `SetEntityMotionPacket` via
-its `GameSession`. The Apollon APK does not contain those Kotlin classes or
-that packet proxy. Its existing Creative Fly uses Minecraft abilities instead;
-this new calculation does not replace or change those controls.
+Fly2 is a separate toggle under Movement / Other. While enabled, the game
+thread repeatedly applies Apollon's existing may-fly and flying ability calls
+(layer 2, indices 10 and 9). Minecraft handles joystick, vertical controls and
+hover. This is an experimental **ability-based adaptation**, not the supplied
+KiwiMods packet-based Fly2 implementation: the settings and high-speed motion
+formula from that file are not wired to it. Flight can be rejected or corrected
+by a server and is not device-verified.
 
-Defaults match the supplied module: horizontal 46 BPS, up 19.8 BPS, down 46
-BPS, glide -0.02, horizontal up/down factors 0.55. The port preserves the
-4.5-block position-jump guard, idle behavior, yaw transform, diagonal
-normalization, 20 ticks/second conversion, and horizontal cap. Both horizontal
-factors apply if up and down are simultaneously true; up wins vertically.
-For safety the port primes position on the first sample rather than comparing
-it with world origin, and rejects non-finite values/invalid settings.
+The toggle starts off. When disabled, the local-player tick clears the ability
+bits in survival-like modes, except bits another Apollon flight toggle still
+needs, following upstream's cleanup policy. It also attempts cleanup when
+panic, the main menu or death interrupts flight. It never writes to a previous
+player pointer after the player changes. Existing ability values are not read
+or saved by Apollon, so this cannot promise perfect restoration of pre-existing
+server-granted survival abilities. Normal physics resumes after disabling.
 
-The experimental adapter connects this calculation to Apollon's local-player
-tick as a separate **Fly2 (experimental)** option under Movement / Other.
-Because native movement-input layout remains unverified, it does **not** read
-the game's joystick or jump/sneak fields. Instead, hold the explicit Fly2
-controls in the menu. Only one touch is supported by the current overlay, so
-combinations such as forward plus up are not available yet. Release, minimize,
-leave the tab, pause rendering, leave the HUD, disable Fly2, or enable Anti
-Knockback to stop Fly2 writes. A held command expires after 250 ms without a
-rendered frame. Glide is only applied while its control is held. This is an
-intentional fail-inert difference from the original packet module.
+`fly2.cpp` is an isolated math translation of the supplied smali's packet-flight
+algorithm; it is not the active Fly2 backend. Its tests remain as reference for
+future work with verified native input and motion plumbing.
 
-The adapter uses the Apollon rotation and position wrappers, calls LerpMotion
-on the game thread after the original tick, and refuses to call it if its entry
-bytes differ from the pinned profile or Anti Knockback is enabled. The source
-uses these wrappers but device behavior and yaw conventions still need testing;
-no guarantee is made about multiplayer/server acceptance. Fly2 resets its
-position baseline after release, interruption, or player change, and is off on
-startup. It does not restore a previous velocity after release; the game is
-left to resume its normal physics. This is an experimental adaptation, not the
-original KiwiMods client-bound packet implementation.
-
-Host math test:
+Host tests:
 
 ```
-g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o /tmp/fly2-test
-/tmp/fly2-test
+g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o /tmp/fly2-test && /tmp/fly2-test
+g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_adapter_test.cpp -o /tmp/fly2-adapter-test && /tmp/fly2-adapter-test
 ```
