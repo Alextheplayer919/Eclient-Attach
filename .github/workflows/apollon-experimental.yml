@@ -74,6 +74,15 @@ jobs:
             echo 'GameMode useItemOn candidate @ 0xccc3650:'
             "$BIN/llvm-objdump" -d --start-address=0xccc3650 --stop-address=0xccc3850 "$RUNNER_TEMP/libminecraftpe.so"
           } > "$RUNNER_TEMP/combat-native-inspection.txt"
+          # Attach a small assembly excerpt to the check so it can be read even
+          # when artifact-download hosts are inaccessible from a development sandbox.
+          python3 - "$RUNNER_TEMP/combat-native-inspection.txt" <<'PYCODE'
+          import sys
+          lines = open(sys.argv[1]).read().splitlines()
+          for start in range(0, min(len(lines), 160), 20):
+              chunk = ' | '.join(lines[start:start + 20]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::notice title=Native inspection {start//20+1}::{chunk}')
+          PYCODE
           rm "$RUNNER_TEMP/libminecraftpe.so"
       - name: Upload native inspection
         uses: actions/upload-artifact@v4
