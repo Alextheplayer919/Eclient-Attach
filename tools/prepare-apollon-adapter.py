@@ -68,7 +68,7 @@ replace('        BeginDraw();', '''        BeginDraw();
 # Queue touch transitions on the GL thread for ImGui's event processing: directly
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
-replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "combat_diagnostics.h"\n#include "practice_target.h"\n#include "crystal_break_test.h"\n#include "module_menu.h"')
+replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "combat_diagnostics.h"\n#include "practice_target.h"\n#include "crystal_break_test.h"\n#include "crystal_aura_break.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setCombatLogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_combat_diagnostics::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
 # Run cleanup even on Apollon's early panic/menu/death exits. The original
@@ -86,6 +86,7 @@ helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool game
     eclient_combat_diagnostics::tick(player, gameReady);
     eclient_practice_target::tick(player, gameReady);
     eclient_crystal_break_test::tick(player, gameReady);
+    eclient_crystal_aura::tick(player, gameReady);
     return result;
 }
 '''
@@ -210,7 +211,7 @@ import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'combat_diagnostics.h', jni / 'combat_diagnostics.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'block_names.h', jni / 'block_names.h')
-for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h', 'focused_events.h', 'crystal_break_test.h', 'crystal_break_selection.h', 'practice_target.h', 'practice_state.h'):
+for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h', 'focused_events.h', 'crystal_break_test.h', 'crystal_break_selection.h', 'practice_target.h', 'practice_state.h', 'crystal_aura_break.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)

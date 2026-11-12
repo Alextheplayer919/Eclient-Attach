@@ -3,7 +3,7 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, COMBAT_DIAGNOSTICS, FOCUSED_DIAGNOSTICS, CRYSTAL_BREAK_TEST, PRACTICE_TARGET };
+enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, COMBAT_DIAGNOSTICS, FOCUSED_DIAGNOSTICS, CRYSTAL_BREAK_TEST, PRACTICE_TARGET, CRYSTAL_AURA };
 static Module movement[] = {
     {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
@@ -11,7 +11,7 @@ static Module movement[] = {
     {"Fast Fall",&fastFall,SIMPLE},{"Step",&step,SIMPLE},{"Noclip",&noclip,SIMPLE},{"No Water",&offWaterTrigger,SIMPLE},
     {"Strafe",&strafe,SIMPLE},{"No Drowning",&offDrown,SIMPLE}
 };
-static Module combat[] = {{"Crystal test",nullptr,COMBAT_DIAGNOSTICS},{"Focused test",nullptr,FOCUSED_DIAGNOSTICS},{"Crystal break test",nullptr,CRYSTAL_BREAK_TEST},{"Practice target",nullptr,PRACTICE_TARGET},{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
+static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA},{"Crystal test",nullptr,COMBAT_DIAGNOSTICS},{"Focused test",nullptr,FOCUSED_DIAGNOSTICS},{"Crystal break test",nullptr,CRYSTAL_BREAK_TEST},{"Practice target",nullptr,PRACTICE_TARGET},{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
     {"Target Lock",&targetLock,SIMPLE},{"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
     {"Auto Clicker",&autoClicker,AUTOCLICK},{"Anti Knockback",&antiKnockback,SIMPLE},{"Anti Bot",&antiBot,SIMPLE}};
 static Module building[] = {{"Auto Mine",&clickAutoMine,SIMPLE},{"Auto Build",&fastBridge,SIMPLE},{"Block Reach",&blockReach,SIMPLE}};
@@ -91,6 +91,7 @@ static bool page(int category) {
     else if (m.settings == FOCUSED_DIAGNOSTICS) eclient_combat_diagnostics::drawFocused();
     else if (m.settings == CRYSTAL_BREAK_TEST) eclient_crystal_break_test::draw();
     else if (m.settings == PRACTICE_TARGET) eclient_practice_target::draw();
+    else if (m.settings == CRYSTAL_AURA) eclient_crystal_aura::draw();
     else if ((m.settings == SPEED || m.settings == WATER || m.settings == LAVA || m.settings == JUMP || m.settings == GRAVITY) && isLANGame) {
         ImGui::TextWrapped("Unavailable in LAN games.");
     } else if (m.settings == FOG) {

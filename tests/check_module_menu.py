@@ -34,6 +34,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_practice_target::tick(player, gameReady);' in main
     assert 'eclient_practice_target::render(draw_list, CameraPos, currentFov, currentViewMatrix);' in transformed
     assert '"Practice target"' in menu
+    assert '"Crystal Aura"' in menu
+    assert 'eclient_crystal_aura::tick(player, gameReady);' in main
+    assert (jni / 'crystal_aura_break.h').exists()
     resize = main.split('Platform2_resize(JNIEnv* env, jobject obj, jint width, jint height) {', 1)[1].split('void Patches()', 1)[0]
     assert 'static bool isLoaded' not in resize
     assert 'ImGui::PopItemWidth();' in transformed

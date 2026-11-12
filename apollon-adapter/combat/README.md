@@ -124,3 +124,22 @@ one simulated pop; this does not verify an explosion, model actual damage or
 consume a real totem. This demonstrates the local target and real break action
 working together; it does not implement Crystal Aura, placement, Baseplate,
 real-player selection, or inventory switching.
+
+## Partial Crystal Aura
+
+The opt-in Combat > Crystal Aura module continuously attempts to break the
+nearest crystal within the configured reach and within the configured distance
+of a real player or the simulated practice target. It does not retain actor
+pointers between ticks. There is no one-shot or attack-count limit, although
+Minecraft/server reach and validity checks still apply. Real-player selection
+matches the local player's entity type, excludes self, but does not yet apply
+friend filtering or model damage. The client does not guarantee that any
+attack was accepted. It is off by default and can damage the local player,
+other players, and blocks. The virtual target's pop count is simulated on the
+first attack attempt against an observed crystal; it is not real damage.
+
+**Automatic placement, Baseplate, inventory selection and totem switching are
+not implemented.** The seven-register placement hook is a forwarder, not a
+verified callable contract: the lifetime and semantics of its pointer
+arguments remain unknown. Do not synthesize calls or store its borrowed
+pointers across ticks until these contracts are verified.
