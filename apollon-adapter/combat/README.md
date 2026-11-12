@@ -34,3 +34,24 @@ bindings are not implemented. The staging log is limited to about 1 MiB.
 10+ publishes through MediaStore and may rename it if a previous installation
 owns an existing file. The log is not a crash logger and recent entries can be
 lost if the process dies before the next copy to Downloads.
+
+## Block identity investigation
+
+The original Apollon `Block_getRenderLayer` uses `Block::getBlockTypeClassCustom()`
+and reads its `std::string` at BlockType+8 on ARM64. Its existing Xray checks
+the exact description `tile.obsidian` in `allowToXrayRender`; this is a useful
+existing in-process path, not the wiki's numeric ID or the prior token. The
+diagnostics now read that same candidate string and report it along with exact
+`tile.obsidian` / `tile.bedrock` labels. The bedrock name is inferred from the
+same naming pattern and both names should still be checked on the target device.
+The wiki documents obsidian legacy ID 49, bedrock ID 7 and ender crystal entity
+ID 71, but does not establish a native memory offset or item stack layout.
+https://minecraft.wiki/w/Obsidian
+https://minecraft.wiki/w/Bedrock
+https://minecraft.wiki/w/End_Crystal
+
+The `FastBridge` hook is labelled useItemOn in the source, but its declared
+signature uses 32-bit integers for arguments on ARM64. A hook declaration that
+merely forwards those values is not adequate proof of a safe call signature,
+item stack ownership, face, reach or inventory selection. It is not called by
+the crystal planner. The underlying block access remains read-only.

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include "block_names.h"
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
 static std::mutex logMutex;
@@ -18,6 +19,27 @@ static void draw() {
     if (ImGui::Button(on ? "Stop diagnostics" : "Start diagnostics")) enabled.store(!on);
     ImGui::TextWrapped("Read-only test: manually place and break crystals and obsidian. This is not Crystal Aura or Fake Player.");
     ImGui::TextWrapped("Log: Downloads/combat-test.txt. It includes nearby entity types, relative locations and block observations, not player names.");
+}
+// Match Apollon's Xray hook: BlockType+8 is a native std::string containing
+// a tile description name. Validate both object and characters before use.
+static std::string blockName(BlockType* type) {
+    if (!type) return {};
+    const auto address = reinterpret_cast<std::uintptr_t>(type) + 8;
+    unsigned char header[sizeof(std::string)];
+    iovec local{header, sizeof(header)}, remote{reinterpret_cast<void*>(address), sizeof(header)};
+    if (syscall(__NR_process_vm_readv, getpid(), &local, 1, &remote, 1, 0) != static_cast<ssize_t>(sizeof(header))) return {};
+    const auto* value = reinterpret_cast<const std::string*>(address);
+    const auto length = value->size();
+    if (!length || length > 100) return {};
+    const char* data = value->data();
+    char name[101]{};
+    iovec dst{name, length}, src{const_cast<char*>(data), length};
+    if (syscall(__NR_process_vm_readv, getpid(), &dst, 1, &src, 1, 0) != static_cast<ssize_t>(length)) return {};
+    for (size_t i=0; i<length; ++i) {
+        char c=name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == ':' || c == '-')) return {};
+    }
+    return std::string(name, length);
 }
 static void tick(LocalPlayer* player, bool ready) {
     if (!enabled.load() || !ready || !player || panic || inMenu) return;
@@ -46,7 +68,8 @@ static void tick(LocalPlayer* player, bool ready) {
         const float x=pos->x-p->x, y=pos->y-p->y, z=pos->z-p->z;
         if (x*x+y*y+z*z > 12.0f*12.0f) continue;
         if (++count > 64) break;
-        std::fprintf(f," actor type=%d relative=%.2f,%.2f,%.2f\n", actor->getEntityTypeId(), x,y,z);
+        const int id = actor->getEntityTypeId();
+        std::fprintf(f," actor type=%d kind=%s relative=%.2f,%.2f,%.2f\n", id, id == 71 ? "ender_crystal" : "other", x,y,z);
     }
     std::fprintf(f," nearby_actor_count%s=%u\n", count > 64 ? "_at_least" : "", count);
     BlockSource* blocks = player->getDimensionBlockSource();
@@ -65,7 +88,10 @@ static void tick(LocalPlayer* player, bool ready) {
                 if (entry == blockTypes.end()) entry = blockTypes.emplace(type, static_cast<unsigned>(blockTypes.size())+1).first;
                 token = entry->second;
             }
-            std::fprintf(f," block offset=%d,%d,%d air=%d type_token=%u\n",x,y,z, b->isAir() ? 1 : 0, token);
+            const auto name = blockName(type);
+            const auto known = eclient::combat::classifyBlockName(name);
+            std::fprintf(f," block offset=%d,%d,%d air=%d type_token=%u name=%s kind=%s\n",x,y,z, b->isAir() ? 1 : 0, token,
+                name.empty() ? "unavailable" : name.c_str(), eclient::combat::blockLabel(known));
         }
     } else std::fprintf(f," block_source_unavailable\n");
     std::fprintf(f,"snapshot end (placement, inventory, fake player and totem unavailable)\n");

@@ -56,6 +56,8 @@ jobs:
           "$RUNNER_TEMP/fly2-probe-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/crystal_plan_test.cpp -o "$RUNNER_TEMP/crystal-plan-test"
           "$RUNNER_TEMP/crystal-plan-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/combat_block_names_test.cpp -o "$RUNNER_TEMP/combat-block-names-test"
+          "$RUNNER_TEMP/combat-block-names-test"
       - name: Build experimental APK
         run: tools/build-apollon-apk.sh "$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
       - name: Upload experimental APK
