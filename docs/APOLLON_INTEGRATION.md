@@ -13,6 +13,13 @@ manual **Apollon native staging compile** workflow runs the same script.
 Neither the workflow nor the generated `libReverseSigma.so` is a usable client
 release. A successful compile does not establish compatibility with Minecraft.
 
+The staging workflow also downloads the private, SHA-pinned Minecraft input and
+runs `tools/check-apollon-target.py`: it checks the original bytes for the 18
+existing host patch sites and whether the 27 Apollon ARM64 inline-hook targets
+are in file-backed executable segments. It prints the hook bytes for further
+analysis. Range checks alone do **not** establish that hook signatures or
+behavior are correct, nor validate all Apollon patches or game field offsets.
+
 ## Required integration work
 
 - Replace the old host internals without creating two `JNI_OnLoad` entry points
