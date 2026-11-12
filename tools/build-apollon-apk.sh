@@ -20,7 +20,7 @@ python3 "$ROOT/tools/prepare-apollon-adapter.py" "$JNI"
  NDK_LIBS_OUT="$WORK/libs" NDK_OUT="$WORK/obj" -j"$(getconf _NPROCESSORS_ONLN)"
 mkdir -p "$WORK/classes" "$WORK/dex" "$(dirname "$OUTPUT")"
 mapfile -d '' JAVA_FILES < <(find "$ROOT/apollon-adapter/java" -name '*.java' -print0)
-javac -source 8 -target 8 -bootclasspath "$ANDROID_SDK_ROOT/platforms/android-35/android.jar" \
+javac -source 8 -target 8 -classpath "$ANDROID_SDK_ROOT/platforms/android-35/android.jar" \
  -d "$WORK/classes" "${JAVA_FILES[@]}"
 (cd "$WORK/classes" && jar cf "$WORK/adapter.jar" .)
 d8 --min-api 26 --output "$WORK/dex" "$WORK/adapter.jar"
