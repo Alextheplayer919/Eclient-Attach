@@ -43,6 +43,12 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     private View touch;
     private WindowManager.LayoutParams touchParams;
     private boolean keyboardVisible;
+    private Activity resumedActivity;
+    private int mountAttempts;
+    private final Runnable retryMount = () -> {
+        Activity current = resumedActivity;
+        if (current != null && !current.isFinishing() && !current.isDestroyed()) mount(current);
+    };
     private final Runnable reposition = new Runnable() {
         @Override public void run() {
             if (touch == null || surface == null) return;
@@ -55,7 +61,8 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                 if (ime != keyboardVisible) {
                     if (ime) {
                         // Never hold a Fly2/menu press across an IME transition.
-                        surface.queueEvent(() -> Platform2.MotionEventClick(false, -1, -1));
+                        Platform2 renderer = surface;
+                        renderer.queueEvent(() -> renderer.sendTouch(false, -1, -1));
                         touchParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                         touch.setVisibility(View.GONE);
                     } else {
@@ -178,7 +185,11 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         } catch (Exception e) { Log.w(TAG, "Unable to update Downloads/fly2test.txt", e); }
     }
     private void mount(Activity a) {
-        if (activity == a) return;
+        if (resumedActivity != a || activity == a) return;
+        if (a.getWindow().getDecorView().getWindowToken() == null) {
+            scheduleMountRetry();
+            return;
+        }
         unmount();
         activity = a;
         keyboardVisible = false;
@@ -200,18 +211,29 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                     int[] origin = new int[2];
                     renderer.getLocationOnScreen(origin);
                     final float x = event.getRawX() - origin[0], y = event.getRawY() - origin[1];
-                    if (renderer != null) renderer.queueEvent(() -> Platform2.MotionEventClick(down, x, y));
+                    if (renderer != null) renderer.queueEvent(() -> renderer.sendTouch(down, x, y));
                     return true;
                 }
                 return false;
             });
             wm.addView(touch, touchParams);
             handler.post(reposition);
+            mountAttempts = 0;
+            handler.removeCallbacks(retryMount);
             Log.i(TAG, "Overlay mounted");
         } catch (RuntimeException e) {
-            Log.e(TAG, "Overlay mount failed", e);
-            Toast.makeText(a, "E-Client overlay failed; see logcat", Toast.LENGTH_LONG).show();
+            Log.w(TAG, "Overlay mount not ready; retrying", e);
             unmount();
+            scheduleMountRetry();
+        }
+    }
+    private void scheduleMountRetry() {
+        handler.removeCallbacks(retryMount);
+        if (resumedActivity == null) return;
+        if (++mountAttempts <= 40) handler.postDelayed(retryMount, 250);
+        else {
+            Log.e(TAG, "Overlay could not mount after retries");
+            Toast.makeText(resumedActivity, "E-Client overlay could not start; see logcat", Toast.LENGTH_LONG).show();
         }
     }
     private void unmount() {
@@ -220,7 +242,8 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         if (wm != null) {
             if (touch != null && touch.isAttachedToWindow()) wm.removeViewImmediate(touch);
             if (surface != null && surface.isAttachedToWindow()) {
-                surface.queueEvent(Platform2::imgui_Shutdown);
+                Platform2 oldSurface = surface;
+                oldSurface.queueEvent(oldSurface::releaseRenderer);
                 wm.removeViewImmediate(surface);
             }
         }
@@ -231,12 +254,21 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
             credited = true;
             Toast.makeText(a, "E-Client: Apollon source code by ZEFF", Toast.LENGTH_LONG).show();
         }
+        handler.removeCallbacks(retryMount);
+        resumedActivity = a;
+        mountAttempts = 0;
         mount(a);
     }
-    @Override public void onActivityPaused(Activity a) { if (activity == a) unmount(); }
+    @Override public void onActivityPaused(Activity a) {
+        if (resumedActivity == a) { resumedActivity = null; handler.removeCallbacks(retryMount); }
+        if (activity == a) unmount();
+    }
     @Override public void onActivityCreated(Activity a, Bundle b) {}
     @Override public void onActivityStarted(Activity a) {}
     @Override public void onActivityStopped(Activity a) {}
     @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
-    @Override public void onActivityDestroyed(Activity a) { if (activity == a) unmount(); }
+    @Override public void onActivityDestroyed(Activity a) {
+        if (resumedActivity == a) { resumedActivity = null; handler.removeCallbacks(retryMount); }
+        if (activity == a) unmount();
+    }
 }

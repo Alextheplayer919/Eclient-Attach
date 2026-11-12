@@ -13,6 +13,36 @@ def replace(old, new):
         raise ValueError(f'expected one source occurrence, got {s.count(old)}: {old[:100]!r}')
     s = s.replace(old, new, 1)
 replace('#include <jni.h>', '#include <jni.h>\n#include <atomic>\n#include <android/log.h>')
+# Keep an unscaled style for each new ImGui context. The upstream static
+# isLoaded flag outlives destroyed contexts and causes tiny controls after a
+# remount; scale afresh on every valid resize without compounding the scale.
+replace('\tembraceTheDarkness();', '\tembraceTheDarkness();\n    eclientBaseStyle = ImGui::GetStyle();')
+replace('''\tstatic bool isLoaded = false;
+\tif (!isLoaded) {
+\t\tImGuiStyle& style = ImGui::GetStyle();
+\t    scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
+\t\tcalcResX = calculateResolutionX(screenWidth, 2480);
+\t    style.ScaleAllSizes(scaleGlobal * 3.5);
+        io.FontGlobalScale = scaleGlobal;
+\t\tstyle.WindowBorderSize                  = scaleGlobal * 2;
+        style.ChildBorderSize                   = scaleGlobal * 2;
+        style.PopupBorderSize                   = scaleGlobal * 2;
+        style.FrameBorderSize                   = scaleGlobal * 2;
+        style.TabBorderSize                     = scaleGlobal * 2;
+\t\tisLoaded = true;
+\t}''', '''    if (screenWidth > 0 && screenHeight > 0) {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style = eclientBaseStyle;
+        scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
+        calcResX = calculateResolutionX(screenWidth, 2480);
+        style.ScaleAllSizes(scaleGlobal * 3.5f);
+        io.FontGlobalScale = scaleGlobal;
+        style.WindowBorderSize = style.ChildBorderSize = style.PopupBorderSize = scaleGlobal * 2;
+        style.FrameBorderSize = style.TabBorderSize = scaleGlobal * 2;
+        // Scrollbars must remain usable on a touchscreen after context recreation.
+        style.ScrollbarSize = std::max(style.ScrollbarSize, 18.0f);
+        style.GrabMinSize = std::max(style.GrabMinSize, 18.0f);
+    }''')
 # JNI escapes underscores in Java method names as _1. Rename both the forward
 # declaration and definition, otherwise Android cannot resolve imgui_Shutdown.
 old_jni = 'Java_com_mojang_minecraftpe_platforms_Platform2_imgui_Shutdown'
@@ -20,6 +50,7 @@ if s.count(old_jni) != 2:
     raise ValueError('unexpected imgui_Shutdown JNI declaration count')
 s = s.replace(old_jni, 'Java_com_mojang_minecraftpe_platforms_Platform2_imgui_1Shutdown')
 replace('bool g_Initialized = false;', '''bool g_Initialized = false;
+static ImGuiStyle eclientBaseStyle;
 static std::atomic<int> eclientX{0}, eclientY{0}, eclientW{0}, eclientH{0};''')
 replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/app_lib"));\n        saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));', '''        static auto lastSave = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
@@ -142,6 +173,8 @@ for first, after in ((0, 3), (4, 5), (6, 7)):
     end = m.index(f'\t\t\tcase {after}:' if after != 7 else '            case 7:', begin)
     m = m[:begin] + m[end:]
 menu_replace('\t\t\t\tImGui::Checkbox(OBFUSCATE("Anti Bot"), &antiBot);\n', '')
+# Hotkey panel has one width push; upstream pushed again instead of popping.
+menu_replace('                ImGui::PushItemWidth(0);\n\t\t\t\tImGui::EndChild();', '                ImGui::PopItemWidth();\n\t\t\t\tImGui::EndChild();')
 menu.write_text(m)
 mk = jni / 'Android.mk'
 import shutil
