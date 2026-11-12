@@ -48,6 +48,10 @@ jobs:
           "$RUNNER_TEMP/fly2-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_adapter_test.cpp -o "$RUNNER_TEMP/fly2-adapter-test"
           "$RUNNER_TEMP/fly2-adapter-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_calculated_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-calculated-test"
+          "$RUNNER_TEMP/fly2-calculated-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_probe_test.cpp -o "$RUNNER_TEMP/fly2-probe-test"
+          "$RUNNER_TEMP/fly2-probe-test"
       - name: Build experimental APK
         run: tools/build-apollon-apk.sh "$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
       - name: Upload experimental APK

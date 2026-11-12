@@ -19,6 +19,7 @@ public final class Platform2 extends GLSurfaceView implements GLSurfaceView.Rend
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig config) { init(); }
     @Override public void onSurfaceChanged(GL10 gl, int width, int height) { resize(width, height); }
     @Override public void onDrawFrame(GL10 gl) { step(); }
+    public static native void setFly2LogPath(String path);
     public static native void init();
     public static native void resize(int width, int height);
     public static native void step();

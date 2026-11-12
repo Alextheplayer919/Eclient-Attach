@@ -9,6 +9,15 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Environment;
+import android.os.SystemClock;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.provider.MediaStore;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -23,6 +32,10 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     private static final String TAG = "EClientApollon";
     private static boolean registered;
     private static boolean credited;
+    private static boolean logInitialized;
+    private static File privateLog;
+    private static Uri downloadsLog;
+    private static long lastLogCopy;
     private final Handler handler = new Handler();
     private Activity activity;
     private WindowManager wm;
@@ -34,6 +47,10 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         @Override public void run() {
             if (touch == null || surface == null) return;
             try {
+                if (SystemClock.elapsedRealtime() - lastLogCopy >= 2000) {
+                    lastLogCopy = SystemClock.elapsedRealtime();
+                    syncFly2Log();
+                }
                 boolean ime = isKeyboardVisible();
                 if (ime != keyboardVisible) {
                     if (ime) {
@@ -112,6 +129,54 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
         return p;
     }
+    // Native code writes a private staging file; Android scoped storage publishes
+    // one owned Downloads entry, replacing its contents, not adding per-run files.
+    private static void initializeFly2Log(Context context) {
+        if (logInitialized) return;
+        logInitialized = true;
+        privateLog = new File(context.getFilesDir(), "fly2test.txt");
+        try (FileOutputStream out = new FileOutputStream(privateLog, false)) {
+            out.write("E-Client Fly2 test log\n".getBytes("UTF-8"));
+        } catch (Exception e) { Log.e(TAG, "Unable to initialize Fly2 log", e); privateLog = null; return; }
+        Platform2.setFly2LogPath(privateLog.getAbsolutePath());
+        if (Build.VERSION.SDK_INT >= 29) {
+            String saved = context.getSharedPreferences("eclient_fly2", 0).getString("downloads_uri", null);
+            if (saved != null) {
+                try (OutputStream test = context.getContentResolver().openOutputStream(Uri.parse(saved), "wt")) {
+                    if (test != null) downloadsLog = Uri.parse(saved);
+                } catch (Exception e) { Log.w(TAG, "Previous Downloads log unavailable", e); }
+            }
+            if (downloadsLog == null) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME, "fly2test.txt");
+                values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                try {
+                    downloadsLog = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                    if (downloadsLog != null) context.getSharedPreferences("eclient_fly2", 0).edit().putString("downloads_uri", downloadsLog.toString()).apply();
+                } catch (Exception e) { Log.e(TAG, "Unable to create Downloads log", e); }
+            }
+        }
+        syncFly2Log(context);
+    }
+    private void syncFly2Log() { if (activity != null) syncFly2Log(activity); }
+    private static void syncFly2Log(Context context) {
+        if (privateLog == null) return;
+        try (FileInputStream input = new FileInputStream(privateLog)) {
+            OutputStream destination;
+            if (Build.VERSION.SDK_INT >= 29) {
+                if (downloadsLog == null) return;
+                destination = context.getContentResolver().openOutputStream(downloadsLog, "wt");
+            } else {
+                destination = new FileOutputStream(new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "fly2test.txt"), false);
+            }
+            if (destination == null) return;
+            try (OutputStream output = destination) {
+                byte[] buffer = new byte[8192]; int n;
+                while ((n = input.read(buffer)) != -1) output.write(buffer, 0, n);
+            }
+        } catch (Exception e) { Log.w(TAG, "Unable to update Downloads/fly2test.txt", e); }
+    }
     private void mount(Activity a) {
         if (activity == a) return;
         unmount();
@@ -119,6 +184,7 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         keyboardVisible = false;
         wm = a.getWindowManager();
         try {
+            initializeFly2Log(a);
             surface = new Platform2(a);
             wm.addView(surface, params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE));
             touch = new View(a);
@@ -149,6 +215,7 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         }
     }
     private void unmount() {
+        syncFly2Log();
         handler.removeCallbacks(reposition);
         if (wm != null) {
             if (touch != null && touch.isAttachedToWindow()) wm.removeViewImmediate(touch);

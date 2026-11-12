@@ -10,7 +10,7 @@ output = subprocess.check_output([nm, '-D', '--defined-only', library], text=Tru
 exports = {line.split()[-1] for line in output.splitlines() if line.split()}
 prefix = 'Java_com_mojang_minecraftpe_platforms_Platform2_'
 required = {'JNI_OnLoad'} | {prefix + name for name in (
-    'init', 'resize', 'step', 'imgui_1Shutdown', 'MotionEventClick', 'getWindowRect')}
+    'setFly2LogPath', 'init', 'resize', 'step', 'imgui_1Shutdown', 'MotionEventClick', 'getWindowRect')}
 missing = sorted(required - exports)
 if missing:
     raise SystemExit('Missing exported JNI symbols: ' + ', '.join(missing))
