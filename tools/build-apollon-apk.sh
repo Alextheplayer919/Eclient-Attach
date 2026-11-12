@@ -25,4 +25,4 @@ javac -source 8 -target 8 -classpath "$ANDROID_SDK_ROOT/platforms/android-35/and
 (cd "$WORK/classes" && jar cf "$WORK/adapter.jar" .)
 d8 --min-api 26 --output "$WORK/dex" "$WORK/adapter.jar"
 ECLIENT_LOADER_SOURCE="$ROOT/apollon-adapter/loader.smali" ECLIENT_EXTRA_DEX="$WORK/dex/classes.dex" \
- "$ROOT/tools/patch-minecraft-apk.sh" "$APK" "$WORK/libs/arm64-v8a/libeclient_host.so" "$OUTPUT"
+ bash "$ROOT/tools/patch-minecraft-apk.sh" "$APK" "$WORK/libs/arm64-v8a/libeclient_host.so" "$OUTPUT"
