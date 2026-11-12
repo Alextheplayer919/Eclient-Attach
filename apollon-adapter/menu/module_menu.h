@@ -3,7 +3,7 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG };
+enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, COMBAT_DIAGNOSTICS };
 static Module movement[] = {
     {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
@@ -11,7 +11,7 @@ static Module movement[] = {
     {"Fast Fall",&fastFall,SIMPLE},{"Step",&step,SIMPLE},{"Noclip",&noclip,SIMPLE},{"No Water",&offWaterTrigger,SIMPLE},
     {"Strafe",&strafe,SIMPLE},{"No Drowning",&offDrown,SIMPLE}
 };
-static Module combat[] = {{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
+static Module combat[] = {{"Crystal test",nullptr,COMBAT_DIAGNOSTICS},{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
     {"Target Lock",&targetLock,SIMPLE},{"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
     {"Auto Clicker",&autoClicker,AUTOCLICK},{"Anti Knockback",&antiKnockback,SIMPLE},{"Anti Bot",&antiBot,SIMPLE}};
 static Module building[] = {{"Auto Mine",&clickAutoMine,SIMPLE},{"Auto Build",&fastBridge,SIMPLE},{"Block Reach",&blockReach,SIMPLE}};
@@ -87,6 +87,7 @@ static bool page(int category) {
     ImGui::BeginChild("##module-settings", ImVec2(0,0), false);
     ImGui::TextUnformatted(m.name); ImGui::Separator();
     if (m.settings == FLY2) eclient_fly2_adapter::draw();
+    else if (m.settings == COMBAT_DIAGNOSTICS) eclient_combat_diagnostics::draw();
     else if ((m.settings == SPEED || m.settings == WATER || m.settings == LAVA || m.settings == JUMP || m.settings == GRAVITY) && isLANGame) {
         ImGui::TextWrapped("Unavailable in LAN games.");
     } else if (m.settings == FOG) {
