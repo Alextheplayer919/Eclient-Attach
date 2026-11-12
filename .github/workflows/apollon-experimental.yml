@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/apollon-experimental.yml
       - apollon-adapter/**
+      - tests/**
       - tools/build-apollon-apk.sh
       - tools/prepare-apollon-adapter.py
       - tools/check-apollon-target.py
@@ -44,6 +45,7 @@ jobs:
             --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
       - name: Test Fly2 calculation on host
         run: |
+          python3 tests/check_module_menu.py
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-test"
           "$RUNNER_TEMP/fly2-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_adapter_test.cpp -o "$RUNNER_TEMP/fly2-adapter-test"

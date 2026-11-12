@@ -3,7 +3,7 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS };
+enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG };
 static Module movement[] = {
     {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
@@ -15,7 +15,7 @@ static Module combat[] = {{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAUR
     {"Target Lock",&targetLock,SIMPLE},{"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
     {"Auto Clicker",&autoClicker,AUTOCLICK},{"Anti Knockback",&antiKnockback,SIMPLE},{"Anti Bot",&antiBot,SIMPLE}};
 static Module building[] = {{"Auto Mine",&clickAutoMine,SIMPLE},{"Auto Build",&fastBridge,SIMPLE},{"Block Reach",&blockReach,SIMPLE}};
-static Module visuals[] = {{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},{"Xray Caves",&xrayCaves,SIMPLE},{"Xray Camera",&xrayCam,SIMPLE},
+static Module visuals[] = {{"Fog",nullptr,FOG},{"Font size",nullptr,FONT},{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},{"Xray Caves",&xrayCaves,SIMPLE},{"Xray Camera",&xrayCam,SIMPLE},
     {"ESP",&esp,ESP},{"FOV",&enableFov,FOV},{"FullBright",&fullBright,SIMPLE},{"FPS Boost",&osmtBoost,SIMPLE},
     {"Freelook",&look360,SIMPLE},{"No Hurt Cam",&noHurtCam,SIMPLE},{"No Cam Distortion",&noCamDist,SIMPLE},
     {"No Boat Rotation Limit",&noBoatRotation,SIMPLE},{"No Sleep Vignette",&noCamSleep,SIMPLE},
@@ -23,8 +23,8 @@ static Module visuals[] = {{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},{"
     {"No Blur",&noBlur,SIMPLE},{"Anti Blindness",&antiBlind,SIMPLE},{"Paperdoll",&showPaperdoll,SIMPLE},
     {"No Cave Vignette",&noCaveVignette,SIMPLE},{"Death Position",&deathPosition,SIMPLE},
     {"Show Position",&showPosition,POSITION},{"Near Players",&playerNear,PLAYERS}};
-static Module other[] = {{"Marketplace",&unlockMarket,SIMPLE},{"Fast Drop",&fastDrop,SIMPLE},{"No Emote Cooldown",&noEmoteCooldown,SIMPLE}};
-static int selected[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+static Module other[] = {{"LAN",nullptr,LAN},{"Config",nullptr,CONFIG},{"Marketplace",&unlockMarket,SIMPLE},{"Fast Drop",&fastDrop,SIMPLE},{"No Emote Cooldown",&noEmoteCooldown,SIMPLE}};
+static int selected[8] = {0,0,0,0,0,0,0,0};
 static Module* list(int category, int& count) {
 #define LIST(n, a) case n: count = IM_ARRAYSIZE(a); return a
     switch (category) { LIST(0,movement); LIST(1,combat); LIST(2,building); LIST(4,visuals); LIST(6,other); default: count=0; return nullptr; }
@@ -34,9 +34,8 @@ static void row(int category) {
     int count = 0; Module* modules = list(category, count);
     if (!modules) return;
     ImGui::BeginChild("##module-row", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ScrollbarSize + 4), false, ImGuiWindowFlags_HorizontalScrollbar);
-    if (ImGui::Selectable("Classic", selected[category] == -1, 0, ImVec2(ImGui::CalcTextSize("Classic").x + ImGui::GetStyle().FramePadding.x * 2, ImGui::GetFrameHeight()))) selected[category] = -1;
     for (int i = 0; i < count; ++i) {
-        ImGui::SameLine(); ImGui::PushID(i);
+        if (i) ImGui::SameLine(); ImGui::PushID(i);
         if (ImGui::Selectable(modules[i].name, selected[category] == i, 0, ImVec2(ImGui::CalcTextSize(modules[i].name).x + ImGui::GetStyle().FramePadding.x * 2, ImGui::GetFrameHeight()))) selected[category] = i;
         ImGui::PopID();
     }
@@ -59,7 +58,27 @@ static void auraSettings(bool mob) {
     if (mob || !emulateNativeAttack) { ImGui::Checkbox("Rotations", &rotations); ImGui::Checkbox("Target Lock", &targetLock); }
     ImGui::Checkbox("Hurt Check", &hurtCheck);
     if (!mob) ImGui::Checkbox("Simulate Native Attack", &emulateNativeAttack);
-    if (mob) ImGui::TextWrapped("Mob filters are available in Classic > Mobs > Mob List.");
+    if (mob && ImGui::CollapsingHeader("Excluded mobs")) {
+        ImGui::TextWrapped("Checked mobs are not attacked.");
+        struct Filter { const char* name; bool* value; };
+        Filter filters[] = {
+            {"Horses",&noHorses},{"Villagers",&noVillagers},{"Snow golems",&noSnowMan},
+            {"Iron golems",&noIronGolem},{"Donkeys",&noDonkeys},{"Allays",&noAllays},
+            {"Armadillos",&noArmadillos},{"Axolotls",&noAxolotls},{"Bats",&noBats},
+            {"Bees",&noBees},{"Camels",&noCamels},{"Cats",&noCats},
+            {"Chickens",&noChickens},{"Cod",&noCods},{"Copper golems",&noCopperGolems},
+            {"Cows",&noCows},{"Dolphins",&noDolphins},{"Foxes",&noFoxes},
+            {"Frogs",&noFrogs},{"Glow squids",&noGlowSquids},{"Goats",&noGoats},
+            {"Happy ghasts",&noHappyGhasts},{"Llamas",&noLlamas},{"Ocelots",&noOcelots},
+            {"Pandas",&noPandas},{"Parrots",&noParrots},{"Pigs",&noPigs},
+            {"Piglins",&noPiglins},{"Pufferfish",&noPufferfishes},{"Rabbits",&noRabbits},
+            {"Salmon",&noSalmons},{"Sheep",&noSheeps},{"Sniffers",&noSniffers},
+            {"Squid",&noSquids},{"Striders",&noStriders},{"Tadpoles",&noTadpoles},
+            {"Tropical fish",&noTropicalfishes},{"Turtles",&noTurtles},{"Wandering traders",&noWanderingtraders},
+            {"Wolves",&noWolfs},{"Zombie piglins",&noZombiepiglins},{"Zombie villagers",&noZombievillagers}
+        };
+        for (auto& filter : filters) ImGui::Checkbox(filter.name, filter.value);
+    }
 }
 static bool page(int category) {
     int count = 0; Module* modules = list(category, count);
@@ -68,7 +87,26 @@ static bool page(int category) {
     ImGui::BeginChild("##module-settings", ImVec2(0,0), false);
     ImGui::TextUnformatted(m.name); ImGui::Separator();
     if (m.settings == FLY2) eclient_fly2_adapter::draw();
-    else if (m.settings == SPEED || m.settings == WATER || m.settings == LAVA) {
+    else if ((m.settings == SPEED || m.settings == WATER || m.settings == LAVA || m.settings == JUMP || m.settings == GRAVITY) && isLANGame) {
+        ImGui::TextWrapped("Unavailable in LAN games.");
+    } else if (m.settings == FOG) {
+        ImGui::Combo("Fog mode", &fogState, FogStatement, IM_ARRAYSIZE(FogStatement));
+    } else if (m.settings == FONT) {
+        ImGui::SliderInt("Font size", &fontSize, 0, 10);
+    } else if (m.settings == LAN) {
+        ImGui::DragInt("Host max players", &myMaxPlayers, 0.05f, 1, 1000);
+        ImGui::TextWrapped("Re-enter the world to apply.");
+    } else if (m.settings == CONFIG) {
+        const std::string path = oxorany("/sdcard/Download/Apollon.json");
+        ImGui::TextWrapped("Config: /sdcard/Download/Apollon.json");
+        if (ImGui::Button("Load")) {
+            std::ifstream file(path);
+            if (file.good()) { loadConfig(path); onFunctionSound = true; AddNotification(oxorany("Config Loaded"), 6.0f, ImVec4(0.70f, 0.00f, 1.00f, 0.75f)); }
+            else { errorFunctionSound = true; AddNotification(oxorany("Config not found"), 6.0f, ImVec4(1.0f, 0.2f, 0.2f, 0.75f)); }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save")) { saveConfig(path); onFunctionSound = true; AddNotification(oxorany("Config Saved"), 6.0f, ImVec4(0.70f, 0.00f, 1.00f, 0.75f)); }
+    } else if (m.settings == SPEED || m.settings == WATER || m.settings == LAVA) {
         int* v = m.settings == SPEED ? &speedValue : m.settings == WATER ? &waterSpeedValue : &lavaSpeedValue;
         bool active = *v != 1;
         if (ImGui::Button(active ? "Disable" : "Enable")) *v = active ? 1 : 2;
@@ -108,7 +146,16 @@ static bool page(int category) {
         case POSITION: ImGui::SliderFloat("X", &offsetTextPosX,-1500,1500,"%.0f"); ImGui::SliderFloat("Y", &offsetTextPosY,-1000,1000,"%.0f"); break;
         case PLAYERS: ImGui::SliderFloat("X", &offsetTextPlayerNearPosX,-1500,1500,"%.0f"); ImGui::SliderFloat("Y", &offsetTextPlayerNearPosY,-1000,1000,"%.0f"); break;
         case ESP: ImGui::Checkbox("Box",&espBox); ImGui::Checkbox("Line",&espLine); ImGui::Checkbox("Distance",&espDistance); ImGui::Checkbox("Nametag",&espNametag); ImGui::Checkbox("Health",&espHealth); ImGui::Checkbox("Platform",&espPlatform); break;
-        case XRAY: ImGui::TextWrapped("Ore filters are available in Classic > Xray."); break;
+        case XRAY: {
+            struct Filter { const char* name; bool* value; };
+            Filter filters[] = {{"Diamond",&xrayDiamond},{"Iron",&xrayIron},{"Gold",&xrayGold},
+                {"Coal",&xrayCoal},{"Copper",&xrayCopper},{"Lapis",&xrayLapis},{"Emerald",&xrayEmerald},
+                {"Redstone",&xrayRedstone},{"Amethyst",&xrayAmethyst},{"Netherite",&xrayNetherite},
+                {"Quartz",&xrayQuartz},{"Obsidian",&xrayObsidian},{"Barrel",&xrayBarrel}};
+            ImGui::TextUnformatted("Visible ores and blocks:");
+            for (auto& filter : filters) if (ImGui::Checkbox(filter.name, filter.value) && *filter.value) rebuildChunkGeometry = true;
+            break;
+        }
         default: ImGui::TextUnformatted("No additional settings."); break;
         }
     }

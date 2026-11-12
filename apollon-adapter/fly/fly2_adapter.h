@@ -51,10 +51,16 @@ static void draw() {
         enabled.store(on, std::memory_order_release);
     }
     ImGui::SameLine(); ImGui::TextUnformatted(on ? "Enabled" : "Disabled");
+    auto slider = [](const char* label, std::atomic<float>& setting, float maximum) {
+        float value = setting.load(std::memory_order_relaxed);
+        if (ImGui::SliderFloat(label, &value, 1.0f, maximum, "%.1f BPS")) setting.store(value, std::memory_order_relaxed);
+    };
 #ifndef ECLIENT_FLY2_TEST
     bool mode = calculated.load();
-    if (ImGui::Checkbox("Experimental calculated mode", &mode)) calculated.store(mode);
-    ImGui::TextWrapped("Experimental input offsets: test in a safe local world first. Uncheck for previous ability flight.");
+    if (ImGui::Checkbox("Calculated mode", &mode)) calculated.store(mode);
+    slider(mode ? "Horizontal speed##fly2" : "Horizontal limit##fly2", horizontalBps, 100.0f);
+    slider(mode ? "Up speed##fly2" : "Up limit##fly2", upBps, 60.0f);
+    slider(mode ? "Down speed##fly2" : "Down limit##fly2", downBps, 60.0f);
     if (mode) {
         auto setting = [](const char* label, std::atomic<float>& value, float lo, float hi) {
             float v = value.load(); if (ImGui::SliderFloat(label, &v, lo, hi, "%.2f")) value.store(v);
@@ -62,17 +68,14 @@ static void draw() {
         setting("Glide##fly2", glide, -0.3f, 0.0f);
         setting("Up H factor##fly2", upFactor, 0.1f, 1.0f);
         setting("Down H factor##fly2", downFactor, 0.1f, 1.0f);
-    }
-#endif
-    ImGui::TextWrapped("Calculated mode uses the speed settings as targets; fallback uses them as limits. Servers may reject flight.");
-    ImGui::TextWrapped("Speed limiting is unavailable with Anti Knockback enabled.");
-    auto slider = [](const char* label, std::atomic<float>& setting, float maximum) {
-        float value = setting.load(std::memory_order_relaxed);
-        if (ImGui::SliderFloat(label, &value, 1.0f, maximum, "%.1f BPS")) setting.store(value, std::memory_order_relaxed);
-    };
+        ImGui::TextWrapped("Horizontal speed is capped at about 49 BPS by Fly2's original calculation.");
+    } else ImGui::TextWrapped("Fallback mode limits existing motion; it does not force a speed.");
+    ImGui::TextWrapped("Keep Anti Knockback off. Flight may be rejected by servers.");
+#else
     slider("Horizontal limit##fly2", horizontalBps, 100.0f);
     slider("Up limit##fly2", upBps, 60.0f);
     slider("Down limit##fly2", downBps, 60.0f);
+#endif
 }
 
 static void tick(LocalPlayer* player, bool gameReady) {

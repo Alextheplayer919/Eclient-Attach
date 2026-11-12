@@ -18,6 +18,20 @@ int main() {
     i.down = false; i.forward = 0; c.glide = 0; assert(plan(s,i,c,out) == Result::idle);
     i.forward = 1; i.strafe = 1; i.yawDegrees = 0; c.horizontalBps = 100;
     assert(plan(s,i,c,out) == Result::motion && near(std::hypot(out.x,out.z),std::sqrt(5.99f)));
+    // All six calculated-mode controls affect their intended output.
+    reset(s); i = {{0,64,0},0,1,0,false,false}; c = Settings{};
+    c.horizontalBps = 10; c.glide = -0.1f;
+    assert(plan(s,i,c,out) == Result::primed);
+    assert(plan(s,i,c,out) == Result::motion && near(out.z,0.5f) && near(out.y,-0.1f));
+    c.horizontalBps = 20; assert(plan(s,i,c,out) == Result::motion && near(out.z,1));
+    i.up = true; c.upBps = 10; c.upHorizontalFactor = 0.3f;
+    assert(plan(s,i,c,out) == Result::motion && near(out.y,0.5f) && near(out.z,0.3f));
+    c.upBps = 20; c.upHorizontalFactor = 0.8f;
+    assert(plan(s,i,c,out) == Result::motion && near(out.y,1) && near(out.z,0.8f));
+    i.up = false; i.down = true; c.downBps = 10; c.downHorizontalFactor = 0.4f;
+    assert(plan(s,i,c,out) == Result::motion && near(out.y,-0.6f) && near(out.z,0.4f));
+    c.downBps = 20; c.downHorizontalFactor = 0.7f;
+    assert(plan(s,i,c,out) == Result::motion && near(out.y,-1.1f) && near(out.z,0.7f));
     i.forward = std::numeric_limits<float>::quiet_NaN(); assert(plan(s,i,c,out) == Result::invalid);
     i.forward = 0; assert(plan(s,i,c,out) == Result::primed);
     reset(s); assert(plan(s,i,c,out) == Result::primed);

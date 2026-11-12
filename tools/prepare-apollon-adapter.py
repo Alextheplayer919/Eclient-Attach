@@ -135,6 +135,13 @@ menu_replace('\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creati
 # upstream controls while each mapped module gets its own independent page.
 menu_replace('\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);', '        eclient_module_menu::row(pageId);\n\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);')
 menu_replace('        switch (pageId) {', '        if (!eclient_module_menu::page(pageId)) switch (pageId) {')
+# Remove superseded module lists entirely. Preserve non-module List, Hotkeys,
+# Info panels; all moved settings now live in the corresponding module pages.
+for first, after in ((0, 3), (4, 5), (6, 7)):
+    begin = m.index(f'\t\t\tcase {first}:')
+    end = m.index(f'\t\t\tcase {after}:' if after != 7 else '            case 7:', begin)
+    m = m[:begin] + m[end:]
+menu_replace('\t\t\t\tImGui::Checkbox(OBFUSCATE("Anti Bot"), &antiBot);\n', '')
 menu.write_text(m)
 mk = jni / 'Android.mk'
 import shutil
