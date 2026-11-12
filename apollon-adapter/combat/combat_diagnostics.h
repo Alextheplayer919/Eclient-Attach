@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include "block_names.h"
+#include "base_search.h"
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
 static std::mutex logMutex;
@@ -93,6 +94,22 @@ static void tick(LocalPlayer* player, bool ready) {
             std::fprintf(f," block offset=%d,%d,%d air=%d type_token=%u name=%s kind=%s\n",x,y,z, b->isAir() ? 1 : 0, token,
                 name.empty() ? "unavailable" : name.c_str(), eclient::combat::blockLabel(known));
         }
+        // Read-only search across a normal nearby reach rather than only the
+        // player's feet. It does not target a player, check collisions or act.
+        const auto readBlock = [&](eclient::combat::Pos pos) {
+            vec3_ti coords{pos.x,pos.y,pos.z};
+            Block* b = blocks->getBlock(coords);
+            if (!b) return eclient::combat::Block::unknown;
+            if (b->isAir()) return eclient::combat::Block::air;
+            auto kind = eclient::combat::classifyBlockName(blockName(b->getBlockTypeClassCustom()));
+            if (kind == eclient::combat::KnownBlock::obsidian) return eclient::combat::Block::obsidian;
+            if (kind == eclient::combat::KnownBlock::bedrock) return eclient::combat::Block::bedrock;
+            return eclient::combat::Block::unknown;
+        };
+        const auto nearby = eclient::combat::findNearbyBase({p->x,p->y,p->z}, py, 4.5f, readBlock);
+        if (nearby.found) std::fprintf(f," nearby_base offset=%d,%d,%d reach=%.2f clear_above=yes\n",
+            nearby.base.x-px, nearby.base.y-py, nearby.base.z-pz, std::sqrt(nearby.distanceSquared));
+        else std::fprintf(f," nearby_base none_with_clear_air_in_range\n");
     } else std::fprintf(f," block_source_unavailable\n");
     std::fprintf(f,"snapshot end (placement, inventory, fake player and totem unavailable)\n");
     std::fclose(f);

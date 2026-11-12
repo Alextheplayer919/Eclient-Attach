@@ -58,6 +58,30 @@ jobs:
           "$RUNNER_TEMP/crystal-plan-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/combat_block_names_test.cpp -o "$RUNNER_TEMP/combat-block-names-test"
           "$RUNNER_TEMP/combat-block-names-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/base_search_test.cpp -o "$RUNNER_TEMP/base-search-test"
+          "$RUNNER_TEMP/base-search-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/practice_state_test.cpp -o "$RUNNER_TEMP/practice-state-test"
+          "$RUNNER_TEMP/practice-state-test"
+      - name: Inspect pinned native placement entrypoints
+        run: |
+          APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
+          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo 'Dynamic symbols, if present:'
+            "$BIN/llvm-nm" -D -C "$RUNNER_TEMP/libminecraftpe.so" | grep -Ei 'useItemOn|inventory|select.*slot|create.*player|spawn.*player|add.*player' | head -100 || true
+            echo 'GameMode useItemOn candidate @ 0xccc3650:'
+            "$BIN/llvm-objdump" -d --start-address=0xccc3650 --stop-address=0xccc3850 "$RUNNER_TEMP/libminecraftpe.so"
+          } > "$RUNNER_TEMP/combat-native-inspection.txt"
+          rm "$RUNNER_TEMP/libminecraftpe.so"
+      - name: Upload native inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: combat-native-inspection
+          path: ${{ runner.temp }}/combat-native-inspection.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Build experimental APK
         run: tools/build-apollon-apk.sh "$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
       - name: Upload experimental APK

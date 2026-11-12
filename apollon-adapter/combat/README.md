@@ -55,3 +55,14 @@ signature uses 32-bit integers for arguments on ARM64. A hook declaration that
 merely forwards those values is not adequate proof of a safe call signature,
 item stack ownership, face, reach or inventory selection. It is not called by
 the crystal planner. The underlying block access remains read-only.
+
+The read-only diagnostic additionally scans existing obsidian and bedrock
+bases up to 4.5 blocks from the local player's eye position, with two blocks
+of air above, and reports the nearest one. This is only a candidate: it does
+not check target proximity, collisions, damage, inventory, or server rules.
+The search is opt-in under Crystal test and has no game actions.
+
+`practice_state.h` is a unit-tested local health and simulated-totem model;
+it is not a visible player and is not connected to the game. A local-only
+player still needs a real client actor factory/lifecycle and integration with
+module targeting and actual explosion observations.
