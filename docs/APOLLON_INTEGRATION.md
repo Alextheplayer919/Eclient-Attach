@@ -1,9 +1,18 @@
 # Apollon integration: staging status
 
-The requested product is an ARM64 E-Client patched Minecraft APK with the full
-Apollon feature set. It is **not implemented or built yet**. The existing APK
-pipeline still builds the old runtime; it must not be presented as the new
-Apollon build.
+The experimental Apollon APK pipeline uses the pinned Minecraft APK, an adapted
+Apollon native library and an in-process overlay. It is an **untested prototype**,
+not a verified working release. The existing `build-and-patch.sh` pipeline still
+builds the old runtime; it must not be presented as the Apollon build.
+
+Use the **Build experimental Apollon E-Client APK** workflow or
+`tools/build-apollon-apk.sh <pinned-minecraft.apk> [output.apk]`. It produces a
+separately named APK, signed by the existing debug key. Device testing is still
+needed for startup, menu visibility, touch routing, lifecycle and features. The
+APK SHA gate and 18 original-byte checks are preserved; the latter are repeated
+at runtime before Apollon's hooks are installed. The other hooks and field
+layouts remain unverified. Apollon's original native key-handler patch is
+intentionally disabled to avoid disabling Minecraft input.
 
 `tools/build-apollon-native.sh` compiles the exact supplied `(3).zip` native
 sources in isolation with ndk-build and NDK 28.2.13676358. It restricts the
@@ -22,11 +31,10 @@ behavior are correct, nor validate all Apollon patches or game field offsets.
 
 ## Required integration work
 
-- Replace the old host internals without creating two `JNI_OnLoad` entry points
-  or installing competing hooks; keep the existing provider and signing flow.
-- Adapt Apollon's Platform2 `GLSurfaceView`/JNI renderer and touch routing to an
-  in-process UI. Its frame routine clears the color buffer, which cannot be
-  used unchanged on Minecraft's render surface. Preserve usable game input.
+- Verify the prototype's replacement host, provider, separate transparent
+  `GLSurfaceView` and touch windows on an actual device. Its renderer clears
+  its own surface, not Minecraft's; input and activity lifecycle behavior
+  have not yet been verified.
 - Audit Apollon's ARM64 hooks and patches against the exact pinned APK. Its
   startup directly patches the native key handler and installs many hooks using
   hard-coded offsets; it does not implement the existing expected-byte
