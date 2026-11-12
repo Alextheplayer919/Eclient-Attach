@@ -1,0 +1,29 @@
+name: Apollon native staging compile
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/apollon-native-staging.yml
+      - tools/build-apollon-native.sh
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v4
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'ndk;28.2.13676358'
+      - name: Compile unadapted Apollon ARM64 source
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          tools/build-apollon-native.sh
+      - name: Upload staging library (not an installable client)
+        uses: actions/upload-artifact@v4
+        with:
+          name: apollon-native-staging-not-injectable
+          path: build/apollon-native-staging/libReverseSigma.so
+          if-no-files-found: error
