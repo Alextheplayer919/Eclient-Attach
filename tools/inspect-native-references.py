@@ -15,6 +15,9 @@ SITES = {
     'offhand-container': 0xa2955b0,
     'use-item-on-block': 0xbaf96ec,
     'item-selected-event': 0xcd43638,
+    'add-wrapper-1': 0xcca0dd4,
+    'add-wrapper-2': 0xcca0fe0,
+    'begin-wrapper': 0xcc92584,
 }
 
 
@@ -98,9 +101,10 @@ def main():
             text.extend([f'\n=== {label} ===', subprocess.check_output(cmd, text=True)])
         (a.output / (name+'.txt')).write_text('\n'.join(text))
     # Locate static callers of unwind-range starts, never assuming names or ABI.
-    targets={ranges[k][0] for k in ('begin-request','add-request-action') if k in ranges}
+    caller_names=('begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper')
+    targets={ranges[k][0] for k in caller_names if k in ranges}
     calls=scan_callers(a.lib, targets)
-    for name in ('begin-request','add-request-action'):
+    for name in caller_names:
         if name not in ranges:
             continue
         entry=ranges[name][0]
