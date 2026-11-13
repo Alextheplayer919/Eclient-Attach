@@ -3,7 +3,7 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, COMBAT_DIAGNOSTICS, FOCUSED_DIAGNOSTICS, CRYSTAL_BREAK_TEST, PRACTICE_TARGET, CRYSTAL_AURA };
+enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, PRACTICE_TARGET, CRYSTAL_AURA };
 static Module movement[] = {
     {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
@@ -11,11 +11,11 @@ static Module movement[] = {
     {"Fast Fall",&fastFall,SIMPLE},{"Step",&step,SIMPLE},{"Noclip",&noclip,SIMPLE},{"No Water",&offWaterTrigger,SIMPLE},
     {"Strafe",&strafe,SIMPLE},{"No Drowning",&offDrown,SIMPLE}
 };
-static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA},{"Crystal test",nullptr,COMBAT_DIAGNOSTICS},{"Focused test",nullptr,FOCUSED_DIAGNOSTICS},{"Crystal break test",nullptr,CRYSTAL_BREAK_TEST},{"Practice target",nullptr,PRACTICE_TARGET},{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
-    {"Target Lock",&targetLock,SIMPLE},{"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
+static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA},{"Practice target",nullptr,PRACTICE_TARGET},{"KillAura",&killAura,AURA},{"MobAura",&mobAura,MOBAURA},{"HitBox",&hitBox,HITBOX},
+    {"Kill Near Items",&killItems,SIMPLE},{"Anti Fireball",&antiFireball,SIMPLE},
     {"Auto Clicker",&autoClicker,AUTOCLICK},{"Anti Knockback",&antiKnockback,SIMPLE},{"Anti Bot",&antiBot,SIMPLE}};
 static Module building[] = {{"Auto Mine",&clickAutoMine,SIMPLE},{"Auto Build",&fastBridge,SIMPLE},{"Block Reach",&blockReach,SIMPLE}};
-static Module visuals[] = {{"Fog",nullptr,FOG},{"Font size",nullptr,FONT},{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},{"Xray Caves",&xrayCaves,SIMPLE},{"Xray Camera",&xrayCam,SIMPLE},
+static Module visuals[] = {{"Fog",nullptr,FOG},{"Font size",nullptr,FONT},{"Chams",nullptr,CHAMS},{"Xray",&xrayDefault,XRAY},
     {"ESP",&esp,ESP},{"FOV",&enableFov,FOV},{"FullBright",&fullBright,SIMPLE},{"FPS Boost",&osmtBoost,SIMPLE},
     {"Freelook",&look360,SIMPLE},{"No Hurt Cam",&noHurtCam,SIMPLE},{"No Cam Distortion",&noCamDist,SIMPLE},
     {"No Boat Rotation Limit",&noBoatRotation,SIMPLE},{"No Sleep Vignette",&noCamSleep,SIMPLE},
@@ -55,7 +55,10 @@ static void auraSettings(bool mob) {
     if (!useGeyserCooldown && (mob || !emulateNativeAttack)) ImGui::Combo("Aura type", &auraType, AuraType, IM_ARRAYSIZE(AuraType));
     else { ImGui::Combo("Aura type", &auraType, AuraTypeGeyser, IM_ARRAYSIZE(AuraTypeGeyser)); if (auraType == 2) auraType = 1; }
     ImGui::Checkbox("Swing", &swing);
-    if (mob || !emulateNativeAttack) { ImGui::Checkbox("Rotations", &rotations); ImGui::Checkbox("Target Lock", &targetLock); }
+    if (mob || !emulateNativeAttack) {
+        ImGui::Checkbox("Rotations", &rotations); ImGui::Checkbox("Target Lock", &targetLock);
+        ImGui::TextDisabled("Shared with KillAura and MobAura");
+    } else ImGui::TextWrapped("Native attack forces rotations and target lock on.");
     ImGui::Checkbox("Hurt Check", &hurtCheck);
     if (!mob) ImGui::Checkbox("Simulate Native Attack", &emulateNativeAttack);
     if (mob && ImGui::CollapsingHeader("Excluded mobs")) {
@@ -87,11 +90,15 @@ static bool page(int category) {
     ImGui::BeginChild("##module-settings", ImVec2(0,0), false);
     ImGui::TextUnformatted(m.name); ImGui::Separator();
     if (m.settings == FLY2) eclient_fly2_adapter::draw();
-    else if (m.settings == COMBAT_DIAGNOSTICS) eclient_combat_diagnostics::draw();
-    else if (m.settings == FOCUSED_DIAGNOSTICS) eclient_combat_diagnostics::drawFocused();
-    else if (m.settings == CRYSTAL_BREAK_TEST) eclient_crystal_break_test::draw();
     else if (m.settings == PRACTICE_TARGET) eclient_practice_target::draw();
-    else if (m.settings == CRYSTAL_AURA) eclient_crystal_aura::draw();
+    else if (m.settings == CRYSTAL_AURA) {
+        eclient_crystal_aura::draw();
+        if (ImGui::CollapsingHeader("Diagnostics and tools")) {
+            if (ImGui::TreeNode("Crystal test")) { eclient_combat_diagnostics::draw(); ImGui::TreePop(); }
+            if (ImGui::TreeNode("Focused test")) { eclient_combat_diagnostics::drawFocused(); ImGui::TreePop(); }
+            if (ImGui::TreeNode("Crystal break test")) { eclient_crystal_break_test::draw(); ImGui::TreePop(); }
+        }
+    }
     else if ((m.settings == SPEED || m.settings == WATER || m.settings == LAVA || m.settings == JUMP || m.settings == GRAVITY) && isLANGame) {
         ImGui::TextWrapped("Unavailable in LAN games.");
     } else if (m.settings == FOG) {
@@ -152,6 +159,8 @@ static bool page(int category) {
         case PLAYERS: ImGui::SliderFloat("X", &offsetTextPlayerNearPosX,-1500,1500,"%.0f"); ImGui::SliderFloat("Y", &offsetTextPlayerNearPosY,-1000,1000,"%.0f"); break;
         case ESP: ImGui::Checkbox("Box",&espBox); ImGui::Checkbox("Line",&espLine); ImGui::Checkbox("Distance",&espDistance); ImGui::Checkbox("Nametag",&espNametag); ImGui::Checkbox("Health",&espHealth); ImGui::Checkbox("Platform",&espPlatform); break;
         case XRAY: {
+            ImGui::Checkbox("Xray Caves", &xrayCaves);
+            ImGui::Checkbox("Xray Camera (Third Person)", &xrayCam);
             struct Filter { const char* name; bool* value; };
             Filter filters[] = {{"Diamond",&xrayDiamond},{"Iron",&xrayIron},{"Gold",&xrayGold},
                 {"Coal",&xrayCoal},{"Copper",&xrayCopper},{"Lapis",&xrayLapis},{"Emerald",&xrayEmerald},

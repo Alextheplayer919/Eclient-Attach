@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient::combat::forwardPlacement(old_GameMode_FastBridge, args)' in main
     assert 'int (*old_GameMode_FastBridge)(int a1' not in main
     assert 'eclient_crystal_break_test::tick(player, gameReady);' in main
-    assert '"Crystal break test"' in menu
+    assert 'ImGui::TreeNode("Crystal break test")' in menu
     assert (jni / 'crystal_break_test.h').exists()
     assert (jni / 'practice_target.h').exists()
     assert 'eclient_practice_target::tick(player, gameReady);' in main
@@ -47,6 +47,18 @@ with tempfile.TemporaryDirectory() as tmp:
         assert not re.search(r'case\s+' + str(category) + r'\s*:', transformed), category
     for category in (3, 5, 7): assert re.search(r'case\s+' + str(category) + r'\s*:', transformed), category
     assert '"Classic"' not in menu
+    # Module rows contain modules, not options or diagnostics; moved controls
+    # remain available independently of the parent module's enabled state.
+    rows = menu.split('static Module movement[]', 1)[1].split('static int selected', 1)[0]
+    for option in ('Target Lock', 'Xray Caves', 'Xray Camera', 'Crystal test', 'Focused test', 'Crystal break test'):
+        assert '"' + option + '"' not in rows, option
+    assert 'ImGui::Checkbox("Target Lock", &targetLock)' in menu
+    assert 'ImGui::Checkbox("Xray Caves", &xrayCaves)' in menu
+    assert 'ImGui::Checkbox("Xray Camera (Third Person)", &xrayCam)' in menu
+    for name in ('Crystal test', 'Focused test', 'Crystal break test'):
+        assert 'ImGui::TreeNode("' + name + '")' in menu
+    assert 'Shared with KillAura and MobAura' in menu
+
     # Every upstream mob and ore option remains wired to the same variable.
     for group in ('Mob List', 'Xray'):
         if group == 'Mob List':

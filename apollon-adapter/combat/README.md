@@ -21,7 +21,7 @@ modifies a world until these native contracts are established.
 
 ## Read-only device diagnostics
 
-Combat > Crystal test starts/stops a read-only, one-snapshot-per-second log.
+Combat > Crystal Aura > Diagnostics and tools > Crystal test starts/stops a read-only, one-snapshot-per-second log.
 It logs nearby actor type IDs and relative offsets, plus air/non-air and
 session-local block-type tokens in a 3x3x3 area around the player's feet. It
 does not record player names or absolute coordinates. Compare snapshots after
@@ -87,7 +87,7 @@ only subsequent world observations establish whether anything changed.
 
 ## Focused test
 
-Combat > Focused test is a separate, mutually exclusive logging mode. It records
+Combat > Crystal Aura > Diagnostics and tools > Focused test is a separate, mutually exclusive logging mode. It records
 placement-candidate calls and changes in the count of crystal actors within 12
 blocks, sampled up to four times per second. It omits broad block and actor
 snapshots. Count changes can mean actors entered or left range, not necessarily
@@ -100,7 +100,7 @@ caveats are the same as above. No new inventory hook or game action is invoked.
 
 ## One-shot crystal break test
 
-Combat > Crystal break test arms a single attack attempt for 10 seconds. On a
+Combat > Crystal Aura > Diagnostics and tools > Crystal break test arms a single attack attempt for 10 seconds. On a
 ready game tick it finds the nearest existing crystal actor within 4 blocks and
 calls Apollon's existing GameMode::attack wrapper once, then disarms. It cancels
 on panic, leaving the world, or an unready tick. No actor pointer is retained
