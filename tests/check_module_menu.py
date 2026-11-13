@@ -35,6 +35,13 @@ with tempfile.TemporaryDirectory() as tmp:
                     'eclient_combat_diagnostics', 'eclientSwapConstructor', 'eclientRequestAction', 'setCombatLogPath', 'SpecialMusic'):
         assert removed not in main, removed
     assert (jni / 'placement_forward.h').exists()
+    assert (jni / 'preview_adapter.h').exists()
+    assert 'eclient_preview::draw(draw_list, CameraPos, currentFov, currentViewMatrix)' in transformed
+    assert 'setPreviewAssets' in main
+    assert 'cube_mesh.cpp' in (jni / 'Android.mk').read_text()
+    assert 'texture_catalog.cpp' in (jni / 'Android.mk').read_text()
+    assert '"Schematic Preview"' in menu
+
     resize = main.split('Platform2_resize(JNIEnv* env, jobject obj, jint width, jint height) {', 1)[1].split('void Patches()', 1)[0]
     assert 'static bool isLoaded' not in resize
     assert 'ImGui::PopItemWidth();' in transformed

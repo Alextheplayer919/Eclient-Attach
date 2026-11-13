@@ -70,6 +70,8 @@ replace('        BeginDraw();', '''        BeginDraw();
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
 replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "placement_forward.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
+replace('#include "module_menu.h"', '#include "preview_adapter.h"\n#include "module_menu.h"')
+replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setPreviewAssets(JNIEnv* env, jclass, jobject assets) { eclient_preview::setAssets(env, assets); }')
 # Run cleanup even on Apollon's early panic/menu/death exits. The original
 # tick runs first so its Creative Fly bookkeeping cannot undo Fly2 this frame.
 normal_start = s.index('void *NormalTick(LocalPlayer *thiz) {')
@@ -141,6 +143,7 @@ replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
 p.write_text(s)
 menu = jni / 'menu.h'
 m = menu.read_text()
+m = m.replace('                        if (xrayDefault) RenderOreESP', '                        eclient_preview::draw(draw_list, CameraPos, currentFov, currentViewMatrix);\n                        if (xrayDefault) RenderOreESP', 1)
 def menu_replace(old, new, expected=1):
     global m
     if m.count(old) != expected:
@@ -199,7 +202,9 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
+for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
+    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
-m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
+m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    cube_mesh.cpp \\\n    texture_catalog.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
 mk.write_text(m)

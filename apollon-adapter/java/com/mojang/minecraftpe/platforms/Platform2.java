@@ -1,6 +1,7 @@
 package com.mojang.minecraftpe.platforms;
 
 import android.content.Context;
+import android.content.res.AssetManager;
 import android.graphics.PixelFormat;
 import android.opengl.GLSurfaceView;
 import javax.microedition.khronos.egl.EGLConfig;
@@ -29,6 +30,7 @@ public final class Platform2 extends GLSurfaceView implements GLSurfaceView.Rend
             // A context can be lost without a queued shutdown running. Rebuild
             // ImGui and its renderer in this new GL context, with fresh style.
             if (nativeInitialized) { imgui_Shutdown(); nativeInitialized = false; }
+            setPreviewAssets(getContext().getAssets());
             init(); nativeInitialized = true;
         }
     }
@@ -46,6 +48,7 @@ public final class Platform2 extends GLSurfaceView implements GLSurfaceView.Rend
             if (generation == currentGeneration && nativeInitialized) { imgui_Shutdown(); nativeInitialized = false; }
         }
     }
+    private static native void setPreviewAssets(AssetManager assets);
     public static native void setFly2LogPath(String path);
     public static native void init();
     public static native void resize(int width, int height);
