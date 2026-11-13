@@ -29,6 +29,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'int (*old_GameMode_FastBridge)(int a1' not in main
     assert 'eclient_crystal_break_test::tick(player, gameReady);' in main
     assert 'ImGui::TreeNode("Crystal break test")' in menu
+    assert 'ImGui::TreeNode("Inventory swap trace")' in menu
+    assert 'eclient_combat_diagnostics::swapConstruction(first, second)' in main
+    assert 'getAbsoluteAddress(MineLib, 0xcc9da9c)' in main
+    assert 'memcmp((const void*)swapAddress, swapExpected' in main
     assert (jni / 'crystal_break_test.h').exists()
     assert (jni / 'practice_target.h').exists()
     assert 'eclient_practice_target::tick(player, gameReady);' in main

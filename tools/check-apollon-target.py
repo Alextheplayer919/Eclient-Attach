@@ -63,6 +63,11 @@ def inspect(apk):
                 return lib[pos:pos + length]
         raise ValueError(f'0x{addr:x} is not in a file-backed executable PT_LOAD')
     failures = []
+    swap_expected = bytes.fromhex('ff8301d1fd7b02a9fd830091f71b00f9')
+    swap_actual = read_exec(0xcc9da9c, len(swap_expected))
+    if swap_actual != swap_expected:
+        raise ValueError('swap observer prologue mismatch: ' + swap_actual.hex())
+    print('Swap observer candidate prologue matches; this does not validate ABI or behavior.')
     print('APK SHA-256 verified; library is ARM64 ELF.')
     for name, expected in EXPECTED.items():
         actual = read_exec(offsets[name], len(bytes.fromhex(expected))).hex()

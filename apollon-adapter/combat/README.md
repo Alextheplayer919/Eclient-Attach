@@ -216,3 +216,17 @@ The earlier statement that the scan did not resolve a swap constructor is
 superseded by this inheritance-based lead. Vtable enumeration may include
 false positives where inheritance pointers resemble vtable headers; references
 and unwind metadata are evidence to investigate, not a public API.
+
+### Passive swap trace (experimental)
+
+Crystal Aura > Diagnostics and tools > Inventory swap trace records the first
+13 opaque bytes from each constructor input while enabled (100 events per
+recording) in Downloads/combat-test.txt. Use Mark next manual swap to label
+individual manual moves; no interpretation of the bytes is assumed. The 13
+bytes may contain inventory-related metadata; do not share logs publicly if
+that is sensitive. The hook is installed at startup when the pinned 16-byte
+prologue matches, even while recording is off; it forwards the original call,
+never replays pointers, and never changes inventory. A hook or ABI error can
+still crash or interfere with gameplay. This is not device-tested; no event
+may mean the user's move uses another path. Constructor events do not prove a
+server accepted a swap. Use a disposable local world and back it up first.

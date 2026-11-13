@@ -116,6 +116,25 @@ std::uint64_t GameMode_FastBridge(std::uintptr_t a0, std::uintptr_t a1, std::uin
     // Preserve the original adapter's FastBridge return policy.
     return (!panic && fastBridge) ? 0 : result;
 }''')
+# Observational swap-action constructor hook for the exact pinned arm64 image.
+# The constructor reads x0/x1/x2 and returns without a defined semantic result;
+# forward x0 as well so we do not discard its observed machine return register.
+replace('eclient::combat::PlacementFn old_GameMode_FastBridge;', '''using SwapConstructorFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t);
+static SwapConstructorFn old_SwapConstructor = nullptr;
+static std::uintptr_t eclientSwapConstructor(std::uintptr_t object, std::uintptr_t first, std::uintptr_t second) {
+    eclient_combat_diagnostics::swapConstruction(first, second);
+    return old_SwapConstructor(object, first, second);
+}
+eclient::combat::PlacementFn old_GameMode_FastBridge;''')
+replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::FastBridge), (void *) GameMode_FastBridge, (void **) &old_GameMode_FastBridge);', '''    // Validate a fixed 16-byte prologue independently before installing the
+    // experimental observer; failure leaves all swap tracing disabled.
+    auto swapAddress = getAbsoluteAddress(MineLib, 0xcc9da9c);
+    const unsigned char swapExpected[] = {0xff,0x83,0x01,0xd1,0xfd,0x7b,0x02,0xa9,0xfd,0x83,0x00,0x91,0xf7,0x1b,0x00,0xf9};
+    if (swapAddress && memcmp((const void*)swapAddress, swapExpected, sizeof(swapExpected)) == 0) {
+        A64HookFunction((void*)swapAddress, (void*)eclientSwapConstructor, (void**)&old_SwapConstructor);
+        eclient_combat_diagnostics::swapHookReady.store(old_SwapConstructor != nullptr);
+    }
+\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::FastBridge), (void *) GameMode_FastBridge, (void **) &old_GameMode_FastBridge);''')
 replace('oxorany("§l§0[§5Apollon Client§0]§r Good Luck, Have Fun!")', 'oxorany("[E-Client] Good luck and have fun!")')
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)

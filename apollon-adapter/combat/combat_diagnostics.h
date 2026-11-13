@@ -16,6 +16,9 @@
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
 static std::atomic<bool> focused{false};
+static std::atomic<bool> swapTrace{false};
+static std::atomic<bool> swapHookReady{false};
+static std::atomic<unsigned> swapEvents{0};
 static std::atomic<unsigned> focusedSession{0};
 static std::mutex logMutex;
 static std::string path;
@@ -59,6 +62,40 @@ static void drawFocused() {
         if (ImGui::Button("Mark crystal moved")) marker("user_reports_crystal_moved");
     }
     ImGui::TextWrapped("Downloads/combat-test.txt; placement calls may contain world coordinates and can include other items.");
+}
+// Experimental passive trace. The first 13 bytes of each input are copied by
+// the identified constructor. They are opaque; never reinterpret as a slot or
+// retain pointers. process_vm_readv fails closed if either range is unreadable.
+// Events may arise outside manual swaps and do not prove server acceptance.
+struct SwapPrefix { unsigned char bytes[13]; };
+static void swapConstruction(std::uintptr_t first, std::uintptr_t second) {
+    if (!swapTrace.load() || panic) return;
+    SwapPrefix a{}, b{};
+    const bool aOk = eclient::fly2::probe::read(first, a);
+    const bool bOk = eclient::fly2::probe::read(second, b);
+    std::lock_guard<std::mutex> lock(logMutex);
+    if (!swapTrace.load() || path.empty() || swapEvents.load() >= 100) return;
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    if (std::ftell(f) > 1024*1024) { std::fclose(f); f = std::fopen(path.c_str(), "w"); if (!f) return; }
+    unsigned count = ++swapEvents;
+    std::fprintf(f, "time=%lld swap_constructor_event=%u first13=", (long long)std::time(nullptr), count);
+    if (aOk) for (auto byte : a.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+    std::fprintf(f, " second13=");
+    if (bOk) for (auto byte : b.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+    std::fprintf(f, " (opaque_inputs_not_proof_of_completed_swap)\n");
+    std::fclose(f);
+}
+static void drawSwapTrace() {
+    ImGui::TextWrapped("Experimental passive hook for swap action construction. Hook is installed at startup only on matching code bytes; it may crash the game. Does not move items or confirm success.");
+    ImGui::TextWrapped("Writes opaque inventory-related bytes to Downloads/combat-test.txt; they may contain sensitive metadata. Up to 100 events per recording.");
+    if (!swapHookReady.load()) { ImGui::TextWrapped("Swap hook unavailable on this build."); return; }
+    const bool on=swapTrace.load();
+    if (ImGui::Button(on ? "Stop swap trace" : "Start swap trace")) {
+        if (on) { swapTrace.store(false); marker("swap_trace_stopped"); }
+        else { swapEvents.store(0); marker("swap_trace_started"); swapTrace.store(true); }
+    }
+    if (on && ImGui::Button("Mark next manual swap")) marker("next_manual_inventory_swap");
 }
 // Match Apollon's Xray hook: BlockType+8 is a native std::string containing
 // a tile description name. Validate both object and characters before use.

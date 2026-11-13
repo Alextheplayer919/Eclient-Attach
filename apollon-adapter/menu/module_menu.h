@@ -95,6 +95,7 @@ static bool page(int category) {
         eclient_crystal_aura::draw();
         if (ImGui::CollapsingHeader("Diagnostics and tools")) {
             if (ImGui::TreeNode("Crystal test")) { eclient_combat_diagnostics::draw(); ImGui::TreePop(); }
+            if (ImGui::TreeNode("Inventory swap trace")) { eclient_combat_diagnostics::drawSwapTrace(); ImGui::TreePop(); }
             if (ImGui::TreeNode("Focused test")) { eclient_combat_diagnostics::drawFocused(); ImGui::TreePop(); }
             if (ImGui::TreeNode("Crystal break test")) { eclient_crystal_break_test::draw(); ImGui::TreePop(); }
         }
