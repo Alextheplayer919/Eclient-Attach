@@ -5,7 +5,8 @@ never injects, installs, opens, or modifies Minecraft. No network permission is
 requested. Choose an APK containing `lib/arm64-v8a/libminecraftpe.so`, an ARM64
 split APK containing that entry, or the extracted ELF library with Android's
 file picker. The app copies it into its private cache, analyzes it on a worker
-thread, and removes the temporary copies after analysis. Export the report to a
+thread, and removes the temporary copies after analysis. A completed report is kept in the
+app's private storage and restored if the app is recreated. Export the report to a
 user-selected location with Save report. Large APKs require enough free space
 for both the copied APK and extracted library; inputs are limited to 2 GiB and
 libraries to 1 GiB. Keep the app open while analyzing. Debug builds use an
@@ -29,8 +30,9 @@ Run the host test with:
 
 ```
 mkdir -p /tmp/eclient-mapper-tests
-javac -d /tmp/eclient-mapper-tests mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/tests/ElfMapperTest.java
+javac -d /tmp/eclient-mapper-tests mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/src/com/eclient/mapper/ReportStore.java mapper-app/tests/ElfMapperTest.java mapper-app/tests/ReportStoreTest.java
 java -cp /tmp/eclient-mapper-tests com.eclient.mapper.ElfMapperTest
+java -cp /tmp/eclient-mapper-tests com.eclient.mapper.ReportStoreTest
 ```
 
 Build with Android SDK platform 35 and build-tools 35 on PATH:

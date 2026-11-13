@@ -20,8 +20,9 @@ jobs:
       - name: Test ELF mapper
         run: |
           mkdir -p "$RUNNER_TEMP/mapper-tests"
-          javac -d "$RUNNER_TEMP/mapper-tests" mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/tests/ElfMapperTest.java
+          javac -d "$RUNNER_TEMP/mapper-tests" mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/src/com/eclient/mapper/ReportStore.java mapper-app/tests/ElfMapperTest.java mapper-app/tests/ReportStoreTest.java
           java -cp "$RUNNER_TEMP/mapper-tests" com.eclient.mapper.ElfMapperTest
+          java -cp "$RUNNER_TEMP/mapper-tests" com.eclient.mapper.ReportStoreTest
       - uses: android-actions/setup-android@v4
       - name: Install Android build tools
         run: |
