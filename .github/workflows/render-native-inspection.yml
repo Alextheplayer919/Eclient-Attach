@@ -34,6 +34,16 @@ jobs:
               matches=[n for n in names if 'terrain_texture.json' in n.lower() or ('textures/blocks/' in n.lower() and n.lower().endswith('.png'))]
               out=[f'Candidate terrain JSON or block texture assets: {len(matches)}']
               out += matches[:100]
+              blockmaps=[n for n in names if n.lower().endswith('/blocks.json') and '/resource_packs/' in n.lower()]
+              baseatlas=[n for n in matches if '/resource_packs/vanilla/textures/terrain_texture.json' in n.lower()]
+              out.append(f'Block map candidates: {len(blockmaps)}; base terrain maps: {len(baseatlas)}')
+              out += blockmaps[:40]
+              for n in blockmaps:
+                  if n.lower().endswith('/vanilla/blocks.json'):
+                      try:
+                          d=json.loads(z.read(n)); out.append('Base blocks JSON keys: '+repr(list(d)[:10])); out.append('stone mapping: '+repr(d.get('stone') or d.get('minecraft:stone'))[:800])
+                      except Exception as e: out.append('Base blocks JSON read error: '+type(e).__name__)
+              print('::notice title=Block asset discovery::'+' | '.join(out[1+min(len(matches),100):]).replace('%','%25')[:3500])
               for n in matches:
                   if n.lower().endswith('terrain_texture.json'):
                       try:
