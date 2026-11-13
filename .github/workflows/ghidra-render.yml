@@ -61,9 +61,14 @@ jobs:
           grep -Eq '^Completed: [1-9][0-9]*$' "$RUNNER_TEMP/report/decompile.txt"
           python3 - "$RUNNER_TEMP/report/decompile.txt" <<'PYCODE'
           import sys
-          for line in open(sys.argv[1]):
-              if line.startswith(('===', 'Ghidra entry=', 'FAILED:', 'Completed:')):
-                  print('::notice title=Ghidra targeted research::'+line.strip().replace('%','%25'))
+          text=open(sys.argv[1]).read()
+          for section in text.split('\n=== ')[1:]:
+              name=section.splitlines()[0].split()[0]
+              snippet=section[:6500].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print('::notice title=Ghidra '+name+'::'+snippet)
+          for line in text.splitlines():
+              if line.startswith(('FAILED:', 'Completed:')):
+                  print('::notice title=Ghidra result::'+line.replace('%','%25'))
           PYCODE
       - uses: actions/upload-artifact@v4
         if: always()
