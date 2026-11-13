@@ -10,6 +10,8 @@ public final class ElfMapper {
     // Specific names only: generic "container" matches thousands of unrelated
     // C++/Cohtml symbols and "totem" alone also matches LogToTemporaryFile.
     private static final String[][] TERMS = {
+        {"block rendering and tessellation", "blocktessellator", "block_tessellator", "blockrenderer", "block_renderer", "rendertessellator", "renderchunk", "render_chunk", "chunkrenderer", "blockmodel", "block_model", "renderlayer", "render_layer"},
+        {"texture atlas and materials", "textureatlas", "texture_atlas", "terrain_texture", "terraintexture", "blocktexture", "block_texture", "texturegroup", "texture_group", "materialinstance", "material_instance", "materialpointer", "meshbuilder", "mesh_builder"},
         {"item and transaction", "itemstack", "item_stack", "inventorytransaction", "inventory_transaction", "stackrequest", "stack_request", "mob_equipment"},
         {"inventory and slots", "inventory", "selectedslot", "selected_slot", "selectslot", "select_slot", "hotbar", "playerinventory", "inventoryslot"},
         {"offhand and totem", "offhand", "off_hand", "totem_of_undying", "minecraft:totem", "item.totem", "totem_particle", "totem_manual"},
@@ -17,7 +19,7 @@ public final class ElfMapper {
         {"crystal and attack", "ender_crystal", "end_crystal", "endcrystal", "endercrystal", "crystal_explod", "crystal_explode", "gamemode::attack", "_attack", "destroyblock"},
         {"actor and player", "localplayer", "actorfactory", "actor_factory", "createactor", "create_actor", "spawnactor", "spawn_actor", "addactor", "add_actor", "runtimeactor"}
     };
-    private static final int PER_CATEGORY=200, PER_SYMBOL_CATEGORY=100, MAX_XREFS=1000;
+    private static final int PER_CATEGORY=200, PER_SYMBOL_CATEGORY=100, MAX_XREFS=1000, MAX_XREFS_PER_CATEGORY=125;
     private static final long MAX_FILE=1024L*1024*1024;
     private static final class Segment { long off, va, size; int flags; }
     private static final class Hit {
@@ -28,6 +30,7 @@ public final class ElfMapper {
         String t=text.toLowerCase(Locale.ROOT); int s=0;
         if(t.contains("minecraft:") || t.contains("gamemode") || t.contains("localplayer") || t.contains("playerinventory")) s+=4;
         if(t.contains("inventorytransaction") || t.contains("itemstacknet") || t.contains("useitemon") || t.contains("selectedslot") || t.contains("offhand")) s+=3;
+        if(t.contains("blocktessellator") || t.contains("blockrenderer") || t.contains("textureatlas") || t.contains("terrain_texture") || t.contains("blockmodel")) s+=4;
         if(t.contains("::")) s+=2;
         if(t.startsWith("_z") || t.startsWith("nstd") || t.contains("cohtml") || t.contains("xbox::") || t.contains("v8::")) s-=3;
         if(t.contains("std::__ndk1::") || t.contains("std::vector")) s-=2;
@@ -137,7 +140,7 @@ public final class ElfMapper {
             // flow and writes, but never claim this proves an actual xref.
             Map<Long,List<Hit>> byAddress=new HashMap<>(); for(Hit hit:hits) if(hit.va>=0) byAddress.computeIfAbsent(hit.va,k->new ArrayList<>()).add(hit);
             out.append("\nARM64 ADRP+ADD STRING XREF CANDIDATES (up to 3 intervening instructions; heuristic, not function entries)\n");
-            int refs=0;
+            int refs=0; int[] categoryRefs=new int[TERMS.length];
             for(Segment s:segments) {
                 if((s.flags&1)==0 || refs>=MAX_XREFS) continue;
                 byte[] buf=new byte[1024*1024+16]; long offset=0;
@@ -157,7 +160,7 @@ public final class ElfMapper {
                                 long dest=page+(((next>>>10)&0xfffL)<<(((next>>>22)&1)*12));
                                 List<Hit> matched=byAddress.get(dest);
                                 if(matched!=null) for(Hit hit:matched) {
-                                    if(refs>=MAX_XREFS)break; refs++;
+                                    if(refs>=MAX_XREFS)break; if(categoryRefs[hit.cat]>=MAX_XREFS_PER_CATEGORY)continue; refs++; categoryRefs[hit.cat]++;
                                     out.append("code_vaddr=").append(hex(pc)).append(" code_file=").append(hex(s.off+offset+i)).append(" string_vaddr=").append(hex(dest)).append(" gap=").append(gap-1).append(" [").append(hit.category).append("] ").append(hit.text).append('\n');
                                 }
                                 break;
@@ -172,7 +175,7 @@ public final class ElfMapper {
                     offset+=usable;
                 }
             }
-            out.append("Listed: ").append(refs).append(" (maximum ").append(MAX_XREFS).append("); only selected strings are searched, and absence does not prove no reference.\n");
+            out.append("Listed: ").append(refs).append(" (maximum ").append(MAX_XREFS).append(", maximum ").append(MAX_XREFS_PER_CATEGORY).append(" per category); only selected strings are searched, and absence does not prove no reference.\n");
             return out.toString();
         }
     }

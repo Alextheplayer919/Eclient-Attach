@@ -1,0 +1,22 @@
+name: Test schematic C++ core
+on:
+  push:
+    paths:
+      - apollon-adapter/schematic/**
+      - tests/mcstructure_test.cpp
+      - tests/schematic_anchor_test.cpp
+      - .github/workflows/schematic-core.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Bedrock structure parser
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer tests/mcstructure_test.cpp apollon-adapter/schematic/mcstructure.cpp -o "$RUNNER_TEMP/mcstructure-test"
+          "$RUNNER_TEMP/mcstructure-test"
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer tests/schematic_anchor_test.cpp -o "$RUNNER_TEMP/schematic-anchor-test"
+          "$RUNNER_TEMP/schematic-anchor-test"

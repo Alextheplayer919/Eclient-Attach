@@ -17,12 +17,12 @@ The report contains SHA-256 hashes, ARM64 ELF load mappings, ranked and category
 strings and ELF symbols, and heuristic ARM64 ADRP+ADD string reference
 **candidates** (up to three intervening instructions). Both file offsets and ELF virtual addresses are
 labelled. It looks for inventory, offhand/totems, interaction/placement,
-crystal/attack and item/transaction terminology. Filtering is deliberately
+crystal/attack and item/transaction terminology, plus block-rendering, tessellation, texture-atlas and material terms for schematic research. Filtering is deliberately
 bounded and broad; strings and dynamic symbols can be stripped or obfuscated.
 The xref pass is not a disassembler: it misses indirect references, other
 instruction sequences and longer gaps, and can have false positives (especially
 when intervening instructions change registers). Only selected, capped strings
-are searched for references. File offsets are not runtime addresses. Nothing identifies a safe
+are searched for references, with a per-category xref cap so unrelated early matches do not consume the entire budget. File offsets are not runtime addresses. Nothing identifies a safe
 function ABI, object lifetime, selected slot, offhand behavior, action success,
 or a guaranteed correct offset. Do not call or patch an address based solely on
 the report. No current gameplay or live process state is observed.
