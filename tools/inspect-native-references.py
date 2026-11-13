@@ -87,6 +87,45 @@ def scan_callers(path, targets):
             for key in result: result[key].extend(part[key])
         return result
 
+def virtual_offset(data, address, size=1):
+    phoff=struct.unpack_from('<Q', data, 32)[0]
+    phsize,count=struct.unpack_from('<HH',data,54)
+    if phsize<56 or count>1024 or phoff+phsize*count>len(data): raise ValueError('bad program headers')
+    for i in range(count):
+        typ,_,offset,va,_,filesz,_,_=struct.unpack_from('<IIQQQQQQ',data,phoff+i*phsize)
+        if typ==1 and address>=va and address-va <= filesz and size<=filesz-(address-va):
+            filepos=offset+(address-va)
+            if filepos<=len(data) and size<=len(data)-filepos: return filepos
+    return None
+
+
+def inspect_vtable(path, addresses):
+    """Inspect raw ELF vtables; runtime relocations may make entries differ."""
+    lines=[]
+    with path.open('rb') as file, mmap.mmap(file.fileno(),0,access=mmap.ACCESS_READ) as mm:
+        for name,va in addresses.items():
+            pos=virtual_offset(mm,va-16,48)
+            if pos is None:
+                lines.append(f'{name} {va:#x}: unmapped')
+                continue
+            words=struct.unpack_from('<6Q',mm,pos)
+            lines.append(f'{name} vtable_address={va:#x} raw_header_and_entries='+','.join(hex(w) for w in words))
+            typeinfo=words[1]
+            tpos=virtual_offset(mm,typeinfo,16)
+            if tpos is None:
+                lines.append('  typeinfo unavailable or requires relocation')
+                continue
+            _,nameva=struct.unpack_from('<QQ',mm,tpos)
+            npos=virtual_offset(mm,nameva,1)
+            if npos is None:
+                lines.append(f'  typeinfo={typeinfo:#x}, name unavailable or requires relocation')
+                continue
+            end=mm.find(b'\0',npos,min(len(mm),npos+256))
+            if end<0: end=min(len(mm),npos+256)
+            text=mm[npos:end].decode('ascii','replace')
+            lines.append(f'  typeinfo={typeinfo:#x} name={text}')
+    return lines
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--lib', required=True, type=Path)
@@ -109,6 +148,10 @@ def main():
             cmd = [a.objdump, '-d', f'--start-address={start}', f'--stop-address={end}', str(a.lib)]
             text.extend([f'\n=== {label} ===', subprocess.check_output(cmd, text=True)])
         (a.output / (name+'.txt')).write_text('\n'.join(text))
+    # Possible C++ vtable address points taken from constructor disassembly.
+    # Values in the file may require loader relocations.
+    vtables={'action-type-11':0x1037a820, 'legacy-type-15':0x103783f8, 'legacy-type-18':0x103783b0}
+    (a.output / 'vtable-raw.txt').write_text('\n'.join(inspect_vtable(a.lib, vtables))+'\n')
     # Locate static callers of unwind-range starts, never assuming names or ABI.
     caller_names=('begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper','action-context','action-constructor','legacy-action-construct-a','legacy-action-construct-b','inventory-ui-context','manager-candidate-getter','action-base-constructor','action-owner-accessor','action-slot-accessor')
     targets={ranges[k][0] for k in caller_names if k in ranges}
