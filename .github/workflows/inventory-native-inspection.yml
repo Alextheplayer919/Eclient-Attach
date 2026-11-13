@@ -31,7 +31,6 @@ jobs:
           OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           python3 tests/inspect_native_references_test.py
           python3 tools/inspect-native-references.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/inventory-inspection"
-          readelf -rW "$RUNNER_TEMP/libminecraftpe.so" | python3 -c 'import sys; keys=("1037a818", "103783f0", "103783a8"); [print("::notice title=Vtable relocation::"+line.strip()) for line in sys.stdin if any(k in line.lower() for k in keys)]' || true
           rm "$RUNNER_TEMP/libminecraftpe.so"
       - name: Surface transaction candidates
         run: |

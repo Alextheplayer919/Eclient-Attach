@@ -99,31 +99,40 @@ def virtual_offset(data, address, size=1):
     return None
 
 
+def relative_relocations(path, offsets):
+    """Extract selected static R_AARCH64_RELATIVE addends from readelf."""
+    result={}
+    process=subprocess.Popen(['readelf','-rW',str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,text=True)
+    for line in process.stdout:
+        cols=line.split()
+        if len(cols)<4 or cols[2] != 'R_AARCH64_RELATIVE': continue
+        try:
+            dest=int(cols[0],16)
+            if dest in offsets: result[dest]=int(cols[-1],16)
+        except ValueError: continue
+    process.stdout.close()
+    if process.wait()!=0: return {}
+    return result
+
+
 def inspect_vtable(path, addresses):
-    """Inspect raw ELF vtables; runtime relocations may make entries differ."""
+    """Resolve selected Itanium ABI typeinfo using ELF relative relocations."""
+    headers=relative_relocations(path, {v-8 for v in addresses.values()})
+    name_offsets={value+8 for value in headers.values() if value}
+    names=relative_relocations(path, name_offsets)
     lines=[]
     with path.open('rb') as file, mmap.mmap(file.fileno(),0,access=mmap.ACCESS_READ) as mm:
         for name,va in addresses.items():
-            pos=virtual_offset(mm,va-16,48)
-            if pos is None:
-                lines.append(f'{name} {va:#x}: unmapped')
-                continue
-            words=struct.unpack_from('<6Q',mm,pos)
-            lines.append(f'{name} vtable_address={va:#x} raw_header_and_entries='+','.join(hex(w) for w in words))
-            typeinfo=words[1]
-            tpos=virtual_offset(mm,typeinfo,16) if typeinfo else None
-            if tpos is None:
-                lines.append('  typeinfo unavailable or requires relocation')
-                continue
-            _,nameva=struct.unpack_from('<QQ',mm,tpos)
+            typeinfo=headers.get(va-8,0)
+            nameva=names.get(typeinfo+8,0) if typeinfo else 0
             npos=virtual_offset(mm,nameva,1) if nameva else None
             if npos is None:
-                lines.append(f'  typeinfo={typeinfo:#x}, name unavailable or requires relocation')
+                lines.append(f'{name} vtable={va:#x} typeinfo={typeinfo:#x} name unavailable (relocation may be unsupported)')
                 continue
             end=mm.find(b'\0',npos,min(len(mm),npos+256))
             if end<0: end=min(len(mm),npos+256)
             text=mm[npos:end].decode('ascii','replace')
-            lines.append(f'  typeinfo={typeinfo:#x} name={text}')
+            lines.append(f'{name} vtable={va:#x} typeinfo={typeinfo:#x} name_vaddr={nameva:#x} name={text}')
     return lines
 
 def main():
