@@ -1,0 +1,59 @@
+name: Build E-Client special edition
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/apollon-special-edition.yml
+      - apollon-adapter/special/**
+      - tools/prepare-special-music.py
+      - tests/check_special_music.py
+      - e.mp3
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install apktool
+        run: |
+          mkdir -p "$HOME/bin"
+          curl --fail --location --retry 5 -o "$HOME/bin/apktool.jar" https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+          printf '#!/bin/sh\nexec java -jar "$HOME/bin/apktool.jar" "$@"\n' > "$HOME/bin/apktool"
+          chmod +x "$HOME/bin/apktool"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Download pinned Minecraft APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/minecraft"
+          gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
+      - name: Check special music wiring
+        run: python3 tests/check_special_music.py
+      - name: Build special edition
+        env:
+          ECLIENT_SPECIAL_MUSIC: ${{ github.workspace }}/e.mp3
+        run: tools/build-apollon-apk.sh "$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk" "$GITHUB_WORKSPACE/out/eclient-special-edition-arm64.apk"
+      - name: Verify packaged music matches source
+        run: |
+          unzip -p out/eclient-special-edition-arm64.apk assets/eclient-special/e.mp3 | sha256sum > "$RUNNER_TEMP/music-sha"
+          test "$(cut -d' ' -f1 "$RUNNER_TEMP/music-sha")" = "$(sha256sum e.mp3 | cut -d' ' -f1)"
+          echo 'Packaged music SHA-256 matches e.mp3.'
+      - name: Upload special-edition APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: eclient-special-edition-arm64
+          path: out/eclient-special-edition-arm64.apk
+          if-no-files-found: error
+          retention-days: 7
