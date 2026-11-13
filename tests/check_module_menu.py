@@ -32,6 +32,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'ImGui::TreeNode("Inventory swap trace")' in menu
     assert 'eclient_combat_diagnostics::swapConstruction(first, second)' in main
     assert 'getAbsoluteAddress(MineLib, 0xcc9da9c)' in main
+    assert 'getAbsoluteAddress(MineLib, 0xcc93130)' in main
+    assert 'eclient_combat_diagnostics::requestAction(actionOwner)' in main
+    assert 'return old_RequestAction(manager, actionOwner);' in main
     assert 'memcmp((const void*)swapAddress, swapExpected' in main
     assert (jni / 'crystal_break_test.h').exists()
     assert (jni / 'practice_target.h').exists()

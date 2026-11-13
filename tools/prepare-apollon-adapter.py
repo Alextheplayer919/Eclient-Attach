@@ -119,7 +119,13 @@ std::uint64_t GameMode_FastBridge(std::uintptr_t a0, std::uintptr_t a1, std::uin
 # Observational swap-action constructor hook for the exact pinned arm64 image.
 # The constructor reads x0/x1/x2 and returns without a defined semantic result;
 # forward x0 as well so we do not discard its observed machine return register.
-replace('eclient::combat::PlacementFn old_GameMode_FastBridge;', '''using SwapConstructorFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t);
+replace('eclient::combat::PlacementFn old_GameMode_FastBridge;', '''using RequestActionFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t);
+static RequestActionFn old_RequestAction = nullptr;
+static std::uintptr_t eclientRequestAction(std::uintptr_t manager, std::uintptr_t actionOwner) {
+    eclient_combat_diagnostics::requestAction(actionOwner);
+    return old_RequestAction(manager, actionOwner);
+}
+using SwapConstructorFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t);
 static SwapConstructorFn old_SwapConstructor = nullptr;
 static std::uintptr_t eclientSwapConstructor(std::uintptr_t object, std::uintptr_t first, std::uintptr_t second) {
     eclient_combat_diagnostics::swapConstruction(first, second);
@@ -128,6 +134,15 @@ static std::uintptr_t eclientSwapConstructor(std::uintptr_t object, std::uintptr
 eclient::combat::PlacementFn old_GameMode_FastBridge;''')
 replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::FastBridge), (void *) GameMode_FastBridge, (void **) &old_GameMode_FastBridge);', '''    // Validate a fixed 16-byte prologue independently before installing the
     // experimental observer; failure leaves all swap tracing disabled.
+    eclient_combat_diagnostics::swapActionVtable = getAbsoluteAddress(MineLib, 0x1037a940);
+    eclient_combat_diagnostics::takeActionVtable = getAbsoluteAddress(MineLib, 0x1037a8b0);
+    eclient_combat_diagnostics::placeActionVtable = getAbsoluteAddress(MineLib, 0x1037a8f8);
+    auto requestAddress = getAbsoluteAddress(MineLib, 0xcc93130);
+    const unsigned char requestExpected[] = {0xff,0x03,0x03,0xd1,0xfd,0x7b,0x09,0xa9,0xfd,0x43,0x02,0x91,0xf5,0x53,0x00,0xf9};
+    if (requestAddress && memcmp((const void*)requestAddress, requestExpected, sizeof(requestExpected)) == 0) {
+        A64HookFunction((void*)requestAddress, (void*)eclientRequestAction, (void**)&old_RequestAction);
+        eclient_combat_diagnostics::requestHookReady.store(old_RequestAction != nullptr);
+    }
     auto swapAddress = getAbsoluteAddress(MineLib, 0xcc9da9c);
     const unsigned char swapExpected[] = {0xff,0x83,0x01,0xd1,0xfd,0x7b,0x02,0xa9,0xfd,0x83,0x00,0x91,0xf7,0x1b,0x00,0xf9};
     if (swapAddress && memcmp((const void*)swapAddress, swapExpected, sizeof(swapExpected)) == 0) {

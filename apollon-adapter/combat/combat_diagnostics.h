@@ -18,7 +18,9 @@ static std::atomic<bool> enabled{false};
 static std::atomic<bool> focused{false};
 static std::atomic<bool> swapTrace{false};
 static std::atomic<bool> swapHookReady{false};
+static std::atomic<bool> requestHookReady{false};
 static std::atomic<unsigned> swapEvents{0};
+static std::uintptr_t swapActionVtable = 0, takeActionVtable = 0, placeActionVtable = 0;
 static std::atomic<unsigned> focusedSession{0};
 static std::mutex logMutex;
 static std::string path;
@@ -86,10 +88,49 @@ static void swapConstruction(std::uintptr_t first, std::uintptr_t second) {
     std::fprintf(f, " (opaque_inputs_not_proof_of_completed_swap)\n");
     std::fclose(f);
 }
+// The request function reads a pointer from its second argument, then a byte
+// at action+8. Log that byte and bounded prefixes only for recognized
+// transfer action vtables; the byte is a candidate action type, not proof of
+// a move or server acknowledgment. Never retain or dereference the pointer
+// outside this call, and avoid recording addresses or item contents.
+static void requestAction(std::uintptr_t ownerPointer) {
+    if (!swapTrace.load() || panic) return;
+    std::uintptr_t action = 0;
+    std::uint8_t type = 0;
+    bool readable = eclient::fly2::probe::read(ownerPointer, action) && action <= UINTPTR_MAX - 0x45 &&
+        eclient::fly2::probe::read(action + 8, type);
+    std::uintptr_t vtable=0;
+    bool known = readable && eclient::fly2::probe::read(action, vtable) && vtable &&
+        (vtable == swapActionVtable || vtable == takeActionVtable || vtable == placeActionVtable);
+    const char* kind = !known ? "other" : vtable == swapActionVtable ? "swap" : vtable == takeActionVtable ? "take" : "place";
+    SwapPrefix a{}, b{};
+    bool aOk=known && eclient::fly2::probe::read(action+0x10, a);
+    bool bOk=known && eclient::fly2::probe::read(action+0x38, b);
+    std::lock_guard<std::mutex> lock(logMutex);
+    if (!swapTrace.load() || path.empty() || swapEvents.load() >= 100) return;
+    FILE* f = std::fopen(path.c_str(), "a");
+    if (!f) return;
+    if (std::ftell(f) > 1024*1024) { std::fclose(f); f=std::fopen(path.c_str(), "w"); if (!f) return; }
+    unsigned count = ++swapEvents;
+    std::fprintf(f, "time=%lld request_action_event=%u", (long long)std::time(nullptr), count);
+    if (readable) std::fprintf(f, " candidate_type=%u", (unsigned)type);
+    else std::fprintf(f, " candidate_type=unreadable");
+    std::fprintf(f, " vtable_kind=%s", kind);
+    if (known) {
+        std::fprintf(f, " prefix_a=");
+        if (aOk) for (auto byte : a.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+        std::fprintf(f, " prefix_b=");
+        if (bOk) for (auto byte : b.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+    }
+    std::fprintf(f, " (submitted_not_confirmation)\n");
+    std::fclose(f);
+}
 static void drawSwapTrace() {
-    ImGui::TextWrapped("Experimental passive hook for swap action construction. Hook is installed at startup only on matching code bytes; it may crash the game. Does not move items or confirm success.");
-    ImGui::TextWrapped("Writes opaque inventory-related bytes to Downloads/combat-test.txt; they may contain sensitive metadata. Up to 100 events per recording.");
-    if (!swapHookReady.load()) { ImGui::TextWrapped("Swap hook unavailable on this build."); return; }
+    ImGui::TextWrapped("Experimental passive hooks observe swap construction and submitted request actions. Installed at startup only on matching code bytes; they may crash the game. They do not move items or confirm success.");
+    ImGui::TextWrapped("Writes candidate action types and opaque inventory-related bytes to Downloads/combat-test.txt; they may contain sensitive metadata. Up to 100 events per recording.");
+    if (!swapHookReady.load()) ImGui::TextWrapped("Swap constructor hook unavailable on this build.");
+    if (!requestHookReady.load()) ImGui::TextWrapped("Request action hook unavailable on this build.");
+    if (!swapHookReady.load() && !requestHookReady.load()) return;
     const bool on=swapTrace.load();
     if (ImGui::Button(on ? "Stop swap trace" : "Start swap trace")) {
         if (on) { swapTrace.store(false); marker("swap_trace_stopped"); }

@@ -230,3 +230,16 @@ never replays pointers, and never changes inventory. A hook or ABI error can
 still crash or interfere with gameplay. This is not device-tested; no event
 may mean the user's move uses another path. Constructor events do not prove a
 server accepted a swap. Use a disposable local world and back it up first.
+
+The follow-up trace also hooks the `addRequestAction` candidate at
+`0xcc93130`, after checking its pinned prologue. It reads the action type byte
+and, only when the runtime vtable matches the statically identified take,
+place or swap vtables, two 13-byte candidate transfer prefixes. All reads use
+`process_vm_readv` and only occur while tracing; the hook itself is installed
+at startup when its prologue matches. It forwards the original call and does
+not retain or replay pointers. The vtable labels and field meanings are static
+hypotheses, not validation or proof of a completed server transaction. Events
+may arise from other inventory operations, may be missed on different paths,
+and share the 100-event cap with constructor events. The additional hook is
+experimental, may crash or interfere with the game, and has not been device
+validated. Avoid sharing the opaque log if inventory metadata is sensitive.
