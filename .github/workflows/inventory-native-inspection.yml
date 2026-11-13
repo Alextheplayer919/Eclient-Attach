@@ -40,7 +40,7 @@ jobs:
         run: |
           python3 - "$RUNNER_TEMP/inventory-inspection" <<'PYCODE'
           import pathlib,sys
-          for name in ('swap-constructor','swap-constructor-callers','swap-factory','swap-factory-callers'):
+          for name in ('swap-owned-constructor','swap-owned-constructor-callers','swap-action-context','swap-action-context-callers','swap-constructor','swap-constructor-callers','swap-factory','swap-factory-callers'):
               path=pathlib.Path(sys.argv[1],name+'.txt')
               if not path.exists(): continue
               text=' | '.join(x.strip() for x in path.read_text().splitlines() if x.strip()).replace('%','%25')
