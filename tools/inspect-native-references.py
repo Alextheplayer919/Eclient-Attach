@@ -111,12 +111,12 @@ def inspect_vtable(path, addresses):
             words=struct.unpack_from('<6Q',mm,pos)
             lines.append(f'{name} vtable_address={va:#x} raw_header_and_entries='+','.join(hex(w) for w in words))
             typeinfo=words[1]
-            tpos=virtual_offset(mm,typeinfo,16)
+            tpos=virtual_offset(mm,typeinfo,16) if typeinfo else None
             if tpos is None:
                 lines.append('  typeinfo unavailable or requires relocation')
                 continue
             _,nameva=struct.unpack_from('<QQ',mm,tpos)
-            npos=virtual_offset(mm,nameva,1)
+            npos=virtual_offset(mm,nameva,1) if nameva else None
             if npos is None:
                 lines.append(f'  typeinfo={typeinfo:#x}, name unavailable or requires relocation')
                 continue
