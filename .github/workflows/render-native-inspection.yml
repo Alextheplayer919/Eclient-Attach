@@ -7,6 +7,8 @@ on:
       - tests/arm64_callmap_test.py
       - apollon-adapter/schematic/texture_catalog.cpp
       - apollon-adapter/schematic/texture_catalog.h
+      - apollon-adapter/schematic/cube_mesh.h
+      - apollon-adapter/schematic/cube_mesh.cpp
       - tests/texture_catalog_apk_test.cpp
       - tests/inspect_render_candidates_test.py
       - .github/workflows/render-native-inspection.yml
@@ -47,7 +49,8 @@ jobs:
           PYCODE
           CLANG="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++"
           "$CLANG" -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" -c apollon-adapter/schematic/texture_catalog.cpp -o "$RUNNER_TEMP/texture-catalog-arm64.o"
-          g++ -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" tests/texture_catalog_apk_test.cpp apollon-adapter/schematic/texture_catalog.cpp -o "$RUNNER_TEMP/texture-apk-test"
+          "$CLANG" -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" -c apollon-adapter/schematic/cube_mesh.cpp -o "$RUNNER_TEMP/cube-mesh-arm64.o"
+          g++ -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" tests/texture_catalog_apk_test.cpp apollon-adapter/schematic/texture_catalog.cpp apollon-adapter/schematic/cube_mesh.cpp -o "$RUNNER_TEMP/texture-apk-test"
           "$RUNNER_TEMP/texture-apk-test" "$RUNNER_TEMP/vanilla" | tee "$RUNNER_TEMP/texture-catalog-result.txt"
           python3 - "$RUNNER_TEMP/texture-catalog-result.txt" <<'PYCODE'
           import pathlib,sys

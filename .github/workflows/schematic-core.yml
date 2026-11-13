@@ -6,6 +6,7 @@ on:
       - tests/mcstructure_test.cpp
       - tests/schematic_anchor_test.cpp
       - tests/texture_catalog_test.cpp
+      - tests/cube_mesh_test.cpp
       - tests/texture_catalog_apk_test.cpp
       - .github/workflows/schematic-core.yml
   workflow_dispatch:
@@ -28,3 +29,5 @@ jobs:
           unzip -p 'Apollon_Client_ImGui_v4.62_1.21.111 (3).zip' 'Apollon_Client_ImGui/app/src/main/jni/Includes/json.h' > "$RUNNER_TEMP/json/json.h"
           g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I "$RUNNER_TEMP/json" tests/texture_catalog_test.cpp apollon-adapter/schematic/texture_catalog.cpp -o "$RUNNER_TEMP/texture-catalog-test"
           "$RUNNER_TEMP/texture-catalog-test"
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I "$RUNNER_TEMP/json" tests/cube_mesh_test.cpp apollon-adapter/schematic/cube_mesh.cpp apollon-adapter/schematic/texture_catalog.cpp -o "$RUNNER_TEMP/cube-mesh-test"
+          "$RUNNER_TEMP/cube-mesh-test"

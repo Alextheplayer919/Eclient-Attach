@@ -1,4 +1,4 @@
-#include "../apollon-adapter/schematic/texture_catalog.h"
+#include "../apollon-adapter/schematic/cube_mesh.h"
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -23,5 +23,21 @@ int main(int argc,char** argv) {
             if(!image)throw std::runtime_error("missing resolved texture: "+path);
             std::cout<<test.block<<" "<<test.face<<"="<<result.logicalPath<<" variant_fallback="<<result.variantFallback<<"\n";
         }
+        eclient::schematic::Structure structure;
+        structure.width=2;structure.height=1;structure.length=1;
+        structure.palette={{"minecraft:stone",{},0},{"minecraft:grass",{},0}};
+        structure.primary={0,1};structure.secondary={-1,-1};
+        eclient::schematic::Anchor anchor;
+        if(!anchor.set({10,64,20}))throw std::runtime_error("anchor error");
+        anchor.lock(true);
+        const auto mesh=eclient::schematic::buildCubeMesh(structure,anchor,catalog);
+        if(mesh.faces.size()!=10 || mesh.missingTextures)throw std::runtime_error("cube mesh faces unavailable");
+        for(const auto& face:mesh.faces) {
+            std::string path=root+"/"+face.texture;
+            if(path.size()<4 || path.substr(path.size()-4)!=".png")path+=".png";
+            std::ifstream image(path,std::ios::binary);
+            if(!image)throw std::runtime_error("missing mesh face texture: "+path);
+        }
+        std::cout<<"cube mesh: "<<mesh.faces.size()<<" exposed faces; all resolved PNGs exist\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<"\n";return 1;}
 }
