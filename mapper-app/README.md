@@ -13,15 +13,16 @@ libraries to 1 GiB. Keep the app open while analyzing. Debug builds use an
 ephemeral signing key, so uninstall an older mapper build before installing a
 new one.
 
-The report contains SHA-256 hashes, ARM64 ELF load mappings, filtered ASCII
-strings, matching ELF symbols, and direct ARM64 adjacent ADRP+ADD string
-reference **candidates**. Both file offsets and ELF virtual addresses are
+The report contains SHA-256 hashes, ARM64 ELF load mappings, ranked and category-capped ASCII
+strings and ELF symbols, and heuristic ARM64 ADRP+ADD string reference
+**candidates** (up to three intervening instructions). Both file offsets and ELF virtual addresses are
 labelled. It looks for inventory, offhand/totems, interaction/placement,
 crystal/attack and item/transaction terminology. Filtering is deliberately
 bounded and broad; strings and dynamic symbols can be stripped or obfuscated.
 The xref pass is not a disassembler: it misses indirect references, other
-instruction sequences and non-adjacent instructions, and can have false
-positives. File offsets are not runtime addresses. Nothing identifies a safe
+instruction sequences and longer gaps, and can have false positives (especially
+when intervening instructions change registers). Only selected, capped strings
+are searched for references. File offsets are not runtime addresses. Nothing identifies a safe
 function ABI, object lifetime, selected slot, offhand behavior, action success,
 or a guaranteed correct offset. Do not call or patch an address based solely on
 the report. No current gameplay or live process state is observed.
