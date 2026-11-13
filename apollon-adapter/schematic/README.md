@@ -70,3 +70,25 @@ the base `blocks.json` failed; its encoding/extensions need inspection. Android
 AssetManager paths, pack priority, active/custom resource packs, models, face
 textures and animated textures still need validation. No texture mapping or
 in-game hologram has been implemented.
+
+### Vanilla texture lookup groundwork
+
+`texture_catalog.cpp` is a C++ resource-map resolver for ordinary blocks. It
+reads Bedrock `blocks.json` and `terrain_texture.json`, accepting JSON comments
+as found in the pinned assets. It can resolve per-face texture keys, chooses the
+first entry for array variants while marking that fallback, rejects unsafe
+paths, and accepts explicitly ordered pack layers (entry-level override only).
+It returns resource-relative paths; it does not load images, draw blocks, access
+Android's assets, apply block-state rotations/tints, or discover the active
+resource pack. Its merge order and semantics are not verified against the game.
+No claims are made for custom blocks, animated textures, waterlogged blocks,
+non-cube models or transparent materials.
+
+The [pinned APK test](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/43452271350)
+loaded the actual base vanilla maps, resolved stone, grass (top, side and bottom)
+and dirt, and verified that their PNG files exist in the APK. The code also
+cross-compiled with the NDK for ARM64. The texture mapping returns array variant
+fallbacks for these examples, not confirmed state-specific results. The code is
+standalone and not yet integrated into the client APK or tested on a device.
+The JSON dependency is the nlohmann single header already supplied inside the
+Apollon source archive; it is extracted to a temporary build directory for tests.
