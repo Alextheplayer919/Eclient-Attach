@@ -1,0 +1,57 @@
+name: Build standalone E-Client Mapper
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - mapper-app/**
+      - tools/build-mapper-apk.sh
+      - .github/workflows/mapper-apk.yml
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Test ELF mapper
+        run: |
+          mkdir -p "$RUNNER_TEMP/mapper-tests"
+          javac -d "$RUNNER_TEMP/mapper-tests" mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/tests/ElfMapperTest.java
+          java -cp "$RUNNER_TEMP/mapper-tests" com.eclient.mapper.ElfMapperTest
+      - uses: android-actions/setup-android@v4
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          echo "$ANDROID_SDK_ROOT/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - name: Build mapper APK
+        run: tools/build-mapper-apk.sh
+      - name: Validate against pinned Minecraft library
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/minecraft"
+          gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
+          APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
+          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
+          javac -d "$RUNNER_TEMP/mapper-tests" mapper-app/src/com/eclient/mapper/ElfMapper.java mapper-app/tests/MapperCli.java
+          timeout 600 java -Xmx512m -cp "$RUNNER_TEMP/mapper-tests" com.eclient.mapper.MapperCli "$RUNNER_TEMP/libminecraftpe.so" > "$RUNNER_TEMP/mapper-pinned-report.txt"
+          test -s "$RUNNER_TEMP/mapper-pinned-report.txt"
+          rm "$RUNNER_TEMP/libminecraftpe.so"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eclient-mapper-pinned-report
+          path: ${{ runner.temp }}/mapper-pinned-report.txt
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eclient-mapper-standalone
+          path: out/eclient-mapper.apk
+          if-no-files-found: error
+          retention-days: 7
