@@ -54,53 +54,19 @@ jobs:
           "$RUNNER_TEMP/fly2-calculated-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_probe_test.cpp -o "$RUNNER_TEMP/fly2-probe-test"
           "$RUNNER_TEMP/fly2-probe-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/crystal_plan_test.cpp -o "$RUNNER_TEMP/crystal-plan-test"
-          "$RUNNER_TEMP/crystal-plan-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/combat_block_names_test.cpp -o "$RUNNER_TEMP/combat-block-names-test"
-          "$RUNNER_TEMP/combat-block-names-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/base_search_test.cpp -o "$RUNNER_TEMP/base-search-test"
-          "$RUNNER_TEMP/base-search-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/practice_state_test.cpp -o "$RUNNER_TEMP/practice-state-test"
-          "$RUNNER_TEMP/practice-state-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/placement_forward_test.cpp -o "$RUNNER_TEMP/placement-forward-test"
           "$RUNNER_TEMP/placement-forward-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/transfer_prefix_test.cpp -o "$RUNNER_TEMP/transfer-prefix-test"
-          "$RUNNER_TEMP/transfer-prefix-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/focused_events_test.cpp -o "$RUNNER_TEMP/focused-events-test"
-          "$RUNNER_TEMP/focused-events-test"
-          g++ -std=c++17 -Wall -Wextra -Werror tests/crystal_break_selection_test.cpp -o "$RUNNER_TEMP/crystal-break-selection-test"
-          "$RUNNER_TEMP/crystal-break-selection-test"
-      - name: Inspect pinned native placement entrypoints
-        run: |
-          APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
-          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
-          unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
-          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          {
-            echo 'Dynamic symbols, if present:'
-            "$BIN/llvm-nm" -D -C "$RUNNER_TEMP/libminecraftpe.so" | grep -Ei 'useItemOn|inventory|select.*slot|create.*player|spawn.*player|add.*player' | head -100 || true
-            echo 'GameMode useItemOn candidate @ 0xccc3650:'
-            "$BIN/llvm-objdump" -d --start-address=0xccc3650 --stop-address=0xccc3850 "$RUNNER_TEMP/libminecraftpe.so"
-          } > "$RUNNER_TEMP/combat-native-inspection.txt"
-          # Attach a small assembly excerpt to the check so it can be read even
-          # when artifact-download hosts are inaccessible from a development sandbox.
-          python3 - "$RUNNER_TEMP/combat-native-inspection.txt" <<'PYCODE'
-          import sys
-          lines = open(sys.argv[1]).read().splitlines()
-          for start in range(0, min(len(lines), 160), 20):
-              chunk = ' | '.join(lines[start:start + 20]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print(f'::notice title=Native inspection {start//20+1}::{chunk}')
-          PYCODE
-          rm "$RUNNER_TEMP/libminecraftpe.so"
-      - name: Upload native inspection
-        uses: actions/upload-artifact@v4
-        with:
-          name: combat-native-inspection
-          path: ${{ runner.temp }}/combat-native-inspection.txt
-          if-no-files-found: error
-          retention-days: 7
       - name: Build experimental APK
         run: tools/build-apollon-apk.sh "$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
+      - name: Verify special-edition assets are absent
+        run: |
+          python3 - <<'PYCODE'
+          import zipfile
+          with zipfile.ZipFile('out/eclient-apollon-experimental-arm64.apk') as apk:
+              bad=[name for name in apk.namelist() if name.lower().startswith('assets/eclient-special/') or name.lower() == 'assets/e.mp3']
+              if bad: raise SystemExit('Unexpected special-edition music: '+repr(bad))
+          print('No special-edition music assets packaged.')
+          PYCODE
       - name: Upload experimental APK
         uses: actions/upload-artifact@v4
         with:

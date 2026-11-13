@@ -68,9 +68,8 @@ replace('        BeginDraw();', '''        BeginDraw();
 # Queue touch transitions on the GL thread for ImGui's event processing: directly
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
-replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "combat_diagnostics.h"\n#include "practice_target.h"\n#include "crystal_break_test.h"\n#include "crystal_aura_break.h"\n#include "module_menu.h"')
+replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "placement_forward.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
-replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setCombatLogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_combat_diagnostics::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
 # Run cleanup even on Apollon's early panic/menu/death exits. The original
 # tick runs first so its Creative Fly bookkeeping cannot undo Fly2 this frame.
 normal_start = s.index('void *NormalTick(LocalPlayer *thiz) {')
@@ -83,18 +82,10 @@ normal = normal.replace('return old_NormalTick(thiz);', 'return eclientFly2TickA
 helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool gameReady) {
     void* result = old_NormalTick(player);
     eclient_fly2_adapter::tick(player, gameReady);
-    eclient_combat_diagnostics::tick(player, gameReady);
-    eclient_practice_target::tick(player, gameReady);
-    eclient_crystal_break_test::tick(player, gameReady);
-    eclient_crystal_aura::tick(player, gameReady);
     return result;
 }
 '''
 s = s[:normal_start] + helper + normal + s[normal_end:]
-
-# Clear the virtual target even when the old world's tick stops before the
-# main menu is entered; do not carry a practice target across worlds.
-replace('\tinMenu = true;\n', '\tinMenu = true;\n    eclient_practice_target::clear();\n')
 
 # The ARM64 binary's placement entry uses x0-x2, w3, x4-x5 and w6.
 # Upstream's six int arguments truncate pointers and drop w6; preserve the
@@ -107,49 +98,14 @@ int GameMode_FastBridge(int a1, int a2, int *a3, int a4, int a5, int a6) {
 \t\treturn 0;
 \t}
     return old_GameMode_FastBridge(a1, a2, a3, a4, a5, a6);
-}''', '''eclient::combat::PlacementFn old_GameMode_FastBridge;
+}''', '''eclient::compat::PlacementFn old_GameMode_FastBridge;
 std::uint64_t GameMode_FastBridge(std::uintptr_t a0, std::uintptr_t a1, std::uintptr_t a2,
                                   std::uint32_t a3, std::uintptr_t a4, std::uintptr_t a5, std::uint32_t a6) {
-    const eclient::combat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6};
-    const auto result = eclient::combat::forwardPlacement(old_GameMode_FastBridge, args);
-    eclient_combat_diagnostics::placement(args, result, false);
+    const eclient::compat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6};
+    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);
     // Preserve the original adapter's FastBridge return policy.
     return (!panic && fastBridge) ? 0 : result;
 }''')
-# Observational swap-action constructor hook for the exact pinned arm64 image.
-# The constructor reads x0/x1/x2 and returns without a defined semantic result;
-# forward x0 as well so we do not discard its observed machine return register.
-replace('eclient::combat::PlacementFn old_GameMode_FastBridge;', '''using RequestActionFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t);
-static RequestActionFn old_RequestAction = nullptr;
-static std::uintptr_t eclientRequestAction(std::uintptr_t manager, std::uintptr_t actionOwner) {
-    eclient_combat_diagnostics::requestAction(actionOwner);
-    return old_RequestAction(manager, actionOwner);
-}
-using SwapConstructorFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t);
-static SwapConstructorFn old_SwapConstructor = nullptr;
-static std::uintptr_t eclientSwapConstructor(std::uintptr_t object, std::uintptr_t first, std::uintptr_t second) {
-    eclient_combat_diagnostics::swapConstruction(first, second);
-    return old_SwapConstructor(object, first, second);
-}
-eclient::combat::PlacementFn old_GameMode_FastBridge;''')
-replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::FastBridge), (void *) GameMode_FastBridge, (void **) &old_GameMode_FastBridge);', '''    // Validate a fixed 16-byte prologue independently before installing the
-    // experimental observer; failure leaves all swap tracing disabled.
-    eclient_combat_diagnostics::swapActionVtable = getAbsoluteAddress(MineLib, 0x1037a940);
-    eclient_combat_diagnostics::takeActionVtable = getAbsoluteAddress(MineLib, 0x1037a8b0);
-    eclient_combat_diagnostics::placeActionVtable = getAbsoluteAddress(MineLib, 0x1037a8f8);
-    auto requestAddress = getAbsoluteAddress(MineLib, 0xcc93130);
-    const unsigned char requestExpected[] = {0xff,0x03,0x03,0xd1,0xfd,0x7b,0x09,0xa9,0xfd,0x43,0x02,0x91,0xf5,0x53,0x00,0xf9};
-    if (requestAddress && memcmp((const void*)requestAddress, requestExpected, sizeof(requestExpected)) == 0) {
-        A64HookFunction((void*)requestAddress, (void*)eclientRequestAction, (void**)&old_RequestAction);
-        eclient_combat_diagnostics::requestHookReady.store(old_RequestAction != nullptr);
-    }
-    auto swapAddress = getAbsoluteAddress(MineLib, 0xcc9da9c);
-    const unsigned char swapExpected[] = {0xff,0x83,0x01,0xd1,0xfd,0x7b,0x02,0xa9,0xfd,0x83,0x00,0x91,0xf7,0x1b,0x00,0xf9};
-    if (swapAddress && memcmp((const void*)swapAddress, swapExpected, sizeof(swapExpected)) == 0) {
-        A64HookFunction((void*)swapAddress, (void*)eclientSwapConstructor, (void**)&old_SwapConstructor);
-        eclient_combat_diagnostics::swapHookReady.store(old_SwapConstructor != nullptr);
-    }
-\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::FastBridge), (void *) GameMode_FastBridge, (void **) &old_GameMode_FastBridge);''')
 replace('oxorany("§l§0[§5Apollon Client§0]§r Good Luck, Have Fun!")', 'oxorany("[E-Client] Good luck and have fun!")')
 start=s.index('JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getWindowRect(JNIEnv *env, jobject thiz) {')
 end=s.index('\nvoid *(*old_Intersects)', start)
@@ -238,15 +194,11 @@ for first, after in ((0, 3), (4, 5), (6, 7)):
 menu_replace('\t\t\t\tImGui::Checkbox(OBFUSCATE("Anti Bot"), &antiBot);\n', '')
 # Hotkey panel has one width push; upstream pushed again instead of popping.
 menu_replace('                ImGui::PushItemWidth(0);\n\t\t\t\tImGui::EndChild();', '                ImGui::PopItemWidth();\n\t\t\t\tImGui::EndChild();')
-menu_replace('                        if (esp) RenderESP(draw_list, CameraPos, currentFov, currentViewMatrix);', '                        if (esp) RenderESP(draw_list, CameraPos, currentFov, currentViewMatrix);\n                        eclient_practice_target::render(draw_list, CameraPos, currentFov, currentViewMatrix);')
 menu.write_text(m)
 mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
-shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'combat_diagnostics.h', jni / 'combat_diagnostics.h')
-shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'block_names.h', jni / 'block_names.h')
-for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h', 'focused_events.h', 'transfer_prefix.h', 'crystal_break_test.h', 'crystal_break_selection.h', 'practice_target.h', 'practice_state.h', 'crystal_aura_break.h'):
-    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / file, jni / file)
+shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
 m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')

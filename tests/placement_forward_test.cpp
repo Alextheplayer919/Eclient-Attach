@@ -1,6 +1,6 @@
-#include "../apollon-adapter/combat/placement_forward.h"
+#include "../apollon-adapter/compat/placement_forward.h"
 #include <cassert>
-using namespace eclient::combat;
+using namespace eclient::compat;
 static unsigned calls;
 static std::uint64_t sample(std::uintptr_t a0,std::uintptr_t a1,std::uintptr_t a2,std::uint32_t a3,std::uintptr_t a4,std::uintptr_t a5,std::uint32_t a6) {
     ++calls;

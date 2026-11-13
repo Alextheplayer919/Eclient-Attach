@@ -1,3 +1,10 @@
+> **Historical research archive.** Crystal Aura, the practice target, the
+> associated game hooks and diagnostics described below have been removed from
+> the normal client at the user's request. Menu paths and implementation status
+> in the original notes describe earlier builds only, not current functionality.
+> The standalone mapper is retained independently. None of these observations
+> constitutes a validated placement, inventory move, or Auto Totem implementation.
+
 # Crystal Aura / practice target investigation
 
 This is not a functioning game module yet. The game-independent crystal planner
@@ -149,15 +156,14 @@ pointers across ticks until these contracts are verified.
 The user-provided mapper report's `libminecraftpe.so` SHA-256
 `65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1`
 matches the pinned APK's library. The selected APK SHA differs, so only the
-library match is established. Reproducible offline inspection is in
-`tools/inspect-native-references.py` and the `inventory-native-inspection`
-workflow. Addresses are ELF virtual addresses for that exact library only.
+library match is established. The former inspection scripts and workflow were removed with the feature;
+their results are recorded here and in the historical Actions runs. Addresses are ELF virtual addresses for that exact library only.
 
 - The reference to `ItemStackNetManagerClient::_beginRequest` lies in unwind
-  range `0xccc92618..0xccc9280c`; its entry saves x0 and inspects w1. Its one
-  direct BL caller is `0xccc92584`, in an unwind range starting `0xccc92534`.
+  range `0xcc92618..0xcc9280c`; its entry saves x0 and inspects w1. Its one
+  direct BL caller is `0xcc92584`, in an unwind range starting `0xcc92534`.
 - The reference to `ItemStackNetManagerClient::addRequestAction` lies in
-  unwind range `0xccc93130..0xccc93614`. Its entry dereferences x1 and reads
+  unwind range `0xcc93130..0xcc93614`. Its entry dereferences x1 and reads
   manager-like state from x0+0x60. Wrappers at `0xcca0da4` and `0xcca0fb0`
   transfer a pointer through x1 and zero the source before calling it. They
   show ownership/destruction behavior; copying a pointer and replaying a call
@@ -249,3 +255,35 @@ not treat padding bytes as stable fields or publicly share sensitive traces.
 Validated item identity, network stack ID construction, inventory manager
 acquisition, ownership and response handling are still missing; no automatic
 inventory move or AutoTotem has been implemented.
+
+## Additional recorded observations and limits
+
+- Pinned Minecraft APK SHA-256: `69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59`.
+  The user's APK had a different APK hash (`5f8a052be5c9a69ece02dd1d3454ec031d6e2dc43f767bca2cdfd9f462c73e6a`),
+  but the ARM64 native library hash matched the pinned library above.
+- The user confirmed that an earlier one-shot crystal attack actually caused an
+  explosion (Actions run 43289095928). This does not verify automatic placement,
+  real-player targeting, damage calculation or the later continuous-break module.
+- Device logs confirmed `tile.obsidian` observations. `tile.bedrock` was an
+  inferred name, not confirmed on device. Entity type 71 was observed for a
+  nearby end crystal. Actor counts changing are not proof of destruction.
+- The useItemOn/FastBridge candidate is at `0xccc3650`; analysis showed x0–x2,
+  w3, x4–x5 and w6 being used, not complete parameter semantics or a safe
+  synthetic call. The general FastBridge forwarding fix remains in the client.
+- In `combat-test (7).txt`, the narrow swap-constructor trace recorded markers
+  but no constructor events. In `combat-test (8).txt`, the wider trace recorded
+  15 requests: 13 place-vtable/type-1 events and two other action types (14 and
+  19), with no swap-constructor events. Container-byte values 28, 34 and 60
+  matched hotbar, offhand and cursor respectively in an external protocol list;
+  padding bytes in the original raw trace varied and must not be treated as
+  stable values. Trace events alone do not establish server acceptance or item
+  identity. The raw log is not included here.
+- Place constructor `0xcc9d950` has direct callers `0xcd7ce1c` and `0xcd7fa84`;
+  the first is in an owned-allocation wrapper at `0xcd7cde0`. The candidate
+  input builder `0xcd6e330` and larger action path `0xcd75200` remain unverified.
+  `0xcc93130` receives transferred action ownership through its callers; captured
+  action pointers cannot safely be retained or replayed.
+- The offline standalone mapper remains available. Its xrefs are heuristic;
+  selected-slot and offhand string references alone do not validate accessors.
+  No usable LocalPlayer inventory manager, totem item reader, slot/network-ID
+  construction or acknowledgment path was established.

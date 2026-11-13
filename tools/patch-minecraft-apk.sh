@@ -188,14 +188,6 @@ echo
 echo "Minecraft APK decoded."
 echo
 
-# Only special-edition builds package music; stock experimental builds remain unchanged.
-if [[ -n "${ECLIENT_SPECIAL_MUSIC:-}" ]]; then
-    [[ -s "$ECLIENT_SPECIAL_MUSIC" ]] || { echo 'Special-edition music file is missing or empty' >&2; exit 1; }
-    mkdir -p "$DECODED/assets/eclient-special"
-    cp "$ECLIENT_SPECIAL_MUSIC" "$DECODED/assets/eclient-special/e.mp3"
-    echo "Special-edition music installed."
-fi
-
 # ============================================================
 # 6. Configure resources
 # ============================================================

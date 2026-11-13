@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-namespace eclient::combat {
+namespace eclient::compat {
 // Preserve all seven observed general-purpose ARM64 arguments and the full
 // return register. Semantics are deliberately not assumed by the forwarder.
 using PlacementFn = std::uint64_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t,

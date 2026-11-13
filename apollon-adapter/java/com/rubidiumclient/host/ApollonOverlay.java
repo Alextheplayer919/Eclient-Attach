@@ -33,9 +33,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     private static boolean registered;
     private static boolean logInitialized;
     private static File privateLog;
-    private static boolean combatLogInitialized;
-    private static File privateCombatLog;
-    private static Uri downloadsCombatLog;
     private static Uri downloadsLog;
     private static long lastLogCopy;
     private final Handler handler = new Handler();
@@ -58,7 +55,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                 if (SystemClock.elapsedRealtime() - lastLogCopy >= 2000) {
                     lastLogCopy = SystemClock.elapsedRealtime();
                     syncFly2Log();
-                    syncCombatLog();
                 }
                 boolean ime = isKeyboardVisible();
                 if (ime != keyboardVisible) {
@@ -187,52 +183,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
             }
         } catch (Exception e) { Log.w(TAG, "Unable to update Downloads/fly2test.txt", e); }
     }
-    private static void initializeCombatLog(Context context) {
-        if (combatLogInitialized) return;
-        combatLogInitialized = true;
-        privateCombatLog = new File(context.getFilesDir(), "combat-test.txt");
-        try (FileOutputStream out = new FileOutputStream(privateCombatLog, false)) {
-            out.write("E-Client combat diagnostics log\n".getBytes("UTF-8"));
-        } catch (Exception e) { Log.e(TAG, "Unable to initialize combat log", e); privateCombatLog = null; return; }
-        Platform2.setCombatLogPath(privateCombatLog.getAbsolutePath());
-        if (Build.VERSION.SDK_INT >= 29) {
-            String saved = context.getSharedPreferences("eclient_combat", 0).getString("downloads_uri", null);
-            if (saved != null) {
-                try (OutputStream test = context.getContentResolver().openOutputStream(Uri.parse(saved), "wt")) {
-                    if (test != null) downloadsCombatLog = Uri.parse(saved);
-                } catch (Exception e) { Log.w(TAG, "Previous Downloads log unavailable", e); }
-            }
-            if (downloadsCombatLog == null) {
-                ContentValues values = new ContentValues();
-                values.put(MediaStore.MediaColumns.DISPLAY_NAME, "combat-test.txt");
-                values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
-                values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                try {
-                    downloadsCombatLog = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                    if (downloadsCombatLog != null) context.getSharedPreferences("eclient_combat", 0).edit().putString("downloads_uri", downloadsCombatLog.toString()).apply();
-                } catch (Exception e) { Log.e(TAG, "Unable to create Downloads log", e); }
-            }
-        }
-        syncCombatLog(context);
-    }
-    private void syncCombatLog() { if (activity != null) syncCombatLog(activity); }
-    private static void syncCombatLog(Context context) {
-        if (privateCombatLog == null) return;
-        try (FileInputStream input = new FileInputStream(privateCombatLog)) {
-            OutputStream destination;
-            if (Build.VERSION.SDK_INT >= 29) {
-                if (downloadsCombatLog == null) return;
-                destination = context.getContentResolver().openOutputStream(downloadsCombatLog, "wt");
-            } else {
-                destination = new FileOutputStream(new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "combat-test.txt"), false);
-            }
-            if (destination == null) return;
-            try (OutputStream output = destination) {
-                byte[] buffer = new byte[8192]; int n;
-                while ((n = input.read(buffer)) != -1) output.write(buffer, 0, n);
-            }
-        } catch (Exception e) { Log.w(TAG, "Unable to update Downloads/combat-test.txt", e); }
-    }
     private void mount(Activity a) {
         if (resumedActivity != a || activity == a) return;
         if (a.getWindow().getDecorView().getWindowToken() == null) {
@@ -245,7 +195,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         wm = a.getWindowManager();
         try {
             initializeFly2Log(a);
-            initializeCombatLog(a);
             surface = new Platform2(a);
             wm.addView(surface, params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE));
             touch = new View(a);
@@ -288,7 +237,6 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     }
     private void unmount() {
         syncFly2Log();
-        syncCombatLog();
         handler.removeCallbacks(reposition);
         if (wm != null) {
             if (touch != null && touch.isAttachedToWindow()) wm.removeViewImmediate(touch);

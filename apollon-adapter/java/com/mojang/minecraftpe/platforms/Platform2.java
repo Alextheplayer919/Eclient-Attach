@@ -47,7 +47,6 @@ public final class Platform2 extends GLSurfaceView implements GLSurfaceView.Rend
         }
     }
     public static native void setFly2LogPath(String path);
-    public static native void setCombatLogPath(String path);
     public static native void init();
     public static native void resize(int width, int height);
     public static native void step();
