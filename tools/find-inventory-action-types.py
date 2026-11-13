@@ -43,7 +43,7 @@ def type_names(data, load_segments):
             at+=len(term)
     return names
 
-def relative_matches(lib, values):
+def relative_matches(lib, values, destinations=None):
     result={}
     proc=subprocess.Popen(['readelf','-rW',str(lib)],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
     for line in proc.stdout:
@@ -51,7 +51,7 @@ def relative_matches(lib, values):
         if len(cols)<4 or cols[2]!='R_AARCH64_RELATIVE': continue
         try: dest,addend=int(cols[0],16),int(cols[-1],16)
         except ValueError: continue
-        if addend in values: result.setdefault(addend,[]).append(dest)
+        if addend in values or (destinations is not None and dest in destinations): result.setdefault(addend,[]).append(dest)
     proc.stdout.close()
     if proc.wait(): raise RuntimeError('readelf failed')
     return result
@@ -92,6 +92,20 @@ def main():
         # typeinfo second word references the RTTI name; vtable header's type
         # pointer is immediately before the vtable address point.
         to_names=relative_matches(a.lib,set(names)); types={dest-8:names[src] for src,dests in to_names.items() for dest in dests}
+        # A derived type may have its name pointer omitted/merged or resolved
+        # differently. Find RTTI objects deriving from the identified transfer
+        # base: __si_class_type_info stores base typeinfo at offset 16.
+        base_types={addr for addr,name in types.items() if 'TransferBase' in name}
+        base_refs=relative_matches(a.lib,base_types)
+        derived={dest-16 for src,dests in base_refs.items() for dest in dests}
+        derived_names=relative_matches(a.lib,set(),{v+8 for v in derived})
+        derived_name_map={dest-8:addend for addend,dests in derived_names.items() for dest in dests}
+        for addr in derived:
+            nameva=derived_name_map.get(addr,0)
+            pos=next((off+(nameva-va) for off,va,size,_ in loads if va<=nameva<va+size),None)
+            if pos is not None:
+                end=mm.find(b'\0',pos,min(len(mm),pos+200))
+                if end!=-1: types[addr]=mm[pos:end].decode('ascii','replace')+' (derived-candidate)'
         to_types=relative_matches(a.lib,set(types)); vtables={dest+8:types[src] for src,dests in to_types.items() for dest in dests}
         refs=adrp_add_refs(mm,loads,{**vtables, **names})
     lines=['Static leads only. RTTI/vtable references and function starts do not verify ABI, object lifetime or a safe swap.']
