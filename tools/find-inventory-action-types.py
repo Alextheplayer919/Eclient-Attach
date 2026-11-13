@@ -102,13 +102,15 @@ def main():
         derived_name_map={dest-8:addend for addend,dests in derived_names.items() for dest in dests}
         for addr in derived:
             nameva=derived_name_map.get(addr,0)
-            pos=next((off+(nameva-va) for off,va,size,_ in loads if va<=nameva<va+size),None)
+            pos=next((off+(nameva-va) for off,va,size,_ in loads if nameva and va<=nameva<va+size),None)
             if pos is not None:
                 end=mm.find(b'\0',pos,min(len(mm),pos+200))
                 if end!=-1: types[addr]=mm[pos:end].decode('ascii','replace')+' (derived-candidate)'
         to_types=relative_matches(a.lib,set(types)); vtables={dest+8:types[src] for src,dests in to_types.items() for dest in dests}
         refs=adrp_add_refs(mm,loads,{**vtables, **names})
     lines=['Static leads only. RTTI/vtable references and function starts do not verify ABI, object lifetime or a safe swap.']
+    lines.append('BASE_REFERENCES '+repr(base_refs))
+    lines.append('DERIVED_NAME_RELOCS '+repr(derived_name_map))
     for addr,name in sorted(names.items()):
         lines.append(f'RTTI {addr:#x} {name} code_refs={len(refs[addr])}')
         for pc,gap in refs[addr][:20]:

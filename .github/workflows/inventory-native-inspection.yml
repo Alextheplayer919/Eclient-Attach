@@ -124,7 +124,7 @@ jobs:
           python3 - "$RUNNER_TEMP/inventory-inspection/action-rtti.txt" <<'PYCODE'
           import pathlib,sys
           lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
-          summary=[x for x in lines if x.startswith(('RTTI ', 'TYPEINFO ', 'VTABLE '))]
+          summary=[x for x in lines if x.startswith(('RTTI ', 'TYPEINFO ', 'VTABLE ', 'BASE_REFERENCES ', 'DERIVED_NAME_RELOCS '))]
           for line in summary[:10]: print('::notice title=Swap action metadata::'+line.replace('%','%25'))
           PYCODE
       - name: Surface swap action code
