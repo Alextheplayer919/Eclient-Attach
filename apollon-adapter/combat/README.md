@@ -143,3 +143,37 @@ not implemented.** The seven-register placement hook is a forwarder, not a
 verified callable contract: the lifetime and semantics of its pointer
 arguments remain unknown. Do not synthesize calls or store its borrowed
 pointers across ticks until these contracts are verified.
+
+## AutoTotem native investigation (1.21.111 pinned library)
+
+The user-provided mapper report's `libminecraftpe.so` SHA-256
+`65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1`
+matches the pinned APK's library. The selected APK SHA differs, so only the
+library match is established. Reproducible offline inspection is in
+`tools/inspect-native-references.py` and the `inventory-native-inspection`
+workflow. Addresses are ELF virtual addresses for that exact library only.
+
+- The reference to `ItemStackNetManagerClient::_beginRequest` lies in unwind
+  range `0xccc92618..0xccc9280c`; its entry saves x0 and inspects w1. Its one
+  direct BL caller is `0xccc92584`, in an unwind range starting `0xccc92534`.
+- The reference to `ItemStackNetManagerClient::addRequestAction` lies in
+  unwind range `0xccc93130..0xccc93614`. Its entry dereferences x1 and reads
+  manager-like state from x0+0x60. Wrappers at `0xcca0da4` and `0xcca0fb0`
+  transfer a pointer through x1 and zero the source before calling it. They
+  show ownership/destruction behavior; copying a pointer and replaying a call
+  later could cause use-after-free or double deletion. These names are inferred
+  from log strings and may be inlined; unwind ranges do not prove ABI.
+- A direct caller of wrapper `0xcca0fb0` at `0xccd45ac` constructs an object
+  via `0xccd49e0` before the call. This is a useful follow-up lead, not yet
+  proven to be a totem swap or a constructible public API.
+- `selectedSlot`/`selectedSlotIndex` references are within the same large
+  unwind range `0xc5755a4..0xc577f40`, not verified hotbar accessors. The
+  `CONTAINER_ID_OFFHAND` reference is in `0xa295504..0xa295660`; it appears
+  in a sequence registering named constants, not an inventory move function.
+
+There is still no verified route from LocalPlayer to the live transaction
+manager, no slot/item identification, and no proven game-owned swap action
+constructor or server acknowledgment flow. AutoTotem is **not implemented**.
+Do not expose a button that calls the above addresses with fabricated pointers;
+a crash, inventory desynchronization, or item loss cannot identify which
+contract was violated. Use disposable test worlds for any eventual live probe.
