@@ -44,3 +44,29 @@ renderer function entries or callable offsets. They may refer to diagnostic,
 registration or unrelated code. Atlas access, game render-thread integration,
 resource-pack reload handling, transparent materials and block models remain
 unverified.
+
+### Device mapper report and asset inspection
+
+The uploaded `eclient-mapper-report (2).txt` hashes to the same pinned
+`libminecraftpe.so` above; its selected APK hash differs, so this confirms the
+native library, not that the complete APK is byte-for-byte identical. Pinned
+inspection runs [43450254762](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/43450254762)
+and [43450462593](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/43450462593)
+show that `0x675fcb4` and `0x675fee8` occur in tiny routines comparing type-name
+pointers; they are not demonstrated block tessellation entrypoints. The
+`BlockGraphics::getTextureItem` string reference at `0x66e5a38` lies on an
+assertion/diagnostic path inside unwind range `0x66e5240..0x66e5be0`, not a
+callable address established by the mapper. `textures/terrain_texture.json`
+references occur inside ranges beginning at `0x65f364c` and `0x9fcaa7c`;
+the latter includes JSON reader code. None verifies the runtime atlas, its
+lifetime, render-thread requirements, or valid block-model rendering calls.
+
+The pinned APK's [asset inspection](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/43450909136)
+found 2,608 matching terrain-map/block-texture paths, including resource-pack
+`vanilla/textures/terrain_texture.json`, many versioned packs, and 31 candidate
+`blocks.json` files. This offers an alternative path to investigate for default
+textures without guessing a native rendering ABI. A simple strict JSON parse of
+the base `blocks.json` failed; its encoding/extensions need inspection. Android
+AssetManager paths, pack priority, active/custom resource packs, models, face
+textures and animated textures still need validation. No texture mapping or
+in-game hologram has been implemented.
