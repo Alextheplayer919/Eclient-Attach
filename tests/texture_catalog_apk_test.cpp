@@ -13,14 +13,15 @@ int main(int argc,char** argv) {
     try {
         const std::string root=argv[1]; eclient::schematic::TextureCatalog catalog;
         catalog.addPack(load(root+"/blocks.json"),load(root+"/textures/terrain_texture.json"));
-        for(const auto& block:{"stone","grass","dirt"}) {
-            auto result=catalog.lookup(block,"up");
-            if(result.logicalPath.empty())throw std::runtime_error(std::string("unresolved block: ")+block);
+        struct Case {const char* block; const char* face;};
+        for(const auto& test:{Case{"stone","up"},Case{"grass","up"},Case{"grass","north"},Case{"grass","down"},Case{"dirt","up"}}) {
+            auto result=catalog.lookup(test.block,test.face);
+            if(result.logicalPath.empty())throw std::runtime_error(std::string("unresolved block: ")+test.block+" "+test.face);
             auto path=root+"/"+result.logicalPath;
             if(path.size()<4 || path.substr(path.size()-4)!=".png")path+=".png";
             std::ifstream image(path,std::ios::binary);
             if(!image)throw std::runtime_error("missing resolved texture: "+path);
-            std::cout<<block<<" up="<<result.logicalPath<<" variant_fallback="<<result.variantFallback<<"\n";
+            std::cout<<test.block<<" "<<test.face<<"="<<result.logicalPath<<" variant_fallback="<<result.variantFallback<<"\n";
         }
     } catch(const std::exception& e) {std::cerr<<e.what()<<"\n";return 1;}
 }
