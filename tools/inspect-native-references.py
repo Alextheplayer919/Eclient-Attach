@@ -23,6 +23,10 @@ SITES = {
     'legacy-action-construct-a': 0xcc6a094,
     'legacy-action-construct-b': 0xcc6a148,
     'inventory-ui-context': 0x58b542c,
+    'manager-candidate-getter': 0x6bee850,
+    'action-base-constructor': 0xcc9c240,
+    'action-owner-accessor': 0xce0abf4,
+    'action-slot-accessor': 0xce1a7c4,
 }
 
 
@@ -106,7 +110,7 @@ def main():
             text.extend([f'\n=== {label} ===', subprocess.check_output(cmd, text=True)])
         (a.output / (name+'.txt')).write_text('\n'.join(text))
     # Locate static callers of unwind-range starts, never assuming names or ABI.
-    caller_names=('begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper','action-context','action-constructor','legacy-action-construct-a','legacy-action-construct-b','inventory-ui-context')
+    caller_names=('begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper','action-context','action-constructor','legacy-action-construct-a','legacy-action-construct-b','inventory-ui-context','manager-candidate-getter','action-base-constructor','action-owner-accessor','action-slot-accessor')
     targets={ranges[k][0] for k in caller_names if k in ranges}
     calls=scan_callers(a.lib, targets)
     for name in caller_names:
