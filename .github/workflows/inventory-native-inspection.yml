@@ -36,6 +36,16 @@ jobs:
           python3 tools/inspect-native-references.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/inventory-inspection"
           python3 tools/find-inventory-action-types.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/inventory-inspection/action-rtti.txt"
           rm "$RUNNER_TEMP/libminecraftpe.so"
+      - name: Prioritize swap findings
+        run: |
+          python3 - "$RUNNER_TEMP/inventory-inspection/action-rtti.txt" <<'PYCODE'
+          import pathlib,sys
+          lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
+          summary=' | '.join(x for x in lines if x.startswith(('RTTI ', 'TYPEINFO ', 'VTABLE ', 'BASE_REFERENCES ', 'DERIVED_NAME_RELOCS ')))
+          print('::notice title=Swap findings::'+summary.replace('%','%25'))
+          text=' | '.join(x.strip() for x in lines if x.strip()).replace('%','%25')
+          for i in range(0,min(len(text),24000),4000):print(f'::notice title=Swap details {i//4000+1}::{text[i:i+4000]}')
+          PYCODE
       - name: Surface transaction candidates
         run: |
           python3 - "$RUNNER_TEMP/inventory-inspection" begin-request add-request-action <<'PYCODE'
