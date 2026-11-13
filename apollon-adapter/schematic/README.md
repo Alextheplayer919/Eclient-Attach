@@ -32,3 +32,15 @@ The standalone Mapper APK now searches for block tessellator/renderers, model,
 texture atlas and mesh/material names. Its results are static and heuristic:
 string references are not verified function entrypoints, signatures, state
 layouts, render context, atlas access or proof that an address is callable.
+
+On the pinned 1.21.111 ARM64 library (SHA-256
+`65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1`),
+[mapper run 43448675732](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/43448675732)
+reported string-reference leads at `0x65f36b8` for `textures/terrain_texture.json`,
+`0x66e5a38` for a `BlockGraphics::getTextureItem` diagnostic string, and
+`0x675fcb4`/`0x675fee8` for `BlockTessellator`-related names. These are
+heuristic instruction locations referencing strings, **not** verified
+renderer function entries or callable offsets. They may refer to diagnostic,
+registration or unrelated code. Atlas access, game render-thread integration,
+resource-pack reload handling, transparent materials and block models remain
+unverified.
