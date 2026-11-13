@@ -42,13 +42,19 @@ jobs:
                   if n.lower().endswith('/vanilla/blocks.json'):
                       try:
                           d=json.loads(z.read(n)); out.append('Base blocks JSON keys: '+repr(list(d)[:10])); out.append('stone mapping: '+repr(d.get('stone') or d.get('minecraft:stone'))[:800])
-                      except Exception as e: out.append('Base blocks JSON read error: '+type(e).__name__)
+                      except Exception as e:
+                          text=z.read(n).decode('utf-8',errors='replace'); out.append('Base blocks JSON read error: '+str(e)[:150]); out.append('file prefix: '+repr(text[:350]))
+                          out.append('stone fragment: '+repr(text[max(0,text.find('"stone"')-40):text.find('"stone"')+450]))
               print('::notice title=Block asset discovery::'+' | '.join(out[1+min(len(matches),100):]).replace('%','%25')[:3500])
               for n in matches:
                   if n.lower().endswith('terrain_texture.json'):
                       try:
                           data=json.loads(z.read(n)); out.append(f'JSON {n}: top-level keys={list(data)[:20]}, texture_data entries={len(data.get("texture_data",{}))}')
-                      except Exception as e: out.append(f'JSON {n}: unavailable/invalid ({type(e).__name__})')
+                          if n.lower().endswith('/vanilla/textures/terrain_texture.json'):
+                              print('::notice title=Base terrain texture sample::'+repr([(k,data.get('texture_data',{}).get(k)) for k in ('stone','dirt','grass_top','planks_oak')]).replace('%','%25'))
+                      except Exception as e:
+                          out.append(f'JSON {n}: unavailable/invalid ({type(e).__name__})')
+                          if n.lower().endswith('/vanilla/textures/terrain_texture.json'): print('::notice title=Base terrain JSON error::'+str(e).replace('%','%25'))
               open(sys.argv[2],'w').write('\n'.join(out)+'\n')
               print('::notice title=Asset discovery::'+out[0])
               print('::notice title=Asset paths::'+' | '.join(out[1:12]).replace('%','%25'))
