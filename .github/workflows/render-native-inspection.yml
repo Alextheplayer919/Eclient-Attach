@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - tools/inspect-render-candidates.py
+      - tools/arm64-callmap.py
+      - tests/arm64_callmap_test.py
       - apollon-adapter/schematic/texture_catalog.cpp
       - apollon-adapter/schematic/texture_catalog.h
       - tests/texture_catalog_apk_test.cpp
@@ -26,6 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 tests/inspect_render_candidates_test.py
+          python3 tests/arm64_callmap_test.py
           mkdir -p "$RUNNER_TEMP/minecraft"
           gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
           APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
@@ -86,6 +89,7 @@ jobs:
           echo '65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1  '"$RUNNER_TEMP/libminecraftpe.so" | sha256sum -c -
           OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           python3 tools/inspect-render-candidates.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/render-inspection"
+          python3 tools/arm64-callmap.py --lib "$RUNNER_TEMP/libminecraftpe.so" --output "$RUNNER_TEMP/render-inspection/direct-branch-map.json"
           rm "$RUNNER_TEMP/libminecraftpe.so"
           cp "$RUNNER_TEMP/render-assets.txt" "$RUNNER_TEMP/render-inspection/asset-discovery.txt"
       - name: Surface candidate disassembly

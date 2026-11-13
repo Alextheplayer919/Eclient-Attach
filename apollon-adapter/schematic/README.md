@@ -92,3 +92,11 @@ fallbacks for these examples, not confirmed state-specific results. The code is
 standalone and not yet integrated into the client APK or tested on a device.
 The JSON dependency is the nlohmann single header already supplied inside the
 Apollon source archive; it is extracted to a temporary build directory for tests.
+
+### ARM64 direct-branch mapper
+
+`tools/arm64-callmap.py` is a separate read-only offline decoder. It reads executable ELF64 AArch64 segments and `.eh_frame` FDEs (via `readelf`), decodes direct `B`/`BL` immediates, and reports incoming/outgoing edges for the FDE containing each supplied site. The default sites are permitted **only** for the SHA-256-pinned 1.21.111 library; on other binaries pass explicit sites, e.g. `python3 tools/arm64-callmap.py --lib libminecraftpe.so --site candidate=0x123456 --output callmap.json`. Output includes hash, FDE bounds, edge locations, target addresses and full counts, with bounded edge lists. This complements, but does not replace, the standalone Android mapper. The inspection workflow runs it on the pinned APK and saves the JSON artifact.
+
+These are not hook offsets: FDEs can be absent/overlap, executable bytes can contain embedded data, `B` can be a jump rather than a call, indirect/virtual calls are absent, and a target need not be a function entry. No signature, ABI, thread, lifetime or runtime behavior is established. Raw virtual addresses require the correct runtime load bias before use. The tool does not read or modify a running process.
+
+Research: [MCBE DX12 template](https://github.com/xpd98x/mcpd98) describes a native `LevelRenderer::renderLevel` 3D path distinct from a projected ImGui overlay; [Actually Connected Textures](https://github.com/Alastor-Kaneki/Actually-Connected-Textures) describes block tessellation/texture hooks for a different game version. These Windows/version-specific examples are architectural leads, not Android 1.21.111 offsets or ABI proof. A native path might preserve depth and geometry, while an overlay needs independently verified camera projection, depth handling and models. Neither route has yet been validated here.
