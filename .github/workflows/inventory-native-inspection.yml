@@ -7,6 +7,7 @@ on:
       - tools/inspect-native-references.py
       - tools/find-inventory-action-types.py
       - tests/inspect_native_references_test.py
+      - tests/find_inventory_action_types_test.py
 permissions:
   contents: read
 jobs:
@@ -31,6 +32,7 @@ jobs:
           echo '65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1  '"$RUNNER_TEMP/libminecraftpe.so" | sha256sum -c -
           OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           python3 tests/inspect_native_references_test.py
+          python3 tests/find_inventory_action_types_test.py
           python3 tools/inspect-native-references.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/inventory-inspection"
           python3 tools/find-inventory-action-types.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/inventory-inspection/action-rtti.txt"
           rm "$RUNNER_TEMP/libminecraftpe.so"

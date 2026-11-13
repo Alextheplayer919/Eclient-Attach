@@ -93,9 +93,15 @@ def main():
         # pointer is immediately before the vtable address point.
         to_names=relative_matches(a.lib,set(names)); types={dest-8:names[src] for src,dests in to_names.items() for dest in dests}
         to_types=relative_matches(a.lib,set(types)); vtables={dest+8:types[src] for src,dests in to_types.items() for dest in dests}
-        refs=adrp_add_refs(mm,loads,vtables)
+        refs=adrp_add_refs(mm,loads,{**vtables, **names})
     lines=['Static leads only. RTTI/vtable references and function starts do not verify ABI, object lifetime or a safe swap.']
-    lines+=['RTTI '+hex(k)+' '+v for k,v in sorted(names.items())]
+    for addr,name in sorted(names.items()):
+        lines.append(f'RTTI {addr:#x} {name} code_refs={len(refs[addr])}')
+        for pc,gap in refs[addr][:20]:
+            lines.append(f'  name_xref={pc:#x} gap={gap}')
+            dis=subprocess.check_output([a.objdump,'-d',f'--start-address={max(0,pc-48)}',f'--stop-address={pc+96}',str(a.lib)],text=True)
+            lines.extend(x.strip() for x in dis.splitlines() if x.lstrip().startswith(tuple('0123456789abcdef')))
+
     lines+=['TYPEINFO '+hex(k)+' '+v for k,v in sorted(types.items())]
     for addr,name in sorted(vtables.items()):
         lines.append(f'VTABLE {addr:#x} {name} candidates={len(refs[addr])}')
