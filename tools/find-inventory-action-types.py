@@ -119,7 +119,7 @@ def main():
             lines.extend(x.strip() for x in dis.splitlines() if x.lstrip().startswith(tuple('0123456789abcdef')))
 
     lines+=['TYPEINFO '+hex(k)+' '+v for k,v in sorted(types.items())]
-    for addr,name in sorted(vtables.items()):
+    for addr,name in sorted(vtables.items(), key=lambda pair: ('Swap' not in pair[1], pair[0])):
         lines.append(f'VTABLE {addr:#x} {name} candidates={len(refs[addr])}')
         for pc,gap in refs[addr][:30]:
             lines.append(f'  xref={pc:#x} gap={gap}')
