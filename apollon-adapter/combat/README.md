@@ -196,3 +196,23 @@ that is a limitation of this technique, not evidence those actions do not exist.
 See inventory inspection Actions run 43384027828. These findings do not yet
 provide item identity, offhand slot addressing, a safe transaction ABI, or server
 acknowledgment. No inventory move or on-device native invocation was performed.
+
+### Swap-action constructor lead
+
+Following the transfer-base RTTI inheritance through ELF relocations found a
+candidate swap-action vtable at `0x1037a940`, with code references at
+`0xcc98d8c` and `0xcc9db2c`. The latter is in unwind range
+`0xcc9da9c..0xcc9dbd8`; the entry initializes a transfer-base object and
+then stores the swap vtable. Two direct callers allocate 96 bytes and call it
+with two input object pointers. The wrapper at `0xcd7ceb8` returns the owned
+allocation through x8; its direct caller is `0xcd75a84`. Another call is in
+`0xcd7f7e8..0xcd7fe2c`, called directly at `0xcdc9280`. Static observations
+only: neither input object's layout nor the enclosing context or transfer of
+ownership is verified, and direct-call scans miss indirect calls. This does not
+establish item identity, slot IDs, inventory manager access, acknowledgment, or
+a safe AutoTotem implementation. Inspection: Actions run 43385995426.
+
+The earlier statement that the scan did not resolve a swap constructor is
+superseded by this inheritance-based lead. Vtable enumeration may include
+false positives where inheritance pointers resemble vtable headers; references
+and unwind metadata are evidence to investigate, not a public API.
