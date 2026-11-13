@@ -27,11 +27,28 @@ jobs:
           gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
           APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
           echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          python3 - "$APK" "$RUNNER_TEMP/render-assets.txt" <<'PYCODE'
+          import json,sys,zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              names=z.namelist()
+              matches=[n for n in names if 'terrain_texture.json' in n.lower() or ('textures/blocks/' in n.lower() and n.lower().endswith('.png'))]
+              out=[f'Candidate terrain JSON or block texture assets: {len(matches)}']
+              out += matches[:100]
+              for n in matches:
+                  if n.lower().endswith('terrain_texture.json'):
+                      try:
+                          data=json.loads(z.read(n)); out.append(f'JSON {n}: top-level keys={list(data)[:20]}, texture_data entries={len(data.get("texture_data",{}))}')
+                      except Exception as e: out.append(f'JSON {n}: unavailable/invalid ({type(e).__name__})')
+              open(sys.argv[2],'w').write('\n'.join(out)+'\n')
+              print('::notice title=Asset discovery::'+out[0])
+              print('::notice title=Asset paths::'+' | '.join(out[1:12]).replace('%','%25'))
+          PYCODE
           unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
           echo '65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1  '"$RUNNER_TEMP/libminecraftpe.so" | sha256sum -c -
           OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
           python3 tools/inspect-render-candidates.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/render-inspection"
           rm "$RUNNER_TEMP/libminecraftpe.so"
+          cp "$RUNNER_TEMP/render-assets.txt" "$RUNNER_TEMP/render-inspection/asset-discovery.txt"
       - name: Surface candidate disassembly
         run: |
           python3 - "$RUNNER_TEMP/render-inspection" <<'PYCODE'
