@@ -177,3 +177,22 @@ constructor or server acknowledgment flow. AutoTotem is **not implemented**.
 Do not expose a button that calls the above addresses with fabricated pointers;
 a crash, inventory desynchronization, or item loss cannot identify which
 contract was violated. Use disposable test worlds for any eventual live probe.
+
+### Further pinned-library findings
+
+RTTI resolved through ELF relative relocations identifies the action built by
+`0xccd49e0` / `0xcc9c240` as `ItemStackRequestActionMineBlock`, **not** a swap.
+The two earlier legacy constructor candidates identify as
+`ItemStackRequestActionCraftNonImplemented_DEPRECATEDASKTYLAING` and
+`ItemStackRequestActionCraftRecipeOptional`. None should be used to equip a
+totem. The manager-candidate getter at `0x6bee850` merely returns `[x0+0x9d8]`;
+its input and relationship to LocalPlayer are still unverified.
+
+`tools/find-inventory-action-types.py` scans RTTI names, relative relocations,
+and conservative ADRP+ADD references for actual swap/take/place action types.
+The pinned library contains `ItemStackRequestActionSwap`, `...Take`, and
+`...Place` strings, but this scan did not resolve their typeinfos or constructors;
+that is a limitation of this technique, not evidence those actions do not exist.
+See inventory inspection Actions run 43384027828. These findings do not yet
+provide item identity, offhand slot addressing, a safe transaction ABI, or server
+acknowledgment. No inventory move or on-device native invocation was performed.
