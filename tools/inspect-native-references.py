@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 
 SITES = {
+    'swap-factory': 0xcc98d8c,
+    'swap-constructor': 0xcc9db2c,
     'begin-request': 0xcc92740,
     'add-request-action': 0xcc93310,
     'selected-slot': 0xc5756e8,
@@ -162,7 +164,7 @@ def main():
     vtables={'action-type-11':0x1037a820, 'legacy-type-15':0x103783f8, 'legacy-type-18':0x103783b0}
     (a.output / 'vtable-raw.txt').write_text('\n'.join(inspect_vtable(a.lib, vtables))+'\n')
     # Locate static callers of unwind-range starts, never assuming names or ABI.
-    caller_names=('begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper','action-context','action-constructor','legacy-action-construct-a','legacy-action-construct-b','inventory-ui-context','manager-candidate-getter','action-base-constructor','action-owner-accessor','action-slot-accessor')
+    caller_names=('swap-factory','swap-constructor','begin-request','add-request-action','add-wrapper-1','add-wrapper-2','begin-wrapper','action-context','action-constructor','legacy-action-construct-a','legacy-action-construct-b','inventory-ui-context','manager-candidate-getter','action-base-constructor','action-owner-accessor','action-slot-accessor')
     targets={ranges[k][0] for k in caller_names if k in ranges}
     calls=scan_callers(a.lib, targets)
     for name in caller_names:
