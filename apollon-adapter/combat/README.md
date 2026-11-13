@@ -217,29 +217,35 @@ superseded by this inheritance-based lead. Vtable enumeration may include
 false positives where inheritance pointers resemble vtable headers; references
 and unwind metadata are evidence to investigate, not a public API.
 
-### Passive swap trace (experimental)
+### Passive inventory trace (experimental)
 
-Crystal Aura > Diagnostics and tools > Inventory swap trace records the first
-13 opaque bytes from each constructor input while enabled (100 events per
-recording) in Downloads/combat-test.txt. Use Mark next manual swap to label
-individual manual moves; no interpretation of the bytes is assumed. The 13
-bytes may contain inventory-related metadata; do not share logs publicly if
-that is sensitive. The hook is installed at startup when the pinned 16-byte
-prologue matches, even while recording is off; it forwards the original call,
-never replays pointers, and never changes inventory. A hook or ABI error can
-still crash or interfere with gameplay. This is not device-tested; no event
-may mean the user's move uses another path. Constructor events do not prove a
-server accepted a swap. Use a disposable local world and back it up first.
+Crystal Aura > Diagnostics and tools > Inventory swap trace observes swap
+construction and submitted request actions, up to 100 events per recording,
+in Downloads/combat-test.txt. Each hook installs at startup if its pinned
+16-byte prologue matches, even when recording is off. The hooks forward original
+calls, do not retain/replay pointers and never initiate a move. ABI errors or
+hooking can still crash or interfere with gameplay. Use a backed-up disposable
+world. Calls can arise from unrelated activity or be missed, and do not prove
+server acceptance.
 
-The follow-up trace also hooks the `addRequestAction` candidate at
-`0xcc93130`, after checking its pinned prologue. It reads the action type byte
-and, only when the runtime vtable matches the statically identified take,
-place or swap vtables, two 13-byte candidate transfer prefixes. All reads use
-`process_vm_readv` and only occur while tracing; the hook itself is installed
-at startup when its prologue matches. It forwards the original call and does
-not retain or replay pointers. The vtable labels and field meanings are static
-hypotheses, not validation or proof of a completed server transaction. Events
-may arise from other inventory operations, may be missed on different paths,
-and share the 100-event cap with constructor events. The additional hook is
-experimental, may crash or interfere with the game, and has not been device
-validated. Avoid sharing the opaque log if inventory metadata is sensitive.
+The device log `combat-test (8).txt` recorded 13 type-1 requests with the
+place-action vtable; no swap-constructor events were recorded. This aligns with
+manual actions using place requests, but markers alone do not establish which
+operation caused each event. A prefix's first byte often alternates between
+`0x1c`, `0x22` and `0x3c`, corresponding to hotbar, offhand and cursor in
+[Gophertunnel's container list](https://github.com/Sandertv/gophertunnel/blob/master/minecraft/protocol/container.go).
+This is a protocol cross-check, not proof of this build's in-memory layout.
+The constructor at `0xcc9d950` copies each input's first 13 bytes into offsets
+`0x10` and `0x38`, accepts a byte in w1 and stores it at `0xb`; see
+Actions run 43390205993. [Gophertunnel](https://github.com/Sandertv/gophertunnel/blob/master/minecraft/protocol/item_stack.go)
+describes place actions as count, source and destination, and stack slots as
+container, slot and server-checked stack network ID. These sources do not
+establish the C++ ABI or layout of the network ID.
+
+The newer recorder logs only byte 0 and byte 12 of these prefixes, labelled
+candidate container and slot, and the candidate count byte. The older recorder
+logged entire 13-byte prefixes including potentially uninitialized padding; do
+not treat padding bytes as stable fields or publicly share sensitive traces.
+Validated item identity, network stack ID construction, inventory manager
+acquisition, ownership and response handling are still missing; no automatic
+inventory move or AutoTotem has been implemented.

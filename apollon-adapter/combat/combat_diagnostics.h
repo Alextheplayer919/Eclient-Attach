@@ -13,6 +13,7 @@
 #include "base_search.h"
 #include "placement_forward.h"
 #include "focused_events.h"
+#include "transfer_prefix.h"
 namespace eclient_combat_diagnostics {
 static std::atomic<bool> enabled{false};
 static std::atomic<bool> focused{false};
@@ -66,10 +67,10 @@ static void drawFocused() {
     ImGui::TextWrapped("Downloads/combat-test.txt; placement calls may contain world coordinates and can include other items.");
 }
 // Experimental passive trace. The first 13 bytes of each input are copied by
-// the identified constructor. They are opaque; never reinterpret as a slot or
-// retain pointers. process_vm_readv fails closed if either range is unreadable.
+// the identified constructor. Only candidate container and slot bytes are
+// logged; do not retain pointers. process_vm_readv fails closed if either range is unreadable.
 // Events may arise outside manual swaps and do not prove server acceptance.
-struct SwapPrefix { unsigned char bytes[13]; };
+using SwapPrefix = eclient::combat::TransferPrefix;
 static void swapConstruction(std::uintptr_t first, std::uintptr_t second) {
     if (!swapTrace.load() || panic) return;
     SwapPrefix a{}, b{};
@@ -81,15 +82,16 @@ static void swapConstruction(std::uintptr_t first, std::uintptr_t second) {
     if (!f) return;
     if (std::ftell(f) > 1024*1024) { std::fclose(f); f = std::fopen(path.c_str(), "w"); if (!f) return; }
     unsigned count = ++swapEvents;
-    std::fprintf(f, "time=%lld swap_constructor_event=%u first13=", (long long)std::time(nullptr), count);
-    if (aOk) for (auto byte : a.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
-    std::fprintf(f, " second13=");
-    if (bOk) for (auto byte : b.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+    std::fprintf(f, "time=%lld swap_constructor_event=%u", (long long)std::time(nullptr), count);
+    if (aOk) { auto fields=eclient::combat::transferFields(a); std::fprintf(f, " a_container_candidate=%u a_slot_candidate=%u", fields.container, fields.slot); }
+    else std::fprintf(f, " a=unreadable");
+    if (bOk) { auto fields=eclient::combat::transferFields(b); std::fprintf(f, " b_container_candidate=%u b_slot_candidate=%u", fields.container, fields.slot); }
+    else std::fprintf(f, " b=unreadable");
     std::fprintf(f, " (opaque_inputs_not_proof_of_completed_swap)\n");
     std::fclose(f);
 }
 // The request function reads a pointer from its second argument, then a byte
-// at action+8. Log that byte and bounded prefixes only for recognized
+// at action+8. Log that byte and candidate fields only for recognized
 // transfer action vtables; the byte is a candidate action type, not proof of
 // a move or server acknowledgment. Never retain or dereference the pointer
 // outside this call, and avoid recording addresses or item contents.
@@ -106,6 +108,8 @@ static void requestAction(std::uintptr_t ownerPointer) {
     SwapPrefix a{}, b{};
     bool aOk=known && eclient::fly2::probe::read(action+0x10, a);
     bool bOk=known && eclient::fly2::probe::read(action+0x38, b);
+    std::uint8_t countCandidate=0;
+    bool countOk=known && vtable != swapActionVtable && eclient::fly2::probe::read(action+0xb, countCandidate);
     std::lock_guard<std::mutex> lock(logMutex);
     if (!swapTrace.load() || path.empty() || swapEvents.load() >= 100) return;
     FILE* f = std::fopen(path.c_str(), "a");
@@ -117,17 +121,18 @@ static void requestAction(std::uintptr_t ownerPointer) {
     else std::fprintf(f, " candidate_type=unreadable");
     std::fprintf(f, " vtable_kind=%s", kind);
     if (known) {
-        std::fprintf(f, " prefix_a=");
-        if (aOk) for (auto byte : a.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
-        std::fprintf(f, " prefix_b=");
-        if (bOk) for (auto byte : b.bytes) std::fprintf(f, "%02x", (unsigned)byte); else std::fprintf(f, "unreadable");
+        if (countOk) std::fprintf(f, " count_candidate=%u", (unsigned)countCandidate);
+        if (aOk) { auto fields=eclient::combat::transferFields(a); std::fprintf(f, " a_container_candidate=%u a_slot_candidate=%u", fields.container, fields.slot); }
+        else std::fprintf(f, " a=unreadable");
+        if (bOk) { auto fields=eclient::combat::transferFields(b); std::fprintf(f, " b_container_candidate=%u b_slot_candidate=%u", fields.container, fields.slot); }
+        else std::fprintf(f, " b=unreadable");
     }
     std::fprintf(f, " (submitted_not_confirmation)\n");
     std::fclose(f);
 }
 static void drawSwapTrace() {
     ImGui::TextWrapped("Experimental passive hooks observe swap construction and submitted request actions. Installed at startup only on matching code bytes; they may crash the game. They do not move items or confirm success.");
-    ImGui::TextWrapped("Writes candidate action types and opaque inventory-related bytes to Downloads/combat-test.txt; they may contain sensitive metadata. Up to 100 events per recording.");
+    ImGui::TextWrapped("Writes candidate action types, container and slot numbers to Downloads/combat-test.txt. Up to 100 events per recording.");
     if (!swapHookReady.load()) ImGui::TextWrapped("Swap constructor hook unavailable on this build.");
     if (!requestHookReady.load()) ImGui::TextWrapped("Request action hook unavailable on this build.");
     if (!swapHookReady.load() && !requestHookReady.load()) return;

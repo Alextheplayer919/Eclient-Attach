@@ -64,6 +64,8 @@ jobs:
           "$RUNNER_TEMP/practice-state-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/placement_forward_test.cpp -o "$RUNNER_TEMP/placement-forward-test"
           "$RUNNER_TEMP/placement-forward-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/transfer_prefix_test.cpp -o "$RUNNER_TEMP/transfer-prefix-test"
+          "$RUNNER_TEMP/transfer-prefix-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/focused_events_test.cpp -o "$RUNNER_TEMP/focused-events-test"
           "$RUNNER_TEMP/focused-events-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/crystal_break_selection_test.cpp -o "$RUNNER_TEMP/crystal-break-selection-test"

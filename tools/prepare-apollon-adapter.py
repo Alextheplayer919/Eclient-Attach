@@ -245,7 +245,7 @@ import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'combat_diagnostics.h', jni / 'combat_diagnostics.h')
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / 'block_names.h', jni / 'block_names.h')
-for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h', 'focused_events.h', 'crystal_break_test.h', 'crystal_break_selection.h', 'practice_target.h', 'practice_state.h', 'crystal_aura_break.h'):
+for file in ('base_search.h', 'crystal_plan.h', 'placement_forward.h', 'focused_events.h', 'transfer_prefix.h', 'crystal_break_test.h', 'crystal_break_selection.h', 'practice_target.h', 'practice_state.h', 'crystal_aura_break.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
