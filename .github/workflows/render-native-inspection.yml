@@ -1,0 +1,111 @@
+name: Inspect schematic renderer candidates
+on:
+  push:
+    paths:
+      - tools/inspect-render-candidates.py
+      - tools/arm64-callmap.py
+      - tests/arm64_callmap_test.py
+      - apollon-adapter/schematic/texture_catalog.cpp
+      - apollon-adapter/schematic/texture_catalog.h
+      - apollon-adapter/schematic/cube_mesh.h
+      - apollon-adapter/schematic/cube_mesh.cpp
+      - tests/texture_catalog_apk_test.cpp
+      - tests/inspect_render_candidates_test.py
+      - .github/workflows/render-native-inspection.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v4
+      - name: Install disassembler
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'ndk;28.2.13676358'
+      - name: Verify and inspect pinned library
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tests/inspect_render_candidates_test.py
+          python3 tests/arm64_callmap_test.py
+          mkdir -p "$RUNNER_TEMP/minecraft"
+          gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP/minecraft"
+          APK="$RUNNER_TEMP/minecraft/Minecraft-1.21.111-arm64-v8a.apk"
+          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/json" "$RUNNER_TEMP/vanilla"
+          unzip -p 'Apollon_Client_ImGui_v4.62_1.21.111 (3).zip' 'Apollon_Client_ImGui/app/src/main/jni/Includes/json.h' > "$RUNNER_TEMP/json/json.h"
+          python3 - "$APK" "$RUNNER_TEMP/vanilla" <<'PYCODE'
+          import pathlib,sys,zipfile
+          root='assets/assets/resource_packs/vanilla/'
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for name in z.namelist():
+                  if name.startswith(root) and (name==root+'blocks.json' or name.startswith(root+'textures/')) and not name.endswith('/'):
+                      rel=pathlib.PurePosixPath(name[len(root):])
+                      if '..' in rel.parts: raise ValueError('bad asset path')
+                      dest=pathlib.Path(sys.argv[2],*rel.parts);dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(z.read(name))
+          PYCODE
+          CLANG="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++"
+          "$CLANG" -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" -c apollon-adapter/schematic/texture_catalog.cpp -o "$RUNNER_TEMP/texture-catalog-arm64.o"
+          "$CLANG" -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" -c apollon-adapter/schematic/cube_mesh.cpp -o "$RUNNER_TEMP/cube-mesh-arm64.o"
+          g++ -std=c++17 -Wall -Wextra -Werror -I "$RUNNER_TEMP/json" tests/texture_catalog_apk_test.cpp apollon-adapter/schematic/texture_catalog.cpp apollon-adapter/schematic/cube_mesh.cpp -o "$RUNNER_TEMP/texture-apk-test"
+          "$RUNNER_TEMP/texture-apk-test" "$RUNNER_TEMP/vanilla" | tee "$RUNNER_TEMP/texture-catalog-result.txt"
+          python3 - "$RUNNER_TEMP/texture-catalog-result.txt" <<'PYCODE'
+          import pathlib,sys
+          for line in pathlib.Path(sys.argv[1]).read_text().splitlines(): print('::notice title=Vanilla texture resolution::'+line.replace('%','%25'))
+          PYCODE
+          python3 - "$APK" "$RUNNER_TEMP/render-assets.txt" <<'PYCODE'
+          import json,sys,zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              names=z.namelist()
+              matches=[n for n in names if 'terrain_texture.json' in n.lower() or ('textures/blocks/' in n.lower() and n.lower().endswith('.png'))]
+              out=[f'Candidate terrain JSON or block texture assets: {len(matches)}']
+              out += matches[:100]
+              blockmaps=[n for n in names if n.lower().endswith('/blocks.json') and '/resource_packs/' in n.lower()]
+              baseatlas=[n for n in matches if '/resource_packs/vanilla/textures/terrain_texture.json' in n.lower()]
+              out.append(f'Block map candidates: {len(blockmaps)}; base terrain maps: {len(baseatlas)}')
+              out += blockmaps[:40]
+              for n in blockmaps:
+                  if n.lower().endswith('/vanilla/blocks.json'):
+                      try:
+                          d=json.loads(z.read(n)); out.append('Base blocks JSON keys: '+repr(list(d)[:10])); out.append('stone mapping: '+repr(d.get('stone') or d.get('minecraft:stone'))[:800])
+                      except Exception as e:
+                          text=z.read(n).decode('utf-8',errors='replace'); out.append('Base blocks JSON read error: '+str(e)[:150]); out.append('file prefix: '+repr(text[:350])); out.append('error region: '+repr(text[max(0,getattr(e,'pos',0)-180):getattr(e,'pos',0)+180]))
+                          out.append('stone fragment: '+repr(text[max(0,text.find('"stone"')-40):text.find('"stone"')+450]))
+              print('::notice title=Block asset discovery::'+' | '.join(out[1+min(len(matches),100):]).replace('%','%25')[:3500])
+              for n in matches:
+                  if n.lower().endswith('terrain_texture.json'):
+                      try:
+                          data=json.loads(z.read(n)); out.append(f'JSON {n}: top-level keys={list(data)[:20]}, texture_data entries={len(data.get("texture_data",{}))}')
+                          if n.lower().endswith('/vanilla/textures/terrain_texture.json'):
+                              print('::notice title=Base terrain texture sample::'+repr([(k,data.get('texture_data',{}).get(k)) for k in ('stone','dirt','grass_top','planks_oak')]).replace('%','%25'))
+                      except Exception as e:
+                          out.append(f'JSON {n}: unavailable/invalid ({type(e).__name__})')
+                          if n.lower().endswith('/vanilla/textures/terrain_texture.json'): print('::notice title=Base terrain JSON error::'+(str(e)+' '+repr(z.read(n).decode('utf-8',errors='replace')[max(0,getattr(e,'pos',0)-160):getattr(e,'pos',0)+160])).replace('%','%25'))
+              open(sys.argv[2],'w').write('\n'.join(out)+'\n')
+              print('::notice title=Asset discovery::'+out[0])
+              print('::notice title=Asset paths::'+' | '.join(out[1:12]).replace('%','%25'))
+          PYCODE
+          unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
+          echo '65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1  '"$RUNNER_TEMP/libminecraftpe.so" | sha256sum -c -
+          OBJDUMP="$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+          python3 tools/inspect-render-candidates.py --lib "$RUNNER_TEMP/libminecraftpe.so" --objdump "$OBJDUMP" --output "$RUNNER_TEMP/render-inspection"
+          python3 tools/arm64-callmap.py --lib "$RUNNER_TEMP/libminecraftpe.so" --output "$RUNNER_TEMP/render-inspection/direct-branch-map.json"
+          rm "$RUNNER_TEMP/libminecraftpe.so"
+          cp "$RUNNER_TEMP/render-assets.txt" "$RUNNER_TEMP/render-inspection/asset-discovery.txt"
+      - name: Surface candidate disassembly
+        run: |
+          python3 - "$RUNNER_TEMP/render-inspection" <<'PYCODE'
+          import pathlib,sys
+          for path in sorted(pathlib.Path(sys.argv[1]).glob('*.txt'), key=lambda p: (p.stem != 'texture-item-diagnostic', p.stem)):
+              text=' | '.join(line.strip() for line in path.read_text().splitlines() if line.strip()).replace('%','%25')
+              for i in range(0,min(len(text),12000),4000):print(f'::notice title={path.stem} {i//4000+1}::{text[i:i+4000]}')
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: schematic-render-native-inspection
+          path: ${{ runner.temp }}/render-inspection/
+          if-no-files-found: error
+          retention-days: 7

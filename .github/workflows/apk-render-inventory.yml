@@ -1,0 +1,29 @@
+name: Inventory packaged render files
+on:
+  push:
+    paths:
+      - tools/inspect-apk-render-files.py
+      - tests/inspect_apk_render_files_test.py
+      - .github/workflows/apk-render-inventory.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and inventory pinned APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tests/inspect_apk_render_files_test.py
+          gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP"
+          APK="$RUNNER_TEMP/Minecraft-1.21.111-arm64-v8a.apk"
+          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          python3 tools/inspect-apk-render-files.py "$APK" --output "$RUNNER_TEMP/render-file-inventory.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-render-file-inventory
+          path: ${{ runner.temp }}/render-file-inventory.txt
+          retention-days: 7
