@@ -1,53 +1,9 @@
-# Apollon integration: staging status
+# Apollon integration status
 
-The experimental Apollon APK pipeline uses the pinned Minecraft APK, an adapted
-Apollon native library and an in-process overlay. It is an **untested prototype**,
-not a verified working release. The existing `build-and-patch.sh` pipeline still
-builds the old runtime; it must not be presented as the Apollon build.
+For current build instructions, signing caveats and a source map, see [BUILD_AND_CODE_GUIDE.md](BUILD_AND_CODE_GUIDE.md). The legacy `tools/build-and-patch.sh` and the unadapted `tools/build-apollon-native.sh` are not the current installable Apollon build. Use `tools/build-apollon-apk.sh` or the corresponding GitHub Actions workflow.
 
-Use the **Build experimental Apollon E-Client APK** workflow or
-`tools/build-apollon-apk.sh <pinned-minecraft.apk> [output.apk]`. It produces a
-separately named APK, signed by the existing debug key. Device testing is still
-needed for startup, menu visibility, touch routing, lifecycle and features. The
-APK SHA gate and 18 original-byte checks are preserved; the latter are repeated
-at runtime before Apollon's hooks are installed. The other hooks and field
-layouts remain unverified. Apollon's original native key-handler patch is
-intentionally disabled to avoid disabling Minecraft input.
+The current APK adapts the supplied Apollon native source, retains the pinned APK gate and injects `libeclient_host.so` through a non-exported ContentProvider. Its Java adapter runs ImGui on a separate translucent GL surface and supplies the draggable/collapsible menu. The native key-handler patch is disabled. Startup, menu, touch/lifecycle and Fly2 have received user device testing; not every upstream feature, hook, calling convention or field has been validated. The 19 expected-byte entries and 27 executable-range checks are safeguards, not an ABI or behavior proof. The adapter uses the existing gameplay/control code rather than replacing all of Apollon.
 
-`tools/build-apollon-native.sh` compiles the exact supplied `(3).zip` native
-sources in isolation with ndk-build and NDK 28.2.13676358. It restricts the
-build to arm64-v8a and requests 16 KiB maximum page alignment. It does not
-modify the archive, package an APK, or integrate the resulting library. The
-manual **Apollon native staging compile** workflow runs the same script.
-Neither the workflow nor the generated `libReverseSigma.so` is a usable client
-release. A successful compile does not establish compatibility with Minecraft.
+The schematic path currently includes an experimental two-block overlay. It loads vanilla resources, is lockable, and remains unverified on-device; it has no schematic file import, native depth buffer or full model rendering. See [the schematic README](../apollon-adapter/schematic/README.md) before describing it as a completed hologram.
 
-The staging workflow also downloads the private, SHA-pinned Minecraft input and
-runs `tools/check-apollon-target.py`: it checks the original bytes for the 18
-existing host patch sites and whether the 27 Apollon ARM64 inline-hook targets
-are in file-backed executable segments. It prints the hook bytes for further
-analysis. Range checks alone do **not** establish that hook signatures or
-behavior are correct, nor validate all Apollon patches or game field offsets.
-
-## Required integration work
-
-- Verify the prototype's replacement host, provider, separate transparent
-  `GLSurfaceView` and touch windows on an actual device. Its renderer clears
-  its own surface, not Minecraft's; input and activity lifecycle behavior
-  have not yet been verified.
-- Audit Apollon's ARM64 hooks and patches against the exact pinned APK. Its
-  startup directly patches the native key handler and installs many hooks using
-  hard-coded offsets; it does not implement the existing expected-byte
-  fail-closed gate. Validate every write and hook before enabling it, and
-  handle partial hook installation and shutdown safely.
-- Adapt configuration storage and lifecycle, avoid concurrent access between
-  render, input and game threads, and connect every menu feature and setting.
-- Retain the APK SHA-256, alignment and signature checks in the existing
-  patcher. Verify the resulting APK's loader, native ELF and signature, then
-  test on the targeted Minecraft 1.21.111 ARM64 device before calling it a
-  working build.
-
-The archive contains other ABIs and a separate Android overlay application;
-neither is part of the selected packaging. The source retains its upstream
-credits; E-Client branding applies to the eventual product UI, not removal of
-attribution.
+`tools/build-apollon-native.sh` verifies and extracts the source ZIP and compiles the **unadapted** source for ARM64 with 16 KiB page alignment. Its staging library is not a patched APK or a validated injectable host. The separate mapper APK is documented in [mapper-app/README.md](../mapper-app/README.md).

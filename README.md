@@ -1,39 +1,30 @@
-# E-Client Patch Runtime — Minecraft Bedrock 1.21.111 ARM64
+# E-Client — Minecraft Bedrock 1.21.111 ARM64
 
-This repository is the client patch/runtime portion of E-Client. The standalone Android launcher/application has been removed.
+E-Client is an experimental patched Minecraft APK with an in-process Apollon-based client, a draggable ClickGUI, Fly2, and a separate offline Android mapper. The supported target is the **SHA-256-pinned Android ARM64 1.21.111 APK**, not a generic Minecraft version. The mapper is a separate APK and never replaces Minecraft.
 
-## Baseline
+## Start here
 
-Started from **Fortnite19-main** (`Fortnite19-main (1) (1).zip` in this repo) — the minimal native host that injects `libeclient_host.so` into `libminecraftpe.so` and exposes an ImGui ClickGUI + byte-patch toggles.
+- [Build, architecture and source guide](docs/BUILD_AND_CODE_GUIDE.md) — prerequisites, exact build commands, signing and code map.
+- [Complete source and archive inventory](docs/SOURCE_REFERENCE.md) — tracked source/configuration and archive members; bundled upstream code is retained as supplied.
+- [Schematic and preview status](apollon-adapter/schematic/README.md) — renderer research, experimental two-block preview and limitations.
+- [Fly2](apollon-adapter/fly/README.md) and [standalone mapper](mapper-app/README.md).
+- [Retired combat research](docs/CRYSTAL_AURA_RESEARCH_ARCHIVE.md) — historical research only; Crystal Aura and special music are not part of the current client.
 
-## Minecraft-only progress kept
+## Build the current client
 
-On top of that baseline, the following **Minecraft verification** work has been retained (everything else outside the zip was scrapped):
-
-- **`native/runtime/src/profile/Offsets_1_21_111.h`** — expanded from ~30 to 311 lines: `GetAbilities` `0x0CDF943C`, `GetLayer` `0x0CDF9450`, `SetAbility` `0x0CDF87E0`, `VelocityField` `0x18`, `EcsRegistryField` `0x10`/`EntityIdField` `0x18`, 6 derived ECS hashes (`ActorRotation` `0x75df36b7`, `MoveInput` `0x018b1887`, … via `tools/entt_hash.py`), full Apollon table with field offsets, and the negative `ItemInUseComponent` result.
-- **`PatchManager`** — `NoWaterDrown`/`NoLavaDrown` rename fix, composite `NoBlur` (2 sites, one toggle), `hasSpec()`/`specCount()`, `set(..., why)` with per-site error reporting.
-- **`NativeMemory` / `GameBridge` / `LoopbackBridge` / `MinecraftHost`** — SHA-verified `libminecraftpe.so` validation (executable-range + fingerprint, not the absent GNU build-id), `patchCoverageAudit()` wiring check at boot, `entt_hash.py` offline verification.
-- **Tools** — `tools/verify-1.21.111.sh`, `tools/entt_hash.py` kept; `patch-minecraft-apk.sh` + `minecraft-host-loader.smali` reverted to the non-Kotlin Fortnite versions (no dex injection, no `SYSTEM_ALERT_WINDOW`).
-- **Docs** — `docs/APOLLON_RECOVERED.md`, `DO_NOT_BREAK.md`, `PATCHING_FROM_PHONE.md`, `PERF_AUDIT.md` kept; `PVP_BOT.md`/`MODULE_SDK.md`/`MERGE_PLAN.md`/`PROXY_MERGE_FEASIBILITY.md` scrapped.
-
-## What was scrapped (outside the zip)
-
-`kotlin-modules/` (Hitbox, AutoTotem, PvpBot, ModuleRegistry, EClientUi), `native/runtime/src/kotlin/KotlinBridge.*`, `bridge/AgentState.*, DebugFiles.*`, `memory/ComponentWalk.*`, `modules/FlyInput.*, MelodyModules.*`, the Kotlin Views overlay (`build-kotlin-modules.sh`, `minecraft-touch-listener.smali`, touch ABI, `ModuleRegistry.init()`), and `native/runtime/tests/host/` (bench/fake_world/clickgui checks). The repo now has **no Kotlin** and no module implementation beyond Fortnite's 23-entry `ModuleManager`.
-
-## Current verified patch modules (Fortnite baseline)
-
-NoHurtCam, FullBright, NoSlowDown, Noclip, AntiKnockback, NoBlur, NoCaveVignette, NoEmoteCooldown, NoWaterDrown, NoLavaDrown, NoCamDistortion, NoBoatRotation, NoCamSleep, PlaceCamera, SlowDownTriggers, XrayCameraThird, AutoClickMine. Speed, Fly, KillAura, CriticalHit, ESP remain gated until their calling conventions are verified.
-
-## Build and patch
+The [Build experimental Apollon E-Client APK workflow](.github/workflows/apollon-experimental.yml) builds the current client and uploads `eclient-apollon-experimental-arm64`. It requires access to the repository's pinned Minecraft input release; the Minecraft APK is **not** included in this checkout. For local setup and signing caveats, see the build guide.
 
 ```bash
-export ANDROID_NDK_HOME=/path/to/android-ndk
-./tools/build-and-patch.sh /path/to/minecraft-1.21.111.apk ./eclient-minecraft-1.21.111-arm64.apk
+export ANDROID_SDK_ROOT=/path/to/android-sdk
+export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+export PATH="$ANDROID_SDK_ROOT/build-tools/35.0.0:$PATH"
+./tools/build-apollon-apk.sh /path/to/Minecraft-1.21.111-arm64-v8a.apk
 ```
 
-The patcher validates the exact APK SHA-256 before injecting. The native runtime validates `libminecraftpe.so` and each patch site's original bytes before enabling a patch.
+The resulting APK is `out/eclient-apollon-experimental-arm64.apk`. The old `tools/build-and-patch.sh` builds a **different, legacy runtime**; it does not build the current Apollon client. The Apollon native staging script also does not produce an installable client.
 
-## Sources
+## Status and safety
 
-- `Fortnite19-main (1) (1).zip` — baseline
-- `Apollon_Client_ImGui_v4.62_1.21.111 (2).zip` — 1.21.111 reference profile used to derive the offsets above
+The patched client and GUI have been exercised on a device, but not every upstream hook, feature, field layout or lifecycle is verified. Fly2 may trigger server corrections. The schematic preview is an **experimental, unverified two-block overlay**, not schematic import or a finished hologram. It does not have Minecraft's depth buffer. Back up worlds before uninstalling Minecraft: these debug APKs are re-signed, and generated keys change between builds.
+
+The original sources and bundled third-party code remain attributed in their archives and licenses. This project is not affiliated with Mojang or Microsoft.
