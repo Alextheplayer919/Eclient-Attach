@@ -1,5 +1,5 @@
 #pragma once
-// Opt-in TEST BUILD ONLY. No automatic inventory mutation or crystal placement.
+// Opt-in TEST BUILD ONLY. Experiments may mutate the world or inventory.
 // Shared UI/game/transfer-hook state is atomic; borrowed game pointers never
 // leave the tick/call in which they were supplied.
 #include <atomic>
@@ -12,6 +12,12 @@ namespace eclient_combat_lab {
 // 0 idle, 1 armed, 2 expired, 3 attempted, 4 cancelled.
 static std::atomic<int> crystalState{0};
 static std::atomic<long long> deadlineMs{0};
+static std::atomic<bool> breakAura{false};
+static std::atomic<long long> lastAttack{0};
+// One deliberately synthetic placement while the game's own arguments are live.
+static std::atomic<int> placeState{0}, placeDirection{0};
+static std::atomic<long long> placeDeadline{0};
+static std::atomic<unsigned long long> placeResult{0};
 static std::atomic<bool> observing{false};
 static std::atomic<int> events{0}, observerState{0}; // 0 pending, 1 active, -1 unavailable
 static std::atomic<int> withContext{0}, withInput{0};
@@ -44,8 +50,10 @@ static void cancelIfArmed() {
     int expected=1;crystalState.compare_exchange_strong(expected,4);
 }
 static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::vector<Mob*>& actors) {
-    if(crystalState.load(std::memory_order_acquire)!=1) return;
-    if(nowMs()>deadlineMs.load(std::memory_order_relaxed)) {int expected=1;crystalState.compare_exchange_strong(expected,2);return;}
+    bool armed=crystalState.load(std::memory_order_acquire)==1;
+    if(armed && nowMs()>deadlineMs.load(std::memory_order_relaxed)) {int expected=1;crystalState.compare_exchange_strong(expected,2);armed=false;}
+    const bool aura=breakAura.load(std::memory_order_relaxed) && nowMs()-lastAttack.load(std::memory_order_relaxed)>=500;
+    if(!armed && !aura) return;
     if(!player || !game || !position || !std::isfinite(position->x) || !std::isfinite(position->y) || !std::isfinite(position->z)) return;
     Mob* nearest=nullptr;float best=16.0f;
     for(Mob* actor:actors) {
@@ -56,14 +64,40 @@ static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::
     }
     if(nearest) {
         int expected=1;
-        if(crystalState.compare_exchange_strong(expected,3)) {
+        if((armed && crystalState.compare_exchange_strong(expected,3)) || aura) {
+            lastAttack.store(nowMs(),std::memory_order_relaxed);
             __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","crystal attack attempt within 4 blocks; no success confirmation");
             game->attack(nearest,true);
         }
     }
 }
+// a2 is inferred as the BlockPos pointer (three signed 32-bit coordinates).
+// Reuse all other arguments only during the intercepted call. This can fail,
+// consume/place the wrong item, desync, or crash.
+static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
+                                          const eclient::compat::PlacementArgs& args) {
+    auto result=eclient::compat::forwardPlacement(original,args);
+    if(placeState.load(std::memory_order_acquire)!=1) return result;
+    if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {int expected=1;placeState.compare_exchange_strong(expected,2);return result;}
+    if(!args.a2 || panic) return result;
+    int expected=1;
+    if(!placeState.compare_exchange_strong(expected,3)) return result;
+    struct Pos {std::int32_t x,y,z;};
+    Pos pos;
+    std::memcpy(&pos,reinterpret_cast<const void*>(args.a2),sizeof(pos));
+    int direction=placeDirection.load();
+    // Avoid signed overflow when testing corrupted or unexpected position data.
+    if(pos.x < -30000000 || pos.x > 30000000 || pos.z < -30000000 || pos.z > 30000000) {placeState.store(4);return result;}
+    if(direction==0) ++pos.x; else if(direction==1) --pos.x; else if(direction==2) ++pos.z; else --pos.z;
+    auto synthetic=args;synthetic.a2=reinterpret_cast<std::uintptr_t>(&pos);
+    __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","attempting synthetic neighboring useItemOn at %d %d %d",pos.x,pos.y,pos.z);
+    placeResult.store(eclient::compat::forwardPlacement(original,synthetic));
+    return result;
+}
 static void settings() {
-    ImGui::TextWrapped("EXPERIMENTAL LOCAL-WORLD TEST. Crystal explosions can damage you and the world. No automatic placement or totem switching.");
+    ImGui::TextWrapped("EXPERIMENTAL LOCAL-WORLD TEST. Can crash, destroy blocks or lose items. AutoTotem is not yet implemented.");
+    bool aura=breakAura.load();if(ImGui::Checkbox("Continuous crystal break", &aura)) breakAura.store(aura);
+    ImGui::TextWrapped("Attacks nearby crystals every half second. No player targeting or damage calculation.");
     if(ImGui::Button("Arm one crystal attack (10s)")) {
         deadlineMs.store(nowMs()+10000,std::memory_order_relaxed);
         crystalState.store(1,std::memory_order_release);
@@ -72,6 +106,14 @@ static void settings() {
     const char* status="Idle";
     switch(crystalState.load()) {case 1:status="Armed: waiting for crystal within 4 blocks";break;case 2:status="Expired: no crystal found";break;case 3:status="Attack attempted (not proof it broke)";break;case 4:status="Cancelled or world unavailable";break;}
     ImGui::TextWrapped("Crystal test: %s",status);
+    ImGui::Separator();
+    int direction=placeDirection.load();
+    if(ImGui::Combo("Extra placement direction", &direction, "East +X\0West -X\0South +Z\0North -Z\0")) placeDirection.store(direction);
+    if(ImGui::Button("Arm adjacent placement (10s)")) {placeDeadline.store(nowMs()+10000);placeState.store(1);}
+    ImGui::SameLine();if(ImGui::Button("Cancel placement")) {int expected=1;placeState.compare_exchange_strong(expected,4);}
+    const char* place=placeState.load()==1 ? "Armed: manually use an end crystal on obsidian now" : placeState.load()==2 ? "Expired" : placeState.load()==3 ? "Synthetic call attempted" : placeState.load()==4 ? "Cancelled/invalid position" : "Idle";
+    ImGui::TextWrapped("Placement: %s; return=%llu",place,placeResult.load());
+    ImGui::TextWrapped("Makes an extra useItemOn call on the adjacent block using the item you manually used. It may place any held item, not just crystals. Build an obsidian platform first.");
     ImGui::Separator();
     ImGui::TextWrapped("Transfer observer is passive: manually move items into/out of offhand, then check the count. It does not equip totems.");
     ImGui::Text("Transfer hook: %s",observerState.load()==1 ? "installed" : observerState.load()<0 ? "unavailable" : "pending");

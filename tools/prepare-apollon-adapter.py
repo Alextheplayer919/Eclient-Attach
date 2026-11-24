@@ -147,6 +147,7 @@ if combat_lab:
     replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "module_menu.h"')
     replace('    void* result = old_NormalTick(player);', '    if (!gameReady) eclient_combat_lab::cancelIfArmed();\n    void* result = old_NormalTick(player);')
     replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);')
+    replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
 menu = jni / 'menu.h'
