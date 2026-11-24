@@ -13,7 +13,10 @@ import ijson
 
 PINNED = '65b9a43178a8b2cde19b6e000613b1453f8f2ea964b094faaf6e206ef041fed1'
 CLASSES = ('GameMode', 'PlayerInventory', 'Inventory', 'OffhandContainerModel',
-           'ContainerTransferClient', 'ItemStackRequestActionSwap', 'ItemStackRequestActionPlace', 'EndCrystalItem')
+           'ContainerTransferClient', 'ItemStackRequestActionSwap', 'ItemStackRequestActionPlace', 'EndCrystalItem',
+           'EnderCrystal', 'BlockSource', 'ItemUseOnActorInventoryTransaction', 'ItemUseInventoryTransaction',
+           'InventoryTransactionPacket', 'UpdateBlockPacket', 'MobEquipmentPacket', 'PlayerHotbarPacket',
+           'InventorySlotPacket', 'OffhandContainerValidation', 'MobArmorEquipmentPacket', 'ItemStackRequestPacket')
 
 def integer(value):
     if isinstance(value, int): return value

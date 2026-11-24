@@ -35,8 +35,9 @@ jobs:
         run: |
           python3 - "$RUNNER_TEMP/libminecraftpe.so" "$RUNNER_TEMP/report/sites.tsv" "$RUNNER_TEMP/elf-base.txt" <<'PYCODE'
           import pathlib, re, struct, subprocess, sys
-          sites={'transfer-action-builder':0xcd7f7e8, 'transfer-action-finalize':0xcd7f144,
-                 'place-constructor':0xcc9d950, 'swap-constructor':0xcc9da9c}
+          sites={'crystal-item-40':0x58859e8, 'crystal-item-48':0x58859f0,
+                 'crystal-item-123':0x5885518,'crystal-item-destructor':0x5898fec,
+                 'use-item-validation':0xccc2d58}
           pattern=re.compile(r'\bFDE\b.*?\bpc=([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)')
           matches={name:[] for name in sites}
           with subprocess.Popen(['readelf','--debug-dump=frames',sys.argv[1]],stdout=subprocess.PIPE,text=True) as p:
