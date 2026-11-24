@@ -1,0 +1,40 @@
+name: Check internal C++ inventory leads
+on:
+  push:
+    paths:
+      - INTERNALCPP_OFFSETS_1.21.111.1.7z
+      - tools/check-internalcpp-vtables.py
+      - tests/check_internalcpp_vtables_test.py
+      - .github/workflows/internalcpp-check.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install streaming JSON parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install 'ijson==3.4.0.post0'
+      - name: Test and inspect supplied offsets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PYTHON="$RUNNER_TEMP/venv/bin/python"
+          "$PYTHON" tests/check_internalcpp_vtables_test.py
+          echo 'da1fb27585dca5f1d7210bb5587062eee460117498aa5957bd52f1531140bc31  INTERNALCPP_OFFSETS_1.21.111.1.7z' | sha256sum -c -
+          7z e -so 'INTERNALCPP_OFFSETS_1.21.111.1.7z' > "$RUNNER_TEMP/internalcpp.json"
+          gh release download minecraft-input --repo "$GITHUB_REPOSITORY" --pattern 'Minecraft-1.21.111-arm64-v8a.apk' --dir "$RUNNER_TEMP"
+          APK="$RUNNER_TEMP/Minecraft-1.21.111-arm64-v8a.apk"
+          echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
+          unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
+          "$PYTHON" tools/check-internalcpp-vtables.py --json "$RUNNER_TEMP/internalcpp.json" --lib "$RUNNER_TEMP/libminecraftpe.so" --output "$RUNNER_TEMP/internalcpp-vtables.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: internalcpp-vtable-crosscheck
+          path: ${{ runner.temp }}/internalcpp-vtables.json
+          if-no-files-found: error
+          retention-days: 7
