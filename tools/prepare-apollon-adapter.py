@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Apply the minimal in-process adapter to a temporary copy of Apollon."""
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -140,6 +141,13 @@ for name, hexbytes in mod.EXPECTED.items():
     lines.append(f'    {{ const unsigned char expected[] = {{{data}}}; auto address = getAbsoluteAddress(MineLib, Offsets64::{name}); if (!address || memcmp((void*)address, expected, sizeof(expected))) return false; }}')
 validate = 'static bool eclientValidateTarget() {\n#if defined(__aarch64__)\n'+'\n'.join(lines)+'\n    return true;\n#else\n    return false;\n#endif\n}\n\n'
 replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
+# Combat Lab is a deliberately separate opt-in test build, not the normal client.
+combat_lab = os.environ.get('ECLIENT_COMBAT_LAB') == '1'
+if combat_lab:
+    replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "module_menu.h"')
+    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) eclient_combat_lab::cancelIfArmed();\n    void* result = old_NormalTick(player);')
+    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);')
+    replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
 menu = jni / 'menu.h'
 m = menu.read_text()
@@ -201,6 +209,18 @@ menu.write_text(m)
 mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
+if combat_lab:
+    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / 'combat_lab.h', jni / 'combat_lab.h')
+    path = jni / 'module_menu.h'
+    menu_source = path.read_text()
+    for old, new in (
+        ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, COMBAT_LAB };'),
+        ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Combat Lab",nullptr,COMBAT_LAB},{"KillAura",'),
+        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == COMBAT_LAB) eclient_combat_lab::settings();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+    ):
+        if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
+        menu_source = menu_source.replace(old, new, 1)
+    path.write_text(menu_source)
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
 for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
