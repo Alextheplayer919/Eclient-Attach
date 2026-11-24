@@ -21,6 +21,10 @@ static std::atomic<unsigned long long> placeResult{0};
 static std::atomic<bool> observing{false};
 static std::atomic<int> events{0}, observerState{0}; // 0 pending, 1 active, -1 unavailable
 static std::atomic<int> withContext{0}, withInput{0};
+// When armed, deliberately invoke the real transfer entry a second time while
+// all arguments from a manual inventory interaction are still in scope.
+static std::atomic<int> transferReplay{0};
+static std::atomic<long long> transferDeadline{0};
 using TransferFn = void (*)(void*,void*,std::uintptr_t);
 static TransferFn originalTransfer=nullptr;
 static long long nowMs() {
@@ -32,6 +36,14 @@ static void transferObserver(void* self,void* input,std::uintptr_t third) {
         if(self) withContext.fetch_add(1,std::memory_order_relaxed);
         if(input) withInput.fetch_add(1,std::memory_order_relaxed);
         if(n<=25) __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","transfer candidate event=%d self=%d input=%d third_nonzero=%d (not confirmation)",n,self!=nullptr,input!=nullptr,third!=0);
+    }
+    if(transferReplay.load(std::memory_order_acquire)==1) {
+        int expected=1;
+        if(nowMs()>transferDeadline.load(std::memory_order_relaxed)) transferReplay.compare_exchange_strong(expected,2);
+        else if(self && input && third && transferReplay.compare_exchange_strong(expected,3)) {
+            __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","calling extra native transfer with live arguments (attempt only)");
+            originalTransfer(self,input,third);
+        }
     }
     originalTransfer(self,input,third);
 }
@@ -115,7 +127,12 @@ static void settings() {
     ImGui::TextWrapped("Placement: %s; return=%llu",place,placeResult.load());
     ImGui::TextWrapped("Makes an extra useItemOn call on the adjacent block using the item you manually used. It may place any held item, not just crystals. Build an obsidian platform first.");
     ImGui::Separator();
-    ImGui::TextWrapped("Transfer observer is passive: manually move items into/out of offhand, then check the count. It does not equip totems.");
+    ImGui::TextWrapped("Inventory action test: arm, then manually move a totem into offhand. The next transfer call is invoked twice with the live arguments. It may fail, desync or change inventory; it is NOT automatic totem selection.");
+    if(ImGui::Button("Arm extra transfer call (10s)")) {transferDeadline.store(nowMs()+10000);transferReplay.store(1);}
+    ImGui::SameLine();if(ImGui::Button("Cancel transfer")) {int expected=1;transferReplay.compare_exchange_strong(expected,4);}
+    int t=transferReplay.load();
+    ImGui::Text("Extra transfer: %s",t==1 ? "armed" : t==2 ? "expired" : t==3 ? "called" : t==4 ? "cancelled" : "idle");
+    ImGui::TextWrapped("Observer below only counts calls; it cannot prove a successful inventory move.");
     ImGui::Text("Transfer hook: %s",observerState.load()==1 ? "installed" : observerState.load()<0 ? "unavailable" : "pending");
     if(ImGui::Button("Start transfer observation")) {events.store(0);withContext.store(0);withInput.store(0);observing.store(true);}
     ImGui::SameLine();if(ImGui::Button("Stop observation")) observing.store(false);

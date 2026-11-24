@@ -33,6 +33,8 @@ int main(){
     originalTransfer=proxy;observing.store(true);transferObserver(&game,&near,0);
     assert(forwarded==1 && events.load()==1 && withContext.load()==1 && withInput.load()==1);
     observing.store(false);transferObserver(nullptr,nullptr,0);assert(forwarded==2 && events.load()==1);
+    transferDeadline.store(nowMs()+1000);transferReplay.store(1);
+    transferObserver(&game,&near,1);assert(forwarded==4 && transferReplay.load()==3);
     install();assert(observerState.load()==-1);
     std::int32_t posBlock[3]={1,2,3};eclient::compat::PlacementArgs a{0,0,reinterpret_cast<std::uintptr_t>(posBlock),0,0,0,0};
     placeDirection.store(0);placeDeadline.store(nowMs()+1000);placeState.store(1);
