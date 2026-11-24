@@ -17,7 +17,7 @@ static std::atomic<bool> breakAura{false};
 static std::atomic<long long> lastAttack{0};
 static std::atomic<int> attackAttempts{0};
 // One deliberately synthetic placement while the game's own arguments are live.
-static std::atomic<int> placeState{0}, placeDirection{0};
+static std::atomic<int> placeState{0}, placeDirection{0}, placeOrder{0};
 static std::atomic<long long> placeDeadline{0};
 static std::atomic<unsigned long long> placeResult{0};
 static std::atomic<bool> observing{true};
@@ -96,28 +96,42 @@ static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::
 // consume/place the wrong item, desync, or crash.
 static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
                                           const eclient::compat::PlacementArgs& args) {
-    bool armed=placeState.load(std::memory_order_acquire)==1;
-    if(armed) eclient_console::log.add("Placement hook reached: forwarding manual use");
-    auto result=eclient::compat::forwardPlacement(original,args);
-    if(armed) eclient_console::log.add("Manual use returned %llu",static_cast<unsigned long long>(result));
-    if(placeState.load(std::memory_order_acquire)!=1) return result;
-    if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {int expected=1;if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired before use hook");return result;}
-    if(!args.a2 || panic) { eclient_console::log.add("Placement skipped: %s",panic ? "panic enabled" : "position argument null");return result; }
+    if(placeState.load(std::memory_order_acquire)!=1)
+        return eclient::compat::forwardPlacement(original,args);
+    if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {
+        int expected=1;
+        if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired before use hook");
+        return eclient::compat::forwardPlacement(original,args);
+    }
+    if(!args.a2 || panic) {
+        eclient_console::log.add("Placement skipped: %s",panic ? "panic enabled" : "position argument null");
+        return eclient::compat::forwardPlacement(original,args);
+    }
     int expected=1;
-    if(!placeState.compare_exchange_strong(expected,3)) return result;
+    if(!placeState.compare_exchange_strong(expected,3)) return eclient::compat::forwardPlacement(original,args);
     struct Pos {std::int32_t x,y,z;};
     Pos pos;
     std::memcpy(&pos,reinterpret_cast<const void*>(args.a2),sizeof(pos));
+    if(pos.x < -30000000 || pos.x > 30000000 || pos.z < -30000000 || pos.z > 30000000) {
+        placeState.store(4);eclient_console::log.add("Placement cancelled: invalid position");
+        return eclient::compat::forwardPlacement(original,args);
+    }
+    eclient_console::log.add("Manual target %d %d %d, face %u",pos.x,pos.y,pos.z,args.a3);
     int direction=placeDirection.load();
-    // Avoid signed overflow when testing corrupted or unexpected position data.
-    if(pos.x < -30000000 || pos.x > 30000000 || pos.z < -30000000 || pos.z > 30000000) {placeState.store(4);eclient_console::log.add("Placement cancelled: invalid position");return result;}
     if(direction==0) ++pos.x; else if(direction==1) --pos.x; else if(direction==2) ++pos.z; else --pos.z;
     auto synthetic=args;synthetic.a2=reinterpret_cast<std::uintptr_t>(&pos);
-    eclient_console::log.add("Trying adjacent use at %d %d %d (face %u)",pos.x,pos.y,pos.z,args.a3);
-    __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","attempting synthetic neighboring useItemOn at %d %d %d",pos.x,pos.y,pos.z);
-    auto extra=eclient::compat::forwardPlacement(original,synthetic);
-    placeResult.store(extra);
-    eclient_console::log.add("Adjacent native call returned %llu; check world",static_cast<unsigned long long>(extra));
+    const bool before=placeOrder.load()==0;
+    auto extraCall=[&]() {
+        eclient_console::log.add("Trying adjacent %d %d %d (%s manual)",pos.x,pos.y,pos.z,before ? "before" : "after");
+        auto extra=eclient::compat::forwardPlacement(original,synthetic);
+        placeResult.store(extra);
+        eclient_console::log.add("Adjacent native return %llu; check world",static_cast<unsigned long long>(extra));
+    };
+    if(before) extraCall();
+    eclient_console::log.add("Forwarding manual use");
+    auto result=eclient::compat::forwardPlacement(original,args);
+    eclient_console::log.add("Manual native return %llu; check world",static_cast<unsigned long long>(result));
+    if(!before) extraCall();
     return result;
 }
 static void placementControls() {
@@ -129,6 +143,8 @@ static void placementControls() {
     }
     int direction=placeDirection.load();
     if(ImGui::Combo("Adjacent block", &direction, "East +X\0West -X\0South +Z\0North -Z\0")) placeDirection.store(direction);
+    int order=placeOrder.load();
+    if(ImGui::Combo("Extra call order", &order, "Before manual (new test)\0After manual (old test)\0")) placeOrder.store(order);
     if(ImGui::Button("Arm placement test (30s)")) {
         placeResult.store(0);placeDeadline.store(nowMs()+30000);placeState.store(1);
         eclient_console::log.add("Placement armed for 30s. Use crystal on first obsidian block.");
@@ -141,7 +157,7 @@ static void placementControls() {
     state=placeState.load();
     if(state==1) ImGui::Text("Placement armed: %lld seconds left",(placeDeadline.load()-nowMs()+999)/1000);
     else ImGui::TextWrapped("Placement: %s; return=%llu",state==2 ? "expired" : state==3 ? "native call attempted" : state==4 ? "cancelled/invalid position" : "idle",placeResult.load());
-    ImGui::TextWrapped("Place adjacent obsidian; select direction, arm, then use held crystal on first block. Check second block and console. Other held items may be used too.");
+    ImGui::TextWrapped("Place adjacent obsidian; select direction, arm, then use a held crystal on the first block. Check both blocks and console. Other held items can be used too.");
 }
 static void drawConsole() {
     ImGui::TextWrapped("Combat test console (newest 100 events, memory only)");

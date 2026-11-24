@@ -19,8 +19,8 @@ const char* MineLib="unused";
 std::uintptr_t getAbsoluteAddress(const char*,std::uintptr_t){return 0;}
 void A64HookFunction(void*,void*,void**){}
 #include "../apollon-adapter/combat-lab/combat_lab.h"
-int placementCalls=0;std::int32_t lastX=0;
-std::uint64_t placement(std::uintptr_t,std::uintptr_t,std::uintptr_t pos,std::uint32_t,std::uintptr_t,std::uintptr_t,std::uint32_t){++placementCalls;lastX=*reinterpret_cast<std::int32_t*>(pos);return 42;}
+int placementCalls=0;std::int32_t lastX=0;std::vector<std::int32_t> positions;
+std::uint64_t placement(std::uintptr_t,std::uintptr_t,std::uintptr_t pos,std::uint32_t,std::uintptr_t,std::uintptr_t,std::uint32_t){++placementCalls;lastX=*reinterpret_cast<std::int32_t*>(pos);positions.push_back(lastX);return 42;}
 int forwarded=0;
 void proxy(void*,void*,std::uintptr_t){++forwarded;}
 int main(){
@@ -41,8 +41,10 @@ int main(){
     install();assert(observerState.load()==-1);
     std::int32_t posBlock[3]={1,2,3};eclient::compat::PlacementArgs a{0,0,reinterpret_cast<std::uintptr_t>(posBlock),0,0,0,0};
     placeDirection.store(0);placeDeadline.store(nowMs()+1000);placeState.store(1);
-    assert(placementExperiment(placement,a)==42 && placementCalls==2 && lastX==2 && posBlock[0]==1 && placeState.load()==3);
+    assert(placementExperiment(placement,a)==42 && placementCalls==2 && positions[0]==2 && positions[1]==1 && posBlock[0]==1 && placeState.load()==3);
     placementExperiment(placement,a);assert(placementCalls==3);
+    placeOrder.store(1);placeDeadline.store(nowMs()+1000);placeState.store(1);
+    placementExperiment(placement,a);assert(placementCalls==5 && positions[3]==1 && positions[4]==2);
     settings();drawConsole();
     unsigned long long generation=0;
     auto lines=eclient_console::log.snapshot(generation);assert(!lines.empty());
