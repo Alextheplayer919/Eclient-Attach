@@ -31,6 +31,20 @@ jobs:
           APK="$RUNNER_TEMP/Minecraft-1.21.111-arm64-v8a.apk"
           echo '69f6584c000a4ec80ff8c4790f43d80b3e2ee67788842fdd39fd5be70fdb3d59  '"$APK" | sha256sum -c -
           unzip -p "$APK" lib/arm64-v8a/libminecraftpe.so > "$RUNNER_TEMP/libminecraftpe.so"
+          "$PYTHON" - "$RUNNER_TEMP/libminecraftpe.so" <<'PYCODE'
+          import struct,sys
+          with open(sys.argv[1],'rb') as f:
+              h=f.read(64); off=struct.unpack_from('<Q',h,32)[0]; size,count=struct.unpack_from('<HH',h,54)
+              for i in range(count):
+                  f.seek(off+i*size); ph=f.read(56)
+                  typ,flags,p_off,va,_,filesz,_,_=struct.unpack('<IIQQQQQQ',ph)
+                  target=0xcdc921c
+                  if typ==1 and flags&1 and va<=target and target+16<=va+filesz:
+                      f.seek(p_off+target-va)
+                      print('::notice title=Transfer observer prologue::'+f.read(16).hex())
+                      break
+              else: raise SystemExit('target not in executable segment')
+          PYCODE
           "$PYTHON" tools/check-internalcpp-vtables.py --json "$RUNNER_TEMP/internalcpp.json" --lib "$RUNNER_TEMP/libminecraftpe.so" --output "$RUNNER_TEMP/internalcpp-vtables.json"
       - uses: actions/upload-artifact@v4
         with:
