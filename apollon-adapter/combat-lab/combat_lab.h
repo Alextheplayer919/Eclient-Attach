@@ -17,7 +17,7 @@ static std::atomic<bool> breakAura{false};
 static std::atomic<long long> lastAttack{0};
 static std::atomic<int> attackAttempts{0};
 // One deliberately synthetic placement while the game's own arguments are live.
-static std::atomic<int> placeState{0}, placeDirection{0}, placeOrder{0};
+static std::atomic<int> placeState{0}, placeDirection{0}, placeOrder{0}, placeMethod{0};
 static std::atomic<long long> placeDeadline{0};
 static std::atomic<unsigned long long> placeResult{0};
 static std::atomic<bool> observing{true};
@@ -29,6 +29,12 @@ static std::atomic<int> transferReplay{0};
 static std::atomic<long long> transferDeadline{0};
 using TransferFn = void (*)(void*,void*,std::uintptr_t);
 static TransferFn originalTransfer=nullptr;
+// Slot 123 candidate takes three leading arguments followed by a 12-byte
+// BlockPos passed in x3/x4. The remaining registers are forwarded untouched.
+using CrystalItemFn = std::uint64_t (*)(std::uintptr_t,std::uintptr_t,std::uintptr_t,std::uint64_t,std::uint32_t,std::uintptr_t,std::uintptr_t,std::uintptr_t);
+static CrystalItemFn originalCrystalItem=nullptr;
+static std::atomic<int> crystalHookState{0};
+static std::uint64_t crystalItemHook(std::uintptr_t,std::uintptr_t,std::uintptr_t,std::uint64_t,std::uint32_t,std::uintptr_t,std::uintptr_t,std::uintptr_t);
 static long long nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -53,6 +59,14 @@ static void transferObserver(void* self,void* input,std::uintptr_t third) {
     originalTransfer(self,input,third);
 }
 static void install() {
+    constexpr std::uintptr_t crystalOffset=0x5885518;
+    const unsigned char crystalExpected[]={0xfd,0x7b,0xbb,0xa9,0xfc,0x67,0x01,0xa9,0xfd,0x03,0x00,0x91,0xf8,0x5f,0x02,0xa9};
+    auto crystalAddress=getAbsoluteAddress(MineLib,crystalOffset);
+    if(crystalAddress && std::memcmp(reinterpret_cast<const void*>(crystalAddress),crystalExpected,sizeof(crystalExpected))==0) {
+        A64HookFunction(reinterpret_cast<void*>(crystalAddress),reinterpret_cast<void*>(crystalItemHook),reinterpret_cast<void**>(&originalCrystalItem));
+        crystalHookState.store(originalCrystalItem ? 1 : -1);
+    } else crystalHookState.store(-1);
+    eclient_console::log.add("Crystal item slot 123 hook: %s",crystalHookState.load()==1 ? "installed" : "unavailable");
     constexpr std::uintptr_t offset=0xcdc921c;
     const unsigned char expected[]={0xff,0x83,0x01,0xd1,0xfd,0x7b,0x02,0xa9,0xfd,0x83,0x00,0x91,0xf7,0x1b,0x00,0xf9};
     auto address=getAbsoluteAddress(MineLib,offset);
@@ -96,7 +110,7 @@ static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::
 // consume/place the wrong item, desync, or crash.
 static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
                                           const eclient::compat::PlacementArgs& args) {
-    if(placeState.load(std::memory_order_acquire)!=1)
+    if(placeMethod.load()!=0 || placeState.load(std::memory_order_acquire)!=1)
         return eclient::compat::forwardPlacement(original,args);
     if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {
         int expected=1;
@@ -120,6 +134,15 @@ static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
     int direction=placeDirection.load();
     if(direction==0) ++pos.x; else if(direction==1) --pos.x; else if(direction==2) ++pos.z; else --pos.z;
     auto synthetic=args;synthetic.a2=reinterpret_cast<std::uintptr_t>(&pos);
+    // Ghidra validation shows x4 points to an absolute Vec3 hit location.
+    // Move the hit coordinate together with the block position.
+    float hit[3];
+    if(args.a4) {
+        std::memcpy(hit,reinterpret_cast<const void*>(args.a4),sizeof(hit));
+        if(direction==0) hit[0]+=1;else if(direction==1) hit[0]-=1;else if(direction==2) hit[2]+=1;else hit[2]-=1;
+        synthetic.a4=reinterpret_cast<std::uintptr_t>(hit);
+        eclient_console::log.add("Adjusted GameMode hit point for adjacent block");
+    } else eclient_console::log.add("GameMode hit point null; forwarded unchanged");
     const bool before=placeOrder.load()==0;
     auto extraCall=[&]() {
         eclient_console::log.add("Trying adjacent %d %d %d (%s manual)",pos.x,pos.y,pos.z,before ? "before" : "after");
@@ -134,20 +157,63 @@ static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
     if(!before) extraCall();
     return result;
 }
+static std::uint64_t crystalItemHook(std::uintptr_t a0,std::uintptr_t a1,std::uintptr_t a2,
+        std::uint64_t xy,std::uint32_t z,std::uintptr_t a5,std::uintptr_t a6,std::uintptr_t a7) {
+    if(placeMethod.load()!=1 || placeState.load(std::memory_order_acquire)!=1)
+        return originalCrystalItem(a0,a1,a2,xy,z,a5,a6,a7);
+    if(nowMs()>placeDeadline.load()) {
+        int expected=1;if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Crystal item test expired");
+        return originalCrystalItem(a0,a1,a2,xy,z,a5,a6,a7);
+    }
+    if(panic) return originalCrystalItem(a0,a1,a2,xy,z,a5,a6,a7);
+    int expected=1;
+    if(!placeState.compare_exchange_strong(expected,3)) return originalCrystalItem(a0,a1,a2,xy,z,a5,a6,a7);
+    std::uint32_t ux=static_cast<std::uint32_t>(xy),uy=static_cast<std::uint32_t>(xy>>32);
+    std::int32_t x,y,zi;
+    std::memcpy(&x,&ux,4);std::memcpy(&y,&uy,4);std::memcpy(&zi,&z,4);
+    if(x < -30000000 || x > 30000000 || zi < -30000000 || zi > 30000000) {
+        placeState.store(4);eclient_console::log.add("Crystal item test: invalid position");
+        return originalCrystalItem(a0,a1,a2,xy,z,a5,a6,a7);
+    }
+    eclient_console::log.add("Crystal item manual target %d %d %d",x,y,zi);
+    int dir=placeDirection.load();
+    if(dir==0)++x;else if(dir==1)--x;else if(dir==2)++zi;else --zi;
+    std::memcpy(&ux,&x,4);std::memcpy(&z,&zi,4);
+    std::uint64_t adjacent=static_cast<std::uint64_t>(ux) | (static_cast<std::uint64_t>(uy)<<32);
+    const bool before=placeOrder.load()==0;
+    auto extraCall=[&]() {
+        eclient_console::log.add("Crystal item slot 123 call at %d %d %d (%s manual)",x,y,zi,before ? "before" : "after");
+        auto extra=originalCrystalItem(a0,a1,a2,adjacent,z,a5,a6,a7);
+        placeResult.store(extra);
+        eclient_console::log.add("Crystal item returned %llu; check world",static_cast<unsigned long long>(extra));
+    };
+    if(before) extraCall();
+    // z was shifted for the extra call, so reconstruct the unmodified manual z.
+    std::int32_t originalZ=zi;
+    if(dir==2)--originalZ;else if(dir==3)++originalZ;
+    std::uint32_t originalBits;std::memcpy(&originalBits,&originalZ,4);
+    auto result=originalCrystalItem(a0,a1,a2,xy,originalBits,a5,a6,a7);
+    eclient_console::log.add("Crystal item manual return %llu",static_cast<unsigned long long>(result));
+    if(!before) extraCall();
+    return result;
+}
 static void placementControls() {
     int state=placeState.load();
     if(state==1 && nowMs()>placeDeadline.load()) {
         int expected=1;
-        if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired: no useItemOn hook reached in 30 seconds");
+        if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired: selected hook not reached in 30 seconds");
         state=placeState.load();
     }
+    int method=placeMethod.load();
+    if(ImGui::Combo("Placement method", &method, "GameMode + adjusted hit\0EndCrystalItem slot 123\0")) placeMethod.store(method);
+    ImGui::Text("Crystal item hook: %s",crystalHookState.load()==1 ? "installed" : crystalHookState.load()<0 ? "unavailable" : "pending");
     int direction=placeDirection.load();
     if(ImGui::Combo("Adjacent block", &direction, "East +X\0West -X\0South +Z\0North -Z\0")) placeDirection.store(direction);
     int order=placeOrder.load();
     if(ImGui::Combo("Extra call order", &order, "Before manual (new test)\0After manual (old test)\0")) placeOrder.store(order);
     if(ImGui::Button("Arm placement test (30s)")) {
         placeResult.store(0);placeDeadline.store(nowMs()+30000);placeState.store(1);
-        eclient_console::log.add("Placement armed for 30s. Use crystal on first obsidian block.");
+        eclient_console::log.add("Placement armed: %s. Use crystal on first obsidian block.",placeMethod.load()==0 ? "GameMode + adjusted hit" : "EndCrystalItem slot 123");
     }
     ImGui::SameLine();
     if(ImGui::Button("Cancel placement")) {

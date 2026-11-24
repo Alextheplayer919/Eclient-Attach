@@ -19,8 +19,10 @@ const char* MineLib="unused";
 std::uintptr_t getAbsoluteAddress(const char*,std::uintptr_t){return 0;}
 void A64HookFunction(void*,void*,void**){}
 #include "../apollon-adapter/combat-lab/combat_lab.h"
-int placementCalls=0;std::int32_t lastX=0;std::vector<std::int32_t> positions;
-std::uint64_t placement(std::uintptr_t,std::uintptr_t,std::uintptr_t pos,std::uint32_t,std::uintptr_t,std::uintptr_t,std::uint32_t){++placementCalls;lastX=*reinterpret_cast<std::int32_t*>(pos);positions.push_back(lastX);return 42;}
+int placementCalls=0;std::int32_t lastX=0;std::vector<std::int32_t> positions;std::vector<float> hits;
+std::uint64_t placement(std::uintptr_t,std::uintptr_t,std::uintptr_t pos,std::uint32_t,std::uintptr_t hit,std::uintptr_t,std::uint32_t){++placementCalls;lastX=*reinterpret_cast<std::int32_t*>(pos);positions.push_back(lastX);if(hit) hits.push_back(*reinterpret_cast<float*>(hit));return 42;}
+std::vector<std::uint64_t> crystalPositions;std::vector<std::uint32_t> crystalZ;
+std::uint64_t crystalFn(std::uintptr_t,std::uintptr_t,std::uintptr_t,std::uint64_t xy,std::uint32_t z,std::uintptr_t,std::uintptr_t,std::uintptr_t){crystalPositions.push_back(xy);crystalZ.push_back(z);return 7;}
 int forwarded=0;
 void proxy(void*,void*,std::uintptr_t){++forwarded;}
 int main(){
@@ -45,6 +47,17 @@ int main(){
     placementExperiment(placement,a);assert(placementCalls==3);
     placeOrder.store(1);placeDeadline.store(nowMs()+1000);placeState.store(1);
     placementExperiment(placement,a);assert(placementCalls==5 && positions[3]==1 && positions[4]==2);
+    float hit[3]={1.25f,2.5f,3.5f};a.a4=reinterpret_cast<std::uintptr_t>(hit);
+    placeOrder.store(0);placeDeadline.store(nowMs()+1000);placeState.store(1);
+    placementExperiment(placement,a);assert(hits.size()==2 && hits[0]==2.25f && hits[1]==1.25f && hit[0]==1.25f);
+    originalCrystalItem=crystalFn;placeMethod.store(1);placeDirection.store(2);placeDeadline.store(nowMs()+1000);placeState.store(1);
+    auto packed=std::uint64_t(1) | (std::uint64_t(2)<<32);
+    assert(crystalItemHook(0,0,0,packed,3,0,0,0)==7);
+    assert(crystalPositions.size()==2 && crystalPositions[0]==packed && crystalZ[0]==4 && crystalZ[1]==3);
+    placeOrder.store(1);placeDirection.store(1);placeState.store(1);placeDeadline.store(nowMs()+1000);
+    crystalItemHook(0,0,0,packed,3,0,0,0);
+    assert(crystalPositions[2]==packed && crystalPositions[3]==(std::uint64_t(2)<<32) && crystalZ[3]==3);
+    placeMethod.store(0);
     settings();drawConsole();
     unsigned long long generation=0;
     auto lines=eclient_console::log.snapshot(generation);assert(!lines.empty());
