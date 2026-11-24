@@ -15,4 +15,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors)' in main
     assert 'eclient_combat_lab::cancelIfArmed()' in main
     assert '"Combat Lab"' in menu and (jni/'combat_lab.h').exists()
+    transformed=(jni/'menu.h').read_text()
+    assert 'ImGui::Button("Console")' in transformed and 'case 8: eclient_combat_lab::drawConsole();' in transformed
+    assert (jni/'live_console.h').exists()
 print('Combat lab opt-in preparation passed')

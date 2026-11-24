@@ -44,7 +44,7 @@ jobs:
         run: |
           python3 tests/check_module_menu.py
           python3 tests/combat_lab_prepare_test.py
-          g++ -std=c++17 -Wall -Wextra -Werror tests/combat_lab_test.cpp -o "$RUNNER_TEMP/combat-lab-test"
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/combat_lab_test.cpp -o "$RUNNER_TEMP/combat-lab-test"
           "$RUNNER_TEMP/combat-lab-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-test"
           "$RUNNER_TEMP/fly2-test"

@@ -197,6 +197,12 @@ menu_replace('\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creati
 # upstream controls while each mapped module gets its own independent page.
 menu_replace('\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);', '        eclient_module_menu::row(pageId);\n\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);')
 menu_replace('        switch (pageId) {', '        if (!eclient_module_menu::page(pageId)) switch (pageId) {')
+if combat_lab:
+    menu_replace('\t\tif (ImGui::Button(OBFUSCATE("Info"))) pageId = 7;', '''\t\tif (ImGui::Button(OBFUSCATE("Info"))) pageId = 7;
+        style.Colors[ImGuiCol_Button] = pageId == 8 ? ImVec4(0.70f, 0.00f, 1.00f, 1.00f) : ImVec4(0, 0, 0, 0);
+        style.Colors[ImGuiCol_ButtonHovered] = style.Colors[ImGuiCol_Button];
+        if (ImGui::Button("Console")) pageId = 8;''')
+    menu_replace('        if (!eclient_module_menu::page(pageId)) switch (pageId) {', '        if (!eclient_module_menu::page(pageId)) switch (pageId) {\n            case 8: eclient_combat_lab::drawConsole(); break;')
 # Remove superseded module lists entirely. Preserve non-module List, Hotkeys,
 # Info panels; all moved settings now live in the corresponding module pages.
 for first, after in ((0, 3), (4, 5), (6, 7)):
@@ -211,7 +217,8 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 if combat_lab:
-    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / 'combat_lab.h', jni / 'combat_lab.h')
+    for file in ('combat_lab.h', 'live_console.h'):
+        shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (

@@ -8,17 +8,19 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include "live_console.h"
 namespace eclient_combat_lab {
 // 0 idle, 1 armed, 2 expired, 3 attempted, 4 cancelled.
 static std::atomic<int> crystalState{0};
 static std::atomic<long long> deadlineMs{0};
 static std::atomic<bool> breakAura{false};
 static std::atomic<long long> lastAttack{0};
+static std::atomic<int> attackAttempts{0};
 // One deliberately synthetic placement while the game's own arguments are live.
 static std::atomic<int> placeState{0}, placeDirection{0};
 static std::atomic<long long> placeDeadline{0};
 static std::atomic<unsigned long long> placeResult{0};
-static std::atomic<bool> observing{false};
+static std::atomic<bool> observing{true};
 static std::atomic<int> events{0}, observerState{0}; // 0 pending, 1 active, -1 unavailable
 static std::atomic<int> withContext{0}, withInput{0};
 // When armed, deliberately invoke the real transfer entry a second time while
@@ -35,12 +37,15 @@ static void transferObserver(void* self,void* input,std::uintptr_t third) {
         int n=events.fetch_add(1,std::memory_order_relaxed)+1;
         if(self) withContext.fetch_add(1,std::memory_order_relaxed);
         if(input) withInput.fetch_add(1,std::memory_order_relaxed);
+        if(n<=100) eclient_console::log.add("Transfer event %d: context=%s input=%s third=%s",n,self?"yes":"no",input?"yes":"no",third?"yes":"no");
+        if(n==101) eclient_console::log.add("Transfer event limit reached; restart observation to resume.");
         if(n<=25) __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","transfer candidate event=%d self=%d input=%d third_nonzero=%d (not confirmation)",n,self!=nullptr,input!=nullptr,third!=0);
     }
     if(transferReplay.load(std::memory_order_acquire)==1) {
         int expected=1;
         if(nowMs()>transferDeadline.load(std::memory_order_relaxed)) transferReplay.compare_exchange_strong(expected,2);
         else if(self && input && third && transferReplay.compare_exchange_strong(expected,3)) {
+            eclient_console::log.add("Extra inventory transfer: calling native function (not success confirmation)");
             __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","calling extra native transfer with live arguments (attempt only)");
             originalTransfer(self,input,third);
         }
@@ -52,10 +57,11 @@ static void install() {
     const unsigned char expected[]={0xff,0x83,0x01,0xd1,0xfd,0x7b,0x02,0xa9,0xfd,0x83,0x00,0x91,0xf7,0x1b,0x00,0xf9};
     auto address=getAbsoluteAddress(MineLib,offset);
     if(!address || std::memcmp(reinterpret_cast<const void*>(address),expected,sizeof(expected))!=0) {
-        observerState.store(-1);__android_log_print(ANDROID_LOG_ERROR,"EClientCombatLab","transfer hook prologue mismatch; not installed");return;
+        observerState.store(-1);eclient_console::log.add("Inventory hook unavailable: target prologue mismatch");__android_log_print(ANDROID_LOG_ERROR,"EClientCombatLab","transfer hook prologue mismatch; not installed");return;
     }
     A64HookFunction(reinterpret_cast<void*>(address),reinterpret_cast<void*>(transferObserver),reinterpret_cast<void**>(&originalTransfer));
     observerState.store(originalTransfer ? 1 : -1);
+    eclient_console::log.add("Inventory transfer hook: %s",originalTransfer ? "installed" : "failed");
     __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","transfer hook installed=%d",originalTransfer!=nullptr);
 }
 static void cancelIfArmed() {
@@ -78,6 +84,8 @@ static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::
         int expected=1;
         if((armed && crystalState.compare_exchange_strong(expected,3)) || aura) {
             lastAttack.store(nowMs(),std::memory_order_relaxed);
+            int attacks=attackAttempts.fetch_add(1)+1;
+            if(attacks==1 || attacks%10==0 || armed) eclient_console::log.add("Crystal attack #%d attempted (distance %.1f blocks)",attacks,std::sqrt(best));
             __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","crystal attack attempt within 4 blocks; no success confirmation");
             game->attack(nearest,true);
         }
@@ -88,10 +96,13 @@ static void tick(LocalPlayer* player,GameMode* game,vec3_t* position,const std::
 // consume/place the wrong item, desync, or crash.
 static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
                                           const eclient::compat::PlacementArgs& args) {
+    bool armed=placeState.load(std::memory_order_acquire)==1;
+    if(armed) eclient_console::log.add("Placement hook reached: forwarding manual use");
     auto result=eclient::compat::forwardPlacement(original,args);
+    if(armed) eclient_console::log.add("Manual use returned %llu",static_cast<unsigned long long>(result));
     if(placeState.load(std::memory_order_acquire)!=1) return result;
-    if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {int expected=1;placeState.compare_exchange_strong(expected,2);return result;}
-    if(!args.a2 || panic) return result;
+    if(nowMs()>placeDeadline.load(std::memory_order_relaxed)) {int expected=1;if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired before use hook");return result;}
+    if(!args.a2 || panic) { eclient_console::log.add("Placement skipped: %s",panic ? "panic enabled" : "position argument null");return result; }
     int expected=1;
     if(!placeState.compare_exchange_strong(expected,3)) return result;
     struct Pos {std::int32_t x,y,z;};
@@ -99,12 +110,53 @@ static std::uint64_t placementExperiment(eclient::compat::PlacementFn original,
     std::memcpy(&pos,reinterpret_cast<const void*>(args.a2),sizeof(pos));
     int direction=placeDirection.load();
     // Avoid signed overflow when testing corrupted or unexpected position data.
-    if(pos.x < -30000000 || pos.x > 30000000 || pos.z < -30000000 || pos.z > 30000000) {placeState.store(4);return result;}
+    if(pos.x < -30000000 || pos.x > 30000000 || pos.z < -30000000 || pos.z > 30000000) {placeState.store(4);eclient_console::log.add("Placement cancelled: invalid position");return result;}
     if(direction==0) ++pos.x; else if(direction==1) --pos.x; else if(direction==2) ++pos.z; else --pos.z;
     auto synthetic=args;synthetic.a2=reinterpret_cast<std::uintptr_t>(&pos);
+    eclient_console::log.add("Trying adjacent use at %d %d %d (face %u)",pos.x,pos.y,pos.z,args.a3);
     __android_log_print(ANDROID_LOG_INFO,"EClientCombatLab","attempting synthetic neighboring useItemOn at %d %d %d",pos.x,pos.y,pos.z);
-    placeResult.store(eclient::compat::forwardPlacement(original,synthetic));
+    auto extra=eclient::compat::forwardPlacement(original,synthetic);
+    placeResult.store(extra);
+    eclient_console::log.add("Adjacent native call returned %llu; check world",static_cast<unsigned long long>(extra));
     return result;
+}
+static void placementControls() {
+    int state=placeState.load();
+    if(state==1 && nowMs()>placeDeadline.load()) {
+        int expected=1;
+        if(placeState.compare_exchange_strong(expected,2)) eclient_console::log.add("Placement expired: no useItemOn hook reached in 30 seconds");
+        state=placeState.load();
+    }
+    int direction=placeDirection.load();
+    if(ImGui::Combo("Adjacent block", &direction, "East +X\0West -X\0South +Z\0North -Z\0")) placeDirection.store(direction);
+    if(ImGui::Button("Arm placement test (30s)")) {
+        placeResult.store(0);placeDeadline.store(nowMs()+30000);placeState.store(1);
+        eclient_console::log.add("Placement armed for 30s. Use crystal on first obsidian block.");
+    }
+    ImGui::SameLine();
+    if(ImGui::Button("Cancel placement")) {
+        int expected=1;
+        if(placeState.compare_exchange_strong(expected,4)) eclient_console::log.add("Placement cancelled");
+    }
+    state=placeState.load();
+    if(state==1) ImGui::Text("Placement armed: %lld seconds left",(placeDeadline.load()-nowMs()+999)/1000);
+    else ImGui::TextWrapped("Placement: %s; return=%llu",state==2 ? "expired" : state==3 ? "native call attempted" : state==4 ? "cancelled/invalid position" : "idle",placeResult.load());
+    ImGui::TextWrapped("Place adjacent obsidian; select direction, arm, then use held crystal on first block. Check second block and console. Other held items may be used too.");
+}
+static void drawConsole() {
+    ImGui::TextWrapped("Combat test console (newest 100 events, memory only)");
+    placementControls();
+    if(ImGui::Button("Clear console")) {eclient_console::log.clear();events.store(0);}
+    ImGui::SameLine();
+    static bool follow=true;ImGui::Checkbox("Follow latest",&follow);
+    ImGui::Text("Transfer hook: %s | observation: %s",observerState.load()==1 ? "installed" : observerState.load()<0 ? "unavailable" : "pending",observing.load()?"on":"off");
+    ImGui::BeginChild("##live-console-events", ImVec2(0,0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    unsigned long long generation=0;auto lines=eclient_console::log.snapshot(generation);
+    for(const auto& line:lines) ImGui::TextUnformatted(line.c_str());
+    static unsigned long long lastGeneration=0;
+    if(follow && generation!=lastGeneration) ImGui::SetScrollHereY(1.0f);
+    lastGeneration=generation;
+    ImGui::EndChild();
 }
 static void settings() {
     ImGui::TextWrapped("EXPERIMENTAL LOCAL-WORLD TEST. Can crash, destroy blocks or lose items. AutoTotem is not yet implemented.");
@@ -119,23 +171,17 @@ static void settings() {
     switch(crystalState.load()) {case 1:status="Armed: waiting for crystal within 4 blocks";break;case 2:status="Expired: no crystal found";break;case 3:status="Attack attempted (not proof it broke)";break;case 4:status="Cancelled or world unavailable";break;}
     ImGui::TextWrapped("Crystal test: %s",status);
     ImGui::Separator();
-    int direction=placeDirection.load();
-    if(ImGui::Combo("Extra placement direction", &direction, "East +X\0West -X\0South +Z\0North -Z\0")) placeDirection.store(direction);
-    if(ImGui::Button("Arm adjacent placement (10s)")) {placeDeadline.store(nowMs()+10000);placeState.store(1);}
-    ImGui::SameLine();if(ImGui::Button("Cancel placement")) {int expected=1;placeState.compare_exchange_strong(expected,4);}
-    const char* place=placeState.load()==1 ? "Armed: manually use an end crystal on obsidian now" : placeState.load()==2 ? "Expired" : placeState.load()==3 ? "Synthetic call attempted" : placeState.load()==4 ? "Cancelled/invalid position" : "Idle";
-    ImGui::TextWrapped("Placement: %s; return=%llu",place,placeResult.load());
-    ImGui::TextWrapped("Makes an extra useItemOn call on the adjacent block using the item you manually used. It may place any held item, not just crystals. Build an obsidian platform first.");
+    placementControls();
     ImGui::Separator();
     ImGui::TextWrapped("Inventory action test: arm, then manually move a totem into offhand. The next transfer call is invoked twice with the live arguments. It may fail, desync or change inventory; it is NOT automatic totem selection.");
-    if(ImGui::Button("Arm extra transfer call (10s)")) {transferDeadline.store(nowMs()+10000);transferReplay.store(1);}
+    if(ImGui::Button("Arm extra transfer call (30s)")) {transferDeadline.store(nowMs()+30000);transferReplay.store(1);eclient_console::log.add("Extra transfer armed for 30s");}
     ImGui::SameLine();if(ImGui::Button("Cancel transfer")) {int expected=1;transferReplay.compare_exchange_strong(expected,4);}
     int t=transferReplay.load();
     ImGui::Text("Extra transfer: %s",t==1 ? "armed" : t==2 ? "expired" : t==3 ? "called" : t==4 ? "cancelled" : "idle");
     ImGui::TextWrapped("Observer below only counts calls; it cannot prove a successful inventory move.");
     ImGui::Text("Transfer hook: %s",observerState.load()==1 ? "installed" : observerState.load()<0 ? "unavailable" : "pending");
-    if(ImGui::Button("Start transfer observation")) {events.store(0);withContext.store(0);withInput.store(0);observing.store(true);}
-    ImGui::SameLine();if(ImGui::Button("Stop observation")) observing.store(false);
+    if(ImGui::Button("Start transfer observation")) {events.store(0);withContext.store(0);withInput.store(0);observing.store(true);eclient_console::log.add("Transfer observation started");}
+    ImGui::SameLine();if(ImGui::Button("Stop observation")) {observing.store(false);eclient_console::log.add("Transfer observation stopped");}
     ImGui::Text("Events: %d (context %d, input %d)",events.load(),withContext.load(),withInput.load());
     ImGui::TextWrapped("Events are calls, not proof of a successful or server-confirmed inventory move.");
 }

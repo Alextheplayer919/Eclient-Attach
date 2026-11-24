@@ -2,13 +2,16 @@
 #include <cassert>
 #include <cstdarg>
 #include <vector>
+#include <thread>
 #include "../apollon-adapter/compat/placement_forward.h"
 bool panic=false;
 struct vec3_t {float x,y,z;};
 class Mob {public: int type=0;vec3_t p{};int getEntityTypeId(){return type;} vec3_t* getPosition(){return &p;}};
 class LocalPlayer : public Mob {};
 class GameMode {public: int calls=0;Mob* last=nullptr;void attack(Mob* a,bool){++calls;last=a;}};
-namespace ImGui {bool Button(const char*){return false;}void TextWrapped(const char*,...){} void Text(const char*,...){}void SameLine(){}void Separator(){}bool Checkbox(const char*,bool*){return false;}bool Combo(const char*,int*,const char*){return false;}}
+struct ImVec2 {ImVec2(float,float){}};
+const int ImGuiWindowFlags_HorizontalScrollbar=1;
+namespace ImGui {void BeginChild(const char*,ImVec2,bool,int){}void EndChild(){}void TextUnformatted(const char*){}void SetScrollHereY(float){}bool Button(const char*){return false;}void TextWrapped(const char*,...){} void Text(const char*,...){}void SameLine(){}void Separator(){}bool Checkbox(const char*,bool*){return false;}bool Combo(const char*,int*,const char*){return false;}}
 #define ANDROID_LOG_INFO 1
 #define ANDROID_LOG_ERROR 2
 int __android_log_print(int,const char*,const char*,...){return 0;}
@@ -40,5 +43,15 @@ int main(){
     placeDirection.store(0);placeDeadline.store(nowMs()+1000);placeState.store(1);
     assert(placementExperiment(placement,a)==42 && placementCalls==2 && lastX==2 && posBlock[0]==1 && placeState.load()==3);
     placementExperiment(placement,a);assert(placementCalls==3);
-    settings();
+    settings();drawConsole();
+    unsigned long long generation=0;
+    auto lines=eclient_console::log.snapshot(generation);assert(!lines.empty());
+    eclient_console::Log log;
+    for(int i=0;i<105;i++) log.add("event %d",i);
+    auto bounded=log.snapshot(generation);assert(bounded.size()==100 && bounded.front().find("event 5")!=std::string::npos);
+    log.clear();assert(log.snapshot(generation).empty());
+    std::thread athread([&]{for(int i=0;i<1000;i++)log.add("worker %d",i);});
+    std::thread bthread([&]{for(int i=0;i<1000;i++)log.add("other %d",i);});
+    athread.join();bthread.join();assert(log.snapshot(generation).size()==100);
+    placeState.store(1);placeDeadline.store(nowMs()-1);placementControls();assert(placeState.load()==2);
 }
