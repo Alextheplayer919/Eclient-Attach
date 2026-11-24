@@ -35,15 +35,18 @@ jobs:
           import struct,sys
           with open(sys.argv[1],'rb') as f:
               h=f.read(64); off=struct.unpack_from('<Q',h,32)[0]; size,count=struct.unpack_from('<HH',h,54)
+              segments=[]
               for i in range(count):
                   f.seek(off+i*size); ph=f.read(56)
                   typ,flags,p_off,va,_,filesz,_,_=struct.unpack('<IIQQQQQQ',ph)
-                  target=0xcdc921c
-                  if typ==1 and flags&1 and va<=target and target+16<=va+filesz:
-                      f.seek(p_off+target-va)
-                      print('::notice title=Transfer observer prologue::'+f.read(16).hex())
-                      break
-              else: raise SystemExit('target not in executable segment')
+                  if typ==1 and flags&1: segments.append((p_off,va,filesz))
+              for label,target in [('Transfer observer',0xcdc921c),('Crystal item use',0x5885518)]:
+                  for p_off,va,filesz in segments:
+                      if va<=target and target+16<=va+filesz:
+                          f.seek(p_off+target-va)
+                          print('::notice title='+label+' prologue::'+f.read(16).hex())
+                          break
+                  else: raise SystemExit(label+' target not in executable segment')
           PYCODE
           "$PYTHON" tools/check-internalcpp-vtables.py --json "$RUNNER_TEMP/internalcpp.json" --lib "$RUNNER_TEMP/libminecraftpe.so" --output "$RUNNER_TEMP/internalcpp-vtables.json"
       - uses: actions/upload-artifact@v4
