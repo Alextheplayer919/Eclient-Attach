@@ -35,11 +35,13 @@ int main(){
     tick(&player,&game,&pos,actors);assert(game.calls==1);
     deadlineMs.store(nowMs()-1);crystalState.store(1);tick(&player,&game,&pos,actors);assert(crystalState.load()==2);
     crystalState.store(1);cancelIfArmed();assert(crystalState.load()==4);
-    originalTransfer=proxy;observing.store(true);transferObserver(&game,&near,0);
+    originalTransfer=proxy;transferObserver(&game,&near,0);
     assert(forwarded==1 && events.load()==1 && withContext.load()==1 && withInput.load()==1);
-    observing.store(false);transferObserver(nullptr,nullptr,0);assert(forwarded==2 && events.load()==1);
+    transferObserver(nullptr,nullptr,0);assert(forwarded==2 && events.load()==2);
+    for(int i=0;i<110;i++) transferObserver(nullptr,nullptr,0);
+    assert(events.load()==112 && forwarded==112);
     transferDeadline.store(nowMs()+1000);transferReplay.store(1);
-    transferObserver(&game,&near,1);assert(forwarded==4 && transferReplay.load()==3);
+    transferObserver(&game,&near,1);assert(forwarded==114 && transferReplay.load()==3);
     install();assert(observerState.load()==-1);
     std::int32_t posBlock[3]={1,2,3};eclient::compat::PlacementArgs a{0,0,reinterpret_cast<std::uintptr_t>(posBlock),0,0,0,0};
     placeDirection.store(0);placeDeadline.store(nowMs()+1000);placeState.store(1);
@@ -58,7 +60,7 @@ int main(){
     crystalItemHook(0,0,0,packed,3,0,0,0);
     assert(crystalPositions[2]==packed && crystalPositions[3]==(std::uint64_t(2)<<32) && crystalZ[3]==3);
     placeMethod.store(0);
-    settings();drawConsole();
+    crystalSettings();totemSettings();drawConsole();
     unsigned long long generation=0;
     auto lines=eclient_console::log.snapshot(generation);assert(!lines.empty());
     eclient_console::Log log;
