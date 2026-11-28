@@ -80,7 +80,7 @@ not the entire Gatyo ClickGUI: quick-chat command buttons and physical-key
 bindings were not ported. Shortcuts and their Android touch routing need device
 testing.
 
-### CPVP and Smart Offhand (Combat Lab build)
+### CPVP and Smart Offhand (included in the standard experimental build)
 
 Crystal Aura's CPVP mode coordinates with **Gatyo KillAura** (enable both). Enable **Target mobs in CPVP** for mob testing; it also respects the existing mob filters. End crystals are excluded from KillAura targeting. Players remain eligible. Put obsidian and end crystals in the hotbar. CPVP attempts obsidian placement near the target (or uses a suitable existing base), waits until the base is observed, then waits at least the Crystal Aura delay before a KillAura hit attempt. After another delay it attempts up to three crystal placements and attacks. KillAura pauses during the cycle and resumes after its configured tick interval; target changes or failures reset the cycle. Built-in KillAura and Mob Aura are suppressed during CPVP; disable other combat modules that could interfere. A game attack call is an attempt, not proof of server-accepted damage. Console messages report attempts, observations and failures. This sequence and offsets are experimental and need device/server testing; explosions can hurt the player.
 

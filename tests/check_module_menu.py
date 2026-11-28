@@ -35,11 +35,17 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'calcResX * 150 * eclientGuiScale' in transformed
     assert 'std::max(style.ScrollbarSize, 18.0f)' in main
     assert 'const eclient::compat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6}' in main
-    assert 'eclient::compat::forwardPlacement(old_GameMode_FastBridge, args)' in main
+    assert 'eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args)' in main
+    generated_menu = (jni / 'module_menu.h').read_text()
+    combat_row = generated_menu.split('static Module combat[] = {', 1)[1].split('};', 1)[0]
+    assert combat_row.startswith('{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST}')
+    assert '{"Auto Totem",nullptr,AUTO_TOTEM_TEST}' in combat_row
+    assert 'eclient_gatyo::crystalUI()' in generated_menu
+    assert '#define ECLIENT_COMBAT_LAB 1' in main
+    assert 'ImGui::Button("Console")' in transformed
     assert 'int (*old_GameMode_FastBridge)(int a1' not in main
-    # Removed Crystal Aura, practice target, inventory tracing and music must
-    # stay out of the normal adapter and its generated source.
-    for removed in ('Crystal Aura', 'Practice target', 'Crystal break test', 'Inventory swap trace'):
+    # Old test clutter remains absent from the base module menu.
+    for removed in ('Practice target', 'Crystal break test', 'Inventory swap trace'):
         assert removed not in menu, removed
     for removed in ('eclient_crystal_aura', 'eclient_practice_target', 'eclient_crystal_break_test',
                     'eclient_combat_diagnostics', 'eclientSwapConstructor', 'eclientRequestAction', 'setCombatLogPath', 'SpecialMusic'):

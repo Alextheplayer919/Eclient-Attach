@@ -46,6 +46,13 @@ jobs:
       - name: Test Fly2 calculation on host
         run: |
           python3 tests/check_module_menu.py
+          python3 tests/combat_lab_prepare_test.py
+          g++ -std=c++17 -Wall -Wextra -Werror tests/combat_modes_test.cpp -o "$RUNNER_TEMP/combat-modes-test"
+          "$RUNNER_TEMP/combat-modes-test"
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_combat_test.cpp -o "$RUNNER_TEMP/gatyo-combat-test"
+          "$RUNNER_TEMP/gatyo-combat-test"
+          g++ -DECLIENT_COMBAT_LAB=1 -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_aura_test.cpp -o "$RUNNER_TEMP/gatyo-aura-cpvp-test"
+          "$RUNNER_TEMP/gatyo-aura-cpvp-test"
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_aura_test.cpp -o "$RUNNER_TEMP/gatyo-aura-test"
           "$RUNNER_TEMP/gatyo-aura-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-test"
@@ -65,6 +72,9 @@ jobs:
           python3 - <<'PYCODE'
           import zipfile
           with zipfile.ZipFile('out/eclient-apollon-experimental-arm64.apk') as apk:
+              native = apk.read('lib/arm64-v8a/libeclient_host.so')
+              for label in (b'Crystal Aura', b'Auto Totem', b'Target mobs in CPVP'):
+                  if label not in native: raise SystemExit('Missing combat menu label in packaged native library: '+repr(label))
               bad=[name for name in apk.namelist() if name.lower().startswith('assets/eclient-special/') or name.lower() == 'assets/e.mp3']
               if bad: raise SystemExit('Unexpected special-edition music: '+repr(bad))
           print('No special-edition music assets packaged.')

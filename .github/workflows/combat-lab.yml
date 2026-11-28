@@ -85,6 +85,9 @@ jobs:
           python3 - <<'PYCODE'
           import zipfile
           with zipfile.ZipFile('out/eclient-combat-lab-arm64.apk') as apk:
+              native = apk.read('lib/arm64-v8a/libeclient_host.so')
+              for label in (b'Crystal Aura', b'Auto Totem', b'Target mobs in CPVP'):
+                  if label not in native: raise SystemExit('Missing combat menu label in packaged native library: '+repr(label))
               bad=[name for name in apk.namelist() if name.lower().startswith('assets/eclient-special/') or name.lower() == 'assets/e.mp3']
               if bad: raise SystemExit('Unexpected special-edition music: '+repr(bad))
           print('No special-edition music assets packaged.')

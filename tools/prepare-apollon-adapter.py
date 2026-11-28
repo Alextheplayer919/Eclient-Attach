@@ -175,8 +175,9 @@ for name, hexbytes in mod.EXPECTED.items():
     lines.append(f'    {{ const unsigned char expected[] = {{{data}}}; auto address = getAbsoluteAddress(MineLib, Offsets64::{name}); if (!address || memcmp((void*)address, expected, sizeof(expected))) return false; }}')
 validate = 'static bool eclientValidateTarget() {\n#if defined(__aarch64__)\n'+'\n'.join(lines)+'\n    return true;\n#else\n    return false;\n#endif\n}\n\n'
 replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
-# Combat Lab is a deliberately separate opt-in test build, not the normal client.
-combat_lab = os.environ.get('ECLIENT_COMBAT_LAB') == '1'
+# Include the combat modules and console in the default client. An explicit
+# ECLIENT_COMBAT_LAB=0 remains available for isolated compatibility testing.
+combat_lab = os.environ.get('ECLIENT_COMBAT_LAB', '1') != '0'
 if combat_lab:
     replace('#include "gatyo_aura.h"', '#define ECLIENT_COMBAT_LAB 1\n#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "gatyo_aura.h"')
     replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')

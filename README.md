@@ -8,11 +8,11 @@ E-Client is an experimental patched Minecraft APK with an in-process Apollon-bas
 - [Complete source and archive inventory](docs/SOURCE_REFERENCE.md) — tracked source/configuration and archive members; bundled upstream code is retained as supplied.
 - [Schematic and preview status](apollon-adapter/schematic/README.md) — renderer research, experimental two-block preview and limitations.
 - [Fly2](apollon-adapter/fly/README.md) and [standalone mapper](mapper-app/README.md).
-- [Retired combat research](docs/CRYSTAL_AURA_RESEARCH_ARCHIVE.md) — historical research only; Crystal Aura and special music are not part of the current client.
+- [Retired combat research](docs/CRYSTAL_AURA_RESEARCH_ARCHIVE.md) — historical research; the current Crystal Aura and Auto Totem use the Gatyo-based implementation. Special music is not included.
 
 ## Build the current client
 
-The [Build experimental Apollon E-Client APK workflow](.github/workflows/apollon-experimental.yml) builds the current client and uploads `eclient-apollon-experimental-arm64`. It requires access to the repository's pinned Minecraft input release; the Minecraft APK is **not** included in this checkout. For local setup and signing caveats, see the build guide.
+The [Build experimental Apollon E-Client APK workflow](.github/workflows/apollon-experimental.yml) builds the current client and uploads `eclient-apollon-experimental-arm64`. It includes Crystal Aura, Auto Totem, Fake Player and the Console. It requires access to the repository's pinned Minecraft input release; the Minecraft APK is **not** included in this checkout. For local setup and signing caveats, see the build guide.
 
 ```bash
 export ANDROID_SDK_ROOT=/path/to/android-sdk
