@@ -42,3 +42,40 @@ E-Client's separate Bypass Fly module adapts this source and is inactive while
 Fly2 is enabled. This integration and its native packet fields have not been
 tested on a device. Look tracking is simplified compared with Gatyo when other
 rotation modules are active. Disable other flight modules when testing.
+
+## Gatyo KillAura (GatoAuraX) adaptation
+
+`apollon-adapter/gatyo-aura/gatyo_rotation.h` carries Gatyo's 16 rotation
+choices and their source algorithms. `gatyo_aura.h` adapts its nearest/multiple
+player selection, attack interval, multiplier, hurt check, optional mobs and
+local/packet application to Apollon's game wrappers. A separate module keeps
+Apollon's original KillAura intact; do not enable both at once. Friends and
+bot-list entries are excluded. Gatyo's weapon switching, auto trident, rain
+mode, random hit chance and target visualization are not implemented here.
+Eclipse uses Gatyo's fixed 1.0 lead, not the unavailable external ping source.
+
+None is no rotation. Strafe exists in Gatyo's dropdown but its source does not
+apply its computed sway to the packet or local actor. Other modes calculate
+angles from position, velocity, bounding box and sometimes recent movement;
+the local look hook can also move the camera, head and body. The input-packet
+hook writes pitch +0x2c, yaw +0x30 and head yaw +0x40 after Apollon's original
+yaw logic. Rotation output is published without retaining target pointers,
+and expires after 500ms without a fresh attack calculation. Mode behavior and
+packet timing are unverified on a device or server and do not guarantee a
+bypass; use a disposable offline world first.
+
+In the combat build, the module can target the EClientBot NPC or the virtual
+fake player when present. Real players take priority by distance and normal
+filters apply. The fake target is simulated; hitting it does not prove a
+server accepted an attack.
+
+## Touch shortcuts
+
+Other → Shortcuts adds draggable floating module toggles or hold-to-fly up/down
+buttons, inspired by Gatyo's screen buttons. Android uses a separate touch
+region per shortcut; the rest of the game screen remains interactive. Buttons
+are restricted to the HUD, have scale/opacity/position-lock controls, and are
+saved by module name in the app's `xal/shortcuts.json`. This is an adaptation,
+not the entire Gatyo ClickGUI: quick-chat command buttons and physical-key
+bindings were not ported. Shortcuts and their Android touch routing need device
+testing.

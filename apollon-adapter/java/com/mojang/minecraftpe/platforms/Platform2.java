@@ -56,4 +56,5 @@ public final class Platform2 extends GLSurfaceView implements GLSurfaceView.Rend
     public static native void imgui_Shutdown();
     public static native void MotionEventClick(boolean down, float x, float y);
     public static native String getWindowRect();
+    public static native String getShortcutRects();
 }

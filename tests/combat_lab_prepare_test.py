@@ -18,6 +18,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr)' in main
     assert 'eclient_fake::draw(draw_list' in (jni/'menu.h').read_text()
     assert (jni/'gatyo_combat.h').exists()
+    assert 'eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors)' in main
+    assert 'eclient_gatyo_aura::applyPacket(a1)' in main
+    assert 'eclient_gatyo_aura::applyLocal' in main
+    assert 'eclient_module_menu::drawShortcuts()' in main
+    assert (jni/'gatyo_rotation.h').exists() and 'Gatyo KillAura' in menu
     assert '"Combat Lab"' not in menu and '"Crystal Aura"' in menu and '"Auto Totem"' in menu
     assert 'eclient_gatyo::crystalUI()' in menu and 'eclient_gatyo::totemUI()' in menu and (jni/'combat_lab.h').exists()
     transformed=(jni/'menu.h').read_text()

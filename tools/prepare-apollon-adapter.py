@@ -75,6 +75,7 @@ replace('        ImGui_ImplOpenGL3_NewFrame();', """        if (screenWidth > 0 
         }
         ImGui_ImplOpenGL3_NewFrame();""")
 replace('        BeginDraw();', '''        BeginDraw();
+        eclient_module_menu::drawShortcuts();
         if (g_window) {
             eclientX.store((int)g_window->Pos.x); eclientY.store((int)g_window->Pos.y);
             eclientW.store((int)g_window->Size.x); eclientH.store((int)g_window->Size.y);
@@ -82,10 +83,11 @@ replace('        BeginDraw();', '''        BeginDraw();
 # Queue touch transitions on the GL thread for ImGui's event processing: directly
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
-replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "gatyo_bypass_fly.h"\n#include "placement_forward.h"\n#include "module_menu.h"')
+replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "gatyo_bypass_fly.h"\n#include "placement_forward.h"\n#include "gatyo_aura.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
 replace('#include "module_menu.h"', '#include "preview_adapter.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setPreviewAssets(JNIEnv* env, jclass, jobject assets) { eclient_preview::setAssets(env, assets); }')
+replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getShortcutRects(JNIEnv* env, jclass) { auto rects=eclient_module_menu::getShortcutRects(); return env->NewStringUTF(rects.c_str()); }')
 # Run cleanup even on Apollon's early panic/menu/death exits. The original
 # tick runs first so its Creative Fly bookkeeping cannot undo Fly2 this frame.
 normal_start = s.index('void *NormalTick(LocalPlayer *thiz) {')
@@ -102,7 +104,7 @@ helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool game
         eclient_bypass_fly::FlyOnNormalTick(player);
         eclient_bypass_fly::LookTrackEnd(player, false);
         eclient_bypass_fly::MoveInputRecord(player);
-    } else eclient_bypass_fly::reset();
+    } else { eclient_bypass_fly::reset(); eclient_gatyo_aura::reset(); }
     void* result = old_NormalTick(player);
     eclient_fly2_adapter::tick(player, gameReady);
     return result;
@@ -115,6 +117,12 @@ s = s[:normal_start] + helper + normal + s[normal_end:]
 replace('\tif (panic) return old_PlayerAuthInputPacket(a1, a2);', '\tif (panic) return old_PlayerAuthInputPacket(a1, a2);\n    eclient_bypass_fly::MoveInputOnAuthPacket(a1);')
 replace('\treturn old_PlayerAuthInputPacket(a1, a2);', '    uint64_t flySavedBits[2];\n    eclient_bypass_fly::FlyFilterAuthBits(a1, flySavedBits);\n    void* flyResult = old_PlayerAuthInputPacket(a1, a2);\n    eclient_bypass_fly::FlyRestoreAuthBits(a1, flySavedBits);\n    return flyResult;')
 replace('    if (panic) return old_Gravity(a1, a2, a3, a4, a5, a6);', '    if (panic) return old_Gravity(a1, a2, a3, a4, a5, a6);\n    eclient_bypass_fly::MoveInputOnGravity((void*)a4);')
+
+# Gatyo's local-facing writes happen after Apollon's rotation logic, and the
+# packet spoof runs after Apollon's yaw spoof, just as the source prioritizes it.
+replace('    return old_Intersects(thiz, a2, a3);', '    if (thiz == localPlayer) eclient_gatyo_aura::applyLocal((LocalPlayer*)thiz);\n    return old_Intersects(thiz, a2, a3);')
+replace('    uint64_t flySavedBits[2];', '    eclient_gatyo_aura::applyPacket(a1);\n    uint64_t flySavedBits[2];')
+replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);')
 
 # The ARM64 binary's placement entry uses x0-x2, w3, x4-x5 and w6.
 # Upstream's six int arguments truncate pointers and drop w6; preserve the
@@ -170,10 +178,10 @@ replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
 # Combat Lab is a deliberately separate opt-in test build, not the normal client.
 combat_lab = os.environ.get('ECLIENT_COMBAT_LAB') == '1'
 if combat_lab:
-    replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "module_menu.h"')
+    replace('#include "gatyo_aura.h"', '#define ECLIENT_COMBAT_LAB 1\n#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "gatyo_aura.h"')
     replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')
     replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
-    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);')
+    replace('    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);', '    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);\n    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);')
     replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
@@ -252,8 +260,8 @@ if combat_lab:
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (
-        ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
-        ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"KillAura",'),
+        ('CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW };', 'CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
+        ('static Module combat[] = {{"Gatyo KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"Gatyo KillAura",'),
         ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
     ):
         if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
@@ -267,3 +275,6 @@ for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calc
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
 m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    cube_mesh.cpp \\\n    texture_catalog.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
 mk.write_text(m)
+
+for file in ('gatyo_aura.h', 'gatyo_rotation.h'):
+    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'gatyo-aura' / file, jni / file)

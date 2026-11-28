@@ -15,6 +15,7 @@ import android.content.ContentValues;
 import android.net.Uri;
 import android.provider.MediaStore;
 import java.io.File;
+import java.util.ArrayList;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -41,6 +42,8 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
     private Platform2 surface;
     private View touch;
     private WindowManager.LayoutParams touchParams;
+    private final ArrayList<View> shortcutViews = new ArrayList<>();
+    private final ArrayList<WindowManager.LayoutParams> shortcutParams = new ArrayList<>();
     private boolean keyboardVisible;
     private Activity resumedActivity;
     private int mountAttempts;
@@ -72,6 +75,7 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                     Log.i(TAG, ime ? "Keyboard visible; menu touch suspended" : "Keyboard closed; menu touch restored");
                 }
                 if (ime) {
+                    for (View shortcut : shortcutViews) shortcut.setVisibility(View.GONE);
                     handler.postDelayed(this, 20);
                     return;
                 }
@@ -93,10 +97,47 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                     wm.updateViewLayout(touch, touchParams);
                     touch.setVisibility(View.VISIBLE);
                 }
+                updateShortcutRegions();
             } catch (Exception e) { Log.w(TAG, "Overlay position unavailable", e); }
             handler.postDelayed(this, 20);
         }
     };
+    private void updateShortcutRegions() {
+        String raw = Platform2.getShortcutRects();
+        String[] rects = raw.isEmpty() ? new String[0] : raw.split(";");
+        int count = Math.min(rects.length, 12);
+        while (shortcutViews.size() < count) {
+            View view = new View(activity);
+            WindowManager.LayoutParams layout = params(1, 1, WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
+            view.setOnTouchListener((v, event) -> {
+                int action = event.getActionMasked();
+                if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_MOVE && action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) return false;
+                Platform2 renderer = surface;
+                if (renderer == null) return false;
+                int[] origin = new int[2]; renderer.getLocationOnScreen(origin);
+                final float x = event.getRawX() - origin[0], y = event.getRawY() - origin[1];
+                final boolean down = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL;
+                renderer.queueEvent(() -> renderer.sendTouch(down, x, y));
+                return true;
+            });
+            view.setVisibility(View.GONE);
+            wm.addView(view, layout); shortcutViews.add(view); shortcutParams.add(layout);
+        }
+        int width=surface.getWidth(), height=surface.getHeight();int[] origin=new int[2];surface.getLocationOnScreen(origin);
+        for (int i=0; i<shortcutViews.size(); ++i) {
+            View view=shortcutViews.get(i);
+            if(i>=count || width<=0 || height<=0) {view.setVisibility(View.GONE);continue;}
+            String[] parts=rects[i].split("\\|");
+            if(parts.length!=4){view.setVisibility(View.GONE);continue;}
+            int x=Integer.parseInt(parts[0]), y=Integer.parseInt(parts[1]), w=Integer.parseInt(parts[2]), h=Integer.parseInt(parts[3]);
+            if(w<=0 || h<=0){view.setVisibility(View.GONE);continue;}
+            int left=Math.max(0,Math.min(x,width-1)),top=Math.max(0,Math.min(y,height-1));
+            int right=(int)Math.max(left+1L,Math.min((long)width,(long)x+w)),bottom=(int)Math.max(top+1L,Math.min((long)height,(long)y+h));
+            WindowManager.LayoutParams layout=shortcutParams.get(i);
+            layout.x=origin[0]+left;layout.y=origin[1]+top;layout.width=right-left;layout.height=bottom-top;
+            wm.updateViewLayout(view,layout);view.setVisibility(View.VISIBLE);
+        }
+    }
     private boolean isKeyboardVisible() {
         if (activity == null) return false;
         View decor = activity.getWindow().getDecorView();
@@ -239,6 +280,8 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
         syncFly2Log();
         handler.removeCallbacks(reposition);
         if (wm != null) {
+            for (View view : shortcutViews) if (view.isAttachedToWindow()) wm.removeViewImmediate(view);
+            shortcutViews.clear(); shortcutParams.clear();
             if (touch != null && touch.isAttachedToWindow()) wm.removeViewImmediate(touch);
             if (surface != null && surface.isAttachedToWindow()) {
                 Platform2 oldSurface = surface;

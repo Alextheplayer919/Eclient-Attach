@@ -180,6 +180,18 @@ static void tick(LocalPlayer* player,Level* level,BlockSource* region,vec3_t* po
     shownHp.store(int(std::ceil(sim.health)));shownTotems.store(sim.totems);
     status.store(sim.dead?4:virtualMode?3:npcActor.load()?2:1);
 }
+// Borrow only copies, never a native actor outside the game tick.
+static bool auraSnapshot(State& out,bool& virtualOut,Actor*& actorOut) {
+    std::lock_guard<std::mutex> guard(mutex);
+    if(!enabled || sim.dead)return false;
+    out=sim;virtualOut=virtualMode;actorOut=static_cast<Actor*>(npcActor.load());
+    return virtualOut || actorOut;
+}
+static void auraHit(LocalPlayer* player) {
+    std::lock_guard<std::mutex> guard(mutex);
+    if(!enabled || !virtualMode || sim.dead || !player)return;
+    auto* pos=player->getPosition();if(pos)notify(sim.damage(heldDamage(player),{pos->x,pos->y,pos->z},settings()));
+}
 static bool target(vec3_t& out) {std::lock_guard<std::mutex> guard(mutex);if(!enabled || sim.dead)return false;out={sim.feet.x,sim.feet.y+1.62f,sim.feet.z};return true;}
 // Gatyo's 64x64 Steve skin and player-cuboid UVs, rendered into the overlay.
 // This uses Apollon's camera projection, not Gatyo's in-game GL depth hook.

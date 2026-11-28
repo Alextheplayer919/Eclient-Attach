@@ -46,6 +46,8 @@ jobs:
       - name: Test Fly2 calculation on host
         run: |
           python3 tests/check_module_menu.py
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_aura_test.cpp -o "$RUNNER_TEMP/gatyo-aura-test"
+          "$RUNNER_TEMP/gatyo-aura-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-test"
           "$RUNNER_TEMP/fly2-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_adapter_test.cpp -o "$RUNNER_TEMP/fly2-adapter-test"

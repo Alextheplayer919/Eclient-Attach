@@ -19,6 +19,11 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, str(root / 'tools/prepare-apollon-adapter.py'), str(jni)], check=True)
     transformed = (jni / 'menu.h').read_text()
     main = (jni / 'main.cpp').read_text()
+    assert 'eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors)' in main
+    assert 'eclient_gatyo_aura::applyPacket(a1)' in main
+    assert 'eclient_module_menu::drawShortcuts()' in main
+    assert 'Java_com_mojang_minecraftpe_platforms_Platform2_getShortcutRects' in main
+    assert 'Gatyo KillAura' in menu and 'Shortcuts' in menu
     # Each resize starts from the current context's base style, not a static
     # first-use flag or already scaled sizes.
     assert 'eclientBaseStyle = ImGui::GetStyle();' in main
