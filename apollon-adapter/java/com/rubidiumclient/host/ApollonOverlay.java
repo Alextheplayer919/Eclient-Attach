@@ -2,6 +2,9 @@ package com.rubidiumclient.host;
 
 import android.app.Activity;
 import android.app.Application;
+import android.app.AlertDialog;
+import android.widget.EditText;
+import android.text.InputType;
 import android.content.Context;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
@@ -58,6 +61,18 @@ public final class ApollonOverlay implements Application.ActivityLifecycleCallba
                 if (SystemClock.elapsedRealtime() - lastLogCopy >= 2000) {
                     lastLogCopy = SystemClock.elapsedRealtime();
                     syncFly2Log();
+                }
+                int editCommand = Platform2.takeCommandEdit();
+                if (editCommand >= 0 && activity != null && !activity.isFinishing()) {
+                    EditText input = new EditText(activity);
+                    input.setSingleLine(true);
+                    input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+                    input.setText(Platform2.getCommandEditText(editCommand));
+                    input.setSelection(input.length());
+                    new AlertDialog.Builder(activity).setTitle("Quick command (starts with /)")
+                        .setView(input).setPositiveButton("Save", (dialog, which) ->
+                            Platform2.submitCommandEdit(editCommand, input.getText().toString()))
+                        .setNegativeButton("Cancel", null).show();
                 }
                 boolean ime = isKeyboardVisible();
                 if (ime != keyboardVisible) {

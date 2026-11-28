@@ -85,7 +85,11 @@ replace('        BeginDraw();', '''        BeginDraw();
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
 replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "gatyo_bypass_fly.h"\n#include "placement_forward.h"\n#include "gatyo_aura.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
-replace('#include "module_menu.h"', '#include "preview_adapter.h"\n#include "module_menu.h"')
+replace('#include "module_menu.h"', '#include "preview_adapter.h"\n#include "quick_commands.h"\n#include "module_menu.h"')
+replace('#include "module_menu.h"', '''#include "module_menu.h"
+extern "C" JNIEXPORT jint JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_takeCommandEdit(JNIEnv*, jclass) { return eclient_quick_commands::editRequest.exchange(-1); }
+extern "C" JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getCommandEditText(JNIEnv* env, jclass, jint index) { auto text=eclient_quick_commands::editText(index); return env->NewStringUTF(text.c_str()); }
+extern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_submitCommandEdit(JNIEnv* env, jclass, jint index, jstring value) { if(!value)return; auto text=env->GetStringUTFChars(value,nullptr); if(text){eclient_quick_commands::submitEdit(index,text);env->ReleaseStringUTFChars(value,text);} }''')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setPreviewAssets(JNIEnv* env, jclass, jobject assets) { eclient_preview::setAssets(env, assets); }')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT jstring JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_getShortcutRects(JNIEnv* env, jclass) { auto rects=eclient_module_menu::getShortcutRects(); return env->NewStringUTF(rects.c_str()); }')
 # Run cleanup even on Apollon's early panic/menu/death exits. The original
@@ -175,6 +179,7 @@ for name, hexbytes in mod.EXPECTED.items():
     lines.append(f'    {{ const unsigned char expected[] = {{{data}}}; auto address = getAbsoluteAddress(MineLib, Offsets64::{name}); if (!address || memcmp((void*)address, expected, sizeof(expected))) return false; }}')
 validate = 'static bool eclientValidateTarget() {\n#if defined(__aarch64__)\n'+'\n'.join(lines)+'\n    return true;\n#else\n    return false;\n#endif\n}\n\n'
 replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
+replace('    void* result = old_NormalTick(player);', '    if (gameReady) eclient_quick_commands::flush(); else eclient_quick_commands::clearQueue();\n    void* result = old_NormalTick(player);')
 # Include the combat modules and console in the default client. An explicit
 # ECLIENT_COMBAT_LAB=0 remains available for isolated compatibility testing.
 combat_lab = os.environ.get('ECLIENT_COMBAT_LAB', '1') != '0'
@@ -263,15 +268,16 @@ if combat_lab:
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (
-        ('CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW };', 'CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
+        ('CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS };', 'CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
         ('static Module combat[] = {{"Gatyo KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"Gatyo KillAura",'),
-        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+        ('    else if (m.settings == SCHEMATIC_PREVIEW)', '    else if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
     ):
         if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
         menu_source = menu_source.replace(old, new, 1)
     menu_source = menu_source.replace('*m.toggle = !active;', '*m.toggle = !active; eclient_console::log.add("Module %s %s", m.name, *m.toggle ? "enabled" : "disabled");')
     path.write_text(menu_source)
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
+shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'automation' / 'quick_commands.h', jni / 'quick_commands.h')
 for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h', 'gatyo_bypass_fly.h'):

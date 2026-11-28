@@ -3,7 +3,7 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, BYPASS_FLY, GATYO_AURA, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW };
+enum { SIMPLE, FLY2, BYPASS_FLY, GATYO_AURA, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS };
 static Module movement[] = {
     {"Fly2",nullptr,FLY2},{"Bypass Fly",nullptr,BYPASS_FLY},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
@@ -23,7 +23,7 @@ static Module visuals[] = {{"Fog",nullptr,FOG},{"Font size",nullptr,FONT},{"Cham
     {"No Blur",&noBlur,SIMPLE},{"Anti Blindness",&antiBlind,SIMPLE},{"Paperdoll",&showPaperdoll,SIMPLE},
     {"No Cave Vignette",&noCaveVignette,SIMPLE},{"Death Position",&deathPosition,SIMPLE},
     {"Show Position",&showPosition,POSITION},{"Near Players",&playerNear,PLAYERS}};
-static Module other[] = {{"Shortcuts",nullptr,SHORTCUTS},{"LAN",nullptr,LAN},{"Config",nullptr,CONFIG},{"Marketplace",&unlockMarket,SIMPLE},{"Fast Drop",&fastDrop,SIMPLE},{"No Emote Cooldown",&noEmoteCooldown,SIMPLE}};
+static Module other[] = {{"Quick Commands",nullptr,QUICK_COMMANDS},{"Shortcuts",nullptr,SHORTCUTS},{"LAN",nullptr,LAN},{"Config",nullptr,CONFIG},{"Marketplace",&unlockMarket,SIMPLE},{"Fast Drop",&fastDrop,SIMPLE},{"No Emote Cooldown",&noEmoteCooldown,SIMPLE}};
 static Module actions[] = {{"Fly up (hold)",nullptr,SHORTCUT_UP},{"Fly down (hold)",nullptr,SHORTCUT_DOWN}};
 static int selected[8] = {0,0,0,0,0,0,0,0};
 static Module* list(int category, int& count) {
@@ -200,7 +200,8 @@ static bool page(int category) {
     Module& m = modules[selected[category]];
     ImGui::BeginChild("##module-settings", ImVec2(0,0), false);
     ImGui::TextUnformatted(m.name); ImGui::Separator();
-    if (m.settings == SCHEMATIC_PREVIEW) eclient_preview::settings();
+    if (m.settings == QUICK_COMMANDS) eclient_quick_commands::ui();
+    else if (m.settings == SCHEMATIC_PREVIEW) eclient_preview::settings();
     else if (m.settings == FLY2) eclient_fly2_adapter::draw();
     else if (m.settings == BYPASS_FLY) eclient_bypass_fly::ui();
     else if (m.settings == GATYO_AURA) eclient_gatyo_aura::ui();

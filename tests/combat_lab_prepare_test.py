@@ -18,6 +18,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr)' in main
     assert 'eclient_fake::draw(draw_list' in (jni/'menu.h').read_text()
     assert (jni/'gatyo_combat.h').exists()
+    assert (jni/'quick_commands.h').exists()
+    assert 'eclient_quick_commands::flush()' in main
+    assert 'Quick Commands' in menu and 'eclient_quick_commands::ui()' in menu
     assert 'eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors)' in main
     assert 'eclient_gatyo_aura::applyPacket(a1)' in main
     assert 'eclient_gatyo_aura::applyLocal' in main
