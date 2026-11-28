@@ -157,9 +157,10 @@ replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
 # Combat Lab is a deliberately separate opt-in test build, not the normal client.
 combat_lab = os.environ.get('ECLIENT_COMBAT_LAB') == '1'
 if combat_lab:
-    replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "module_menu.h"')
-    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) eclient_combat_lab::cancelIfArmed();\n    void* result = old_NormalTick(player);')
-    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);')
+    replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "module_menu.h"')
+    replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')
+    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
+    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI);\n    eclient_fake::tick(thiz, myLevel, playerPos);')
     replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
@@ -233,14 +234,14 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 if combat_lab:
-    for file in ('combat_lab.h', 'live_console.h'):
+    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h'):
         shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (
-        ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST };'),
-        ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"KillAura",'),
-        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_combat_lab::crystalSettings();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_combat_lab::totemSettings();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+        ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
+        ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"KillAura",'),
+        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI(), eclient_combat_lab::crystalSettings();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI(), eclient_combat_lab::totemSettings();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
     ):
         if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
         menu_source = menu_source.replace(old, new, 1)

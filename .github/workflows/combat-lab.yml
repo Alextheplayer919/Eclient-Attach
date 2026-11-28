@@ -5,6 +5,7 @@ on:
     paths:
       - apollon-adapter/combat-lab/**
       - tests/combat_lab_test.cpp
+      - tests/gatyo_combat_test.cpp
       - tests/combat_lab_prepare_test.py
       - tools/prepare-apollon-adapter.py
       - .github/workflows/combat-lab.yml
@@ -46,6 +47,8 @@ jobs:
           python3 tests/combat_lab_prepare_test.py
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/combat_lab_test.cpp -o "$RUNNER_TEMP/combat-lab-test"
           "$RUNNER_TEMP/combat-lab-test"
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_combat_test.cpp -o "$RUNNER_TEMP/gatyo-combat-test"
+          "$RUNNER_TEMP/gatyo-combat-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_test.cpp apollon-adapter/fly/fly2.cpp -o "$RUNNER_TEMP/fly2-test"
           "$RUNNER_TEMP/fly2-test"
           g++ -std=c++17 -Wall -Wextra -Werror tests/fly2_adapter_test.cpp -o "$RUNNER_TEMP/fly2-adapter-test"

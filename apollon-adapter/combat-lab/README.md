@@ -8,3 +8,26 @@
 - **Info > ClickGUI scale:** adjusts GUI window, font and controls for the current process session. Reset returns to 1x. The draggable, collapsible menu and touchscreen scrollbar are retained; this setting is not saved across process restarts.
 
 The EndCrystalItem and transfer hooks are installed at startup only if their target prologues match the pinned library. Hook installation is independent of the enabled state of the experiments. The test targets the specified 1.21.111 ARM64 build; see `docs/INTERNALCPP_COMBAT_LEADS.md` for static evidence and limitations.
+
+## Gatyo-based experimental combat
+
+This opt-in build adapts code from the bundled Gatyo source for the pinned
+1.21.111 arm64 library. Crystal Aura can scan near active players for an
+obsidian/bedrock base, temporarily select a hotbar crystal, send equipment,
+and call Gatyo's `GameMode::buildBlock`. A self-target testing option is
+available. This is a simplified candidate search: Gatyo's damage/exposure,
+entity collision and full targeting logic are **not** ported. It can hurt
+or kill the local player; use a disposable offline world.
+
+Auto Totem scans 36 inventory slots and constructs Gatyo's two-action
+inventory/offhand transaction, retrying once per second until a totem is
+observed. These native layouts and calls are version-specific and have not
+been verified on a device; they may crash or desynchronize inventory.
+
+Fake Player offers a minimal stationary client-only AddPlayer packet NPC,
+with intercepted melee hits and simulated health/totem events. It is not the
+full Gatyo module: armor, movement, crystal explosion damage and virtual
+fallback are missing. Wait for a network packet before spawning, and remove it
+before leaving the world. Its packet and attack hooks are experimental; a
+spawn request is not proof that the game created an actor. Console messages
+are limited to instrumented events, not all game events.

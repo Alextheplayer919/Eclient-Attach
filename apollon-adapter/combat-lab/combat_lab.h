@@ -243,7 +243,7 @@ static void drawConsole() {
     ImGui::EndChild();
 }
 static void crystalSettings() {
-    ImGui::TextWrapped("Experimental: breaking works; automatic crystal placement is not complete. Use the placement test below.");
+    ImGui::TextWrapped("Gatyo-based auto placement and crystal breaking are independent toggles.");
     bool aura=breakAura.load();if(ImGui::Checkbox("Continuous crystal break", &aura)) {breakAura.store(aura);eclient_console::log.add("Crystal break %s",aura ? "enabled" : "disabled");}
     ImGui::TextWrapped("Attacks nearby crystals every half second. No player targeting or damage calculation.");
     if(ImGui::Button("Arm one crystal attack (10s)")) {
@@ -259,7 +259,7 @@ static void crystalSettings() {
     placementControls();
 }
 static void totemSettings() {
-    ImGui::TextWrapped("Auto Totem is not implemented yet. This is an experimental manual inventory-call test, not automatic equipping.");
+    ImGui::TextWrapped("Automatic equip uses Gatyo inventory transactions. The extra transfer call below is a separate manual test.");
     ImGui::TextWrapped("Inventory action test: arm, then manually move a totem into offhand. The next transfer call is invoked twice with the live arguments. It may fail, desync or change inventory; it is NOT automatic totem selection.");
     if(ImGui::Button("Arm extra transfer call (30s)")) {transferDeadline.store(nowMs()+30000);transferReplay.store(1);eclient_console::log.add("Extra transfer armed for 30s");}
     ImGui::SameLine();if(ImGui::Button("Cancel transfer")) {int expected=1;if(transferReplay.compare_exchange_strong(expected,4)) eclient_console::log.add("Extra transfer cancelled");}
