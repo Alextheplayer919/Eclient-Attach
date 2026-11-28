@@ -14,7 +14,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_combat_lab::install()' in main
     assert 'eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors)' in main
     assert 'eclient_combat_lab::cancelIfArmed()' in main
-    assert 'eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI)' in main
+    assert 'eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors)' in main
+    assert 'eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr)' in main
+    assert 'eclient_fake::draw(draw_list' in (jni/'menu.h').read_text()
     assert (jni/'gatyo_combat.h').exists()
     assert '"Combat Lab"' not in menu and '"Crystal Aura"' in menu and '"Auto Totem"' in menu
     assert 'eclient_combat_lab::crystalSettings()' in menu and 'eclient_combat_lab::totemSettings()' in menu and (jni/'combat_lab.h').exists()

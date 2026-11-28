@@ -104,7 +104,7 @@ static bool chooseBase(BlockSource* region,const vec3_t& me,const vec3_t& target
     }
     return found;
 }
-static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource* region,vec3_t* pos,void* ci) {
+static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource* region,vec3_t* pos,void* ci,const vec3_t* fakeTarget=nullptr) {
     if(!autoPlace.load() || !base() || !level || !game || !region || !pos) return;
     long long t=now();if(t-lastPlacement<delayMs.load())return;
     auto* manager=level->getGameplayUserManager();if(!manager)return;
@@ -118,6 +118,7 @@ static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource
         if(std::isfinite(dist) && dist<closest){target=*at;closest=dist;hasTarget=true;}
         return true;
     },true);
+    if(!hasTarget && fakeTarget) {target=*fakeTarget;hasTarget=true;}
     if(!hasTarget && selfTarget.load()) {target=*pos;hasTarget=true;}
     if(!hasTarget)return;
     void* container=inventory(player);if(!container)return;
@@ -132,10 +133,10 @@ static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource
     fn<void(*)(void*,const void*,unsigned char,bool)>(0xccc22a4)(game,&candidate,0,false);
     if(crystal!=previous && previous>=0 && previous<9) {*reinterpret_cast<int*>(pi+16)=previous;sendEquipment(player,ci,container,previous);}
 }
-static void tick(LocalPlayer* player,Level* level,GameMode* game,BlockSource* region,vec3_t* pos,void* ci) {
+static void tick(LocalPlayer* player,Level* level,GameMode* game,BlockSource* region,vec3_t* pos,void* ci,const vec3_t* fakeTarget=nullptr) {
     if(!player || panic || inMenu)return;
     tryTotem(player);
-    tryPlace(player,level,game,region,pos,ci);
+    tryPlace(player,level,game,region,pos,ci,fakeTarget);
 }
 static void crystalUI() {
     bool b=autoPlace.load();if(ImGui::Checkbox("Automatic crystal placement (Gatyo)",&b)){autoPlace.store(b);eclient_console::log.add("Crystal Aura auto place %s",b?"enabled":"disabled");}

@@ -21,13 +21,22 @@ or kill the local player; use a disposable offline world.
 
 Auto Totem scans 36 inventory slots and constructs Gatyo's two-action
 inventory/offhand transaction, retrying once per second until a totem is
-observed. These native layouts and calls are version-specific and have not
-been verified on a device; they may crash or desynchronize inventory.
+observed. The user confirmed automatic placement and totem equip work on their device
+in the build from Actions run 46130981543. The native layouts are still pinned
+to this particular version and can crash or desynchronize other versions.
 
-Fake Player offers a minimal stationary client-only AddPlayer packet NPC,
-with intercepted melee hits and simulated health/totem events. It is not the
-full Gatyo module: armor, movement, crystal explosion damage and virtual
-fallback are missing. Wait for a network packet before spawning, and remove it
-before leaving the world. Its packet and attack hooks are experimental; a
-spawn request is not proof that the game created an actor. Console messages
-are limited to instrumented events, not all game events.
+Fake Player now tries Gatyo's client-only AddPlayer NPC, follows it with movement
+packets, equips the selected armor/sword/totem, intercepts melee, and simulates
+health, absorption, armor, regeneration, golden apples, knockback, totem pops,
+death/respawn and nearby crystal explosions. It can walk and simulate a pearl
+teleport. A missing network handler or failed NPC lookup switches to a
+world-anchored overlay mannequin; aim and attack it, or use Hit test. The
+fallback can also be selected by this build's Crystal Aura if no real player is
+available. The overlay is not Minecraft's actual player model, has no world
+depth, and is not a native actor: other Apollon modules cannot automatically
+target it. Crystal disappearance is an explosion heuristic, so unloading or
+other removals can be misidentified. The full Gatyo virtual world renderer,
+other aura integrations and combat/visual effects are not ported. Native NPC
+creation, equipment, input hook and fallback rendering have **not** been tested
+on a device. Check Console for handler and fallback status; it logs instrumented
+events rather than every game event.

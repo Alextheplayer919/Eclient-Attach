@@ -160,13 +160,13 @@ if combat_lab:
     replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "module_menu.h"')
     replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')
     replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
-    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI);\n    eclient_fake::tick(thiz, myLevel, playerPos);')
+    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);')
     replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
 menu = jni / 'menu.h'
 m = menu.read_text()
-m = m.replace('                        if (xrayDefault) RenderOreESP', '                        eclient_preview::draw(draw_list, CameraPos, currentFov, currentViewMatrix);\n                        if (xrayDefault) RenderOreESP', 1)
+m = m.replace('                        if (xrayDefault) RenderOreESP', '                        eclient_preview::draw(draw_list, CameraPos, currentFov, currentViewMatrix);\n' + ('                        eclient_fake::draw(draw_list, CameraPos, currentFov, currentViewMatrix);\n' if combat_lab else '') + '                        if (xrayDefault) RenderOreESP', 1)
 def menu_replace(old, new, expected=1):
     global m
     if m.count(old) != expected:
@@ -234,7 +234,7 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 if combat_lab:
-    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h'):
+    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h', 'fake_simulation.h'):
         shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
