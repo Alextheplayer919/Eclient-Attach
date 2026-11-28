@@ -14,7 +14,7 @@ struct LocalPlayer:Actor {BlockSource region;BlockSource* getDimensionBlockSourc
 LocalPlayer* localPlayer=nullptr;bool panic=false,inMenu=false;
 namespace eclient_fly2_adapter {std::atomic<bool> enabled{false};}
 template<class T> T ImMax(T a,T b){return std::max(a,b);}template<class T> T ImMin(T a,T b){return std::min(a,b);}template<class T> T ImClamp(T a,T lo,T hi){return std::clamp(a,lo,hi);}
-namespace ImGui {bool Checkbox(const char*,bool*){return false;}void TextWrapped(const char*,...){}}
+namespace ImGui {bool SliderFloat(const char*,float*,float,float,const char*){return false;}bool Checkbox(const char*,bool*){return false;}void TextWrapped(const char*,...){}}
 #include "../apollon-adapter/fly/gatyo_bypass_fly.h"
 int main(){
     using namespace eclient_bypass_fly;

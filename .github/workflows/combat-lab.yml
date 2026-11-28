@@ -8,6 +8,7 @@ on:
       - tests/gatyo_combat_test.cpp
       - tests/fake_simulation_test.cpp
       - tests/gatyo_bypass_fly_test.cpp
+      - tests/combat_modes_test.cpp
       - tests/gatyo_aura_test.cpp
       - apollon-adapter/gatyo-aura/**
       - apollon-adapter/menu/**
@@ -52,6 +53,10 @@ jobs:
           python3 tests/check_module_menu.py
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_aura_test.cpp -o "$RUNNER_TEMP/gatyo-aura-test"
           "$RUNNER_TEMP/gatyo-aura-test"
+          g++ -DECLIENT_COMBAT_LAB=1 -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_aura_test.cpp -o "$RUNNER_TEMP/gatyo-aura-cpvp-test"
+          "$RUNNER_TEMP/gatyo-aura-cpvp-test"
+          g++ -std=c++17 -Wall -Wextra -Werror tests/combat_modes_test.cpp -o "$RUNNER_TEMP/combat-modes-test"
+          "$RUNNER_TEMP/combat-modes-test"
           python3 tests/combat_lab_prepare_test.py
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/combat_lab_test.cpp -o "$RUNNER_TEMP/combat-lab-test"
           "$RUNNER_TEMP/combat-lab-test"

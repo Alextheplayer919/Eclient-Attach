@@ -48,7 +48,13 @@ static void updateFake() {
 #endif
 }
 static void tick(LocalPlayer* player,Level* level,GameMode* game,const std::vector<Mob*>& actors){
-    if(!enabled.load() || panic || inMenu || !player || !level || !game || !GaxValid(player)){if(running)reset();return;}
+    if(!enabled.load() || panic || inMenu || !player || !level || !game || !GaxValid(player)){
+#ifdef ECLIENT_COMBAT_LAB
+        if(eclient_gatyo::cpvpActive())eclient_gatyo::cpvpTrack(0,{});
+#endif
+        if(running)reset();
+        return;
+    }
     if(!running){running=true;tickCount=0;auto* r=player->getRotation();if(r){rotation={r->x,r->y};headYaw=r->y;}}
     updateFake();GaxUpdateKeys(player);
     auto origin=GaxPos(player);const float radius=range.load();
@@ -67,9 +73,31 @@ static void tick(LocalPlayer* player,Level* level,GameMode* game,const std::vect
     bool fakeAllowed=std::find(friendList.begin(),friendList.end(),std::string("EClientBot"))==friendList.end() && std::find(botList.begin(),botList.end(),std::string("EClientBot"))==botList.end();
     if(fakeAllowed && npcActor && std::none_of(candidates.begin(),candidates.end(),[](const Candidate& c){return c.actor==npcActor;}))add(npcActor);
     if(fakeAllowed && fakeActor())add(fakeActor());
-    if(mobs.load())for(Mob* mob:actors)if(mob && mob!=player && mob->getHealth()>0 && MobDetected(mob->getEntityTypeId()))add(mob);
+    bool targetMobs=mobs.load();
+#ifdef ECLIENT_COMBAT_LAB
+    if(eclient_gatyo::cpvpActive() && eclient_gatyo::cpvpMobs.load())targetMobs=true;
+#endif
+    if(targetMobs)for(Mob* mob:actors) {
+        if(!mob || mob==player)continue;
+        int type=mob->getEntityTypeId();
+        // MobDetected's default accepts type 71; crystals are never aura targets.
+        if(type==71 || type==319 || !MobDetected(type))continue;
+        if(mob->getHealth()>0)add(mob);
+    }
     std::sort(candidates.begin(),candidates.end(),[](const Candidate& a,const Candidate& b){return a.dist<b.dist;});
-    if(candidates.empty()){publish(false);tickCount=0;return;}
+    if(candidates.empty()){
+#ifdef ECLIENT_COMBAT_LAB
+        if(eclient_gatyo::cpvpActive())eclient_gatyo::cpvpTrack(0,{});
+#endif
+        publish(false);tickCount=0;return;
+    }
+#ifdef ECLIENT_COMBAT_LAB
+    bool cpvpEnabled=eclient_gatyo::cpvpActive();
+    if(cpvpEnabled){Actor* tracked=candidates.front().actor;auto target=GaxPos(tracked);auto box=GaxAABB(tracked);eclient_gatyo::cpvpTrack(reinterpret_cast<std::uintptr_t>(tracked),{target.x,box.lower.y+1.62f,target.z});
+        if(!eclient_gatyo::cpvpNeedsHit()){publish(false);tickCount=0;return;}}
+#else
+    constexpr bool cpvpEnabled=false;
+#endif
     if(++tickCount<std::max(1,interval.load()))return;
     Actor* target=candidates.front().actor;GaxV3 aim=GaxPos(target);aim.y+=.3f;
     float dx=aim.x-origin.x,dy=aim.y-origin.y,dz=aim.z-origin.z,dist=std::sqrt(dx*dx+dy*dy+dz*dz);
@@ -87,16 +115,24 @@ static void tick(LocalPlayer* player,Level* level,GameMode* game,const std::vect
     default:break;}
     bool valid=std::isfinite(rotation.x)&&std::isfinite(rotation.y)&&std::isfinite(headYaw);
     publish(valid && mode!=GAX_ROT_NONE && mode!=GAX_ROT_STRAFE);
-    int n=targetMode.load()?int(candidates.size()):1;
+    int n=(!cpvpEnabled && targetMode.load())?int(candidates.size()):1;
     for(int i=0;i<n;i++){Actor* actor=candidates[i].actor;
         if(hurtCheck.load() && !GaxIsFake(actor) && !FakePlayerIsNpc(actor) && static_cast<Mob*>(actor)->getHurtTime()>8)continue;
-        for(int k=0;k<multiplier.load();k++){
+        for(int k=0;k<(cpvpEnabled?1:multiplier.load());k++){
+#ifdef ECLIENT_COMBAT_LAB
+            // Capture before attacking: an attack can kill/despawn the actor.
+            GaxV3 hitPos{};std::uintptr_t hitKey=0;
+            if(cpvpEnabled){auto p=GaxPos(actor);auto box=GaxAABB(actor);hitPos={p.x,box.lower.y+1.62f,p.z};hitKey=reinterpret_cast<std::uintptr_t>(actor);}
+#endif
             if(swingEnabled.load())player->swing();
             if(GaxIsFake(actor)) {
 #ifdef ECLIENT_COMBAT_LAB
                 eclient_fake::auraHit(player);
 #endif
             } else game->attack(actor,true);
+#ifdef ECLIENT_COMBAT_LAB
+            if(cpvpEnabled)eclient_gatyo::cpvpHit(hitKey,{hitPos.x,hitPos.y,hitPos.z});
+#endif
         }
     }
     tickCount=0;

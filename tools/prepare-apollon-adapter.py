@@ -181,7 +181,9 @@ if combat_lab:
     replace('#include "gatyo_aura.h"', '#define ECLIENT_COMBAT_LAB 1\n#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "gatyo_aura.h"')
     replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')
     replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
-    replace('    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);', '    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);\n    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);')
+    replace('    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);', '    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);\n    if (!eclient_gatyo::cpvpActive()) eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);\n    eclient_gatyo::cpvpTick(thiz, myGameMode, myBlockSource, playerPos, CI, actors);')
+    replace('if (mobAura) {', 'if (mobAura && !eclient_gatyo::cpvpActive()) {')
+    replace('if (killAura) {', 'if (killAura && !eclient_gatyo::cpvpActive()) {')
     replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
@@ -255,7 +257,7 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 if combat_lab:
-    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h', 'fake_simulation.h', 'steve_skin.h'):
+    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h', 'fake_simulation.h', 'steve_skin.h', 'combat_modes.h'):
         shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
     path = jni / 'module_menu.h'
     menu_source = path.read_text()

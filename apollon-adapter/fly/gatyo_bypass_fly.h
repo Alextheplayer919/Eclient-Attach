@@ -4,11 +4,12 @@
 // experimental and does not guarantee bypass of any server's checks.
 namespace eclient_bypass_fly {
 static std::atomic<bool> bypassFly{false};
-static bool gatoFly=false, flyDynamic=false, flyAntiKick=true, flyLookControl=false;
+static bool gatoFly=false, flyDynamic=false, flyAntiKick=true;
+static std::atomic<bool> flyLookControl{false};
 static float flyHSpeed=1.0f, flyVSpeed=.5f, flyGlide=0, flyHDynamic=1, flyVDynamic=1, flyKickInterval=1.2f, flyKickAmount=.06f;
-static float bfInitialH=2.42f,bfInitialV=1.62f,bfInitBypH=1.1585f,bfInitBypV=1.086f;
-static float bfFinalH=2.18f,bfFinalV=1.42f,bfFinalBypH=1.09f,bfFinalBypV=1.05f;
-static float bfGlide=-.1266f,bfReleaseDelay=.09f,bfDescentSpeed=4.2997f,bfDescentHorizontal=1.43f,bfOnlyShift=3.f;
+static std::atomic<float> bfInitialH=2.42f,bfInitialV=1.62f,bfInitBypH=1.1585f,bfInitBypV=1.086f;
+static std::atomic<float> bfFinalH=2.18f,bfFinalV=1.42f,bfFinalBypH=1.09f,bfFinalBypV=1.05f;
+static std::atomic<float> bfGlide=-.1266f,bfReleaseDelay=.09f,bfDescentSpeed=4.2997f,bfDescentHorizontal=1.43f,bfOnlyShift=3.f;
 
 // Fly y BypassFly portados de GatoClient. Igual que alli, los dos solo
 // reescriben la velocidad del jugador en cada normalTick (Actor+GetPosition
@@ -400,9 +401,17 @@ static void FlyOnNormalTick(LocalPlayer* player) {
 }
 
 static void ui() {
-    bool on=bypassFly.load();if(ImGui::Checkbox("Bypass Fly",&on)){bypassFly.store(on);}
-    ImGui::Checkbox("Look up/down as vertical control",&flyLookControl);
-    ImGui::TextWrapped("Gatyo's original velocity and packet method. Disable Fly2 and other flight modules first; server corrections or flags remain possible.");
+    bool on=bypassFly.load();if(ImGui::Checkbox("Bypass Fly",&on))bypassFly.store(on);
+    bool look=flyLookControl.load();if(ImGui::Checkbox("Look up/down as vertical control",&look))flyLookControl.store(look);
+    auto slider=[](const char* label,std::atomic<float>& setting,float lo,float hi,const char* fmt){float v=setting.load();if(ImGui::SliderFloat(label,&v,lo,hi,fmt))setting.store(v);};
+    ImGui::TextWrapped("Speeds are blocks per tick; initial values apply near the origin, final values at 5.5 million blocks.");
+    slider("Initial horizontal",bfInitialH,.1f,3.f,"%.4f");slider("Initial vertical",bfInitialV,.1f,3.f,"%.4f");
+    slider("Initial bypass horizontal",bfInitBypH,.1f,3.f,"%.4f");slider("Initial bypass vertical",bfInitBypV,.1f,3.f,"%.4f");
+    slider("Final horizontal",bfFinalH,.1f,3.f,"%.4f");slider("Final vertical",bfFinalV,.1f,3.f,"%.4f");
+    slider("Final bypass horizontal",bfFinalBypH,.1f,3.f,"%.4f");slider("Final bypass vertical",bfFinalBypV,.1f,3.f,"%.4f");
+    slider("Glide",bfGlide,-.2f,.2f,"%.4f");slider("Release delay (seconds)",bfReleaseDelay,0.f,.5f,"%.2f");
+    slider("Descent speed",bfDescentSpeed,.1f,5.f,"%.4f");slider("Descent horizontal",bfDescentHorizontal,0.f,3.f,"%.2f");slider("Down only speed",bfOnlyShift,0.f,5.f,"%.2f");
+    ImGui::TextWrapped("Disable Fly2 and other flight modules first. Server corrections or flags remain possible.");
 }
 static void reset() {g_moveHasRef=false;g_moveGravityPending=false;g_moveGravitySeen=false;g_authInputAge=1000;g_authInputBits[0]=g_authInputBits[1]=0;g_bypassPhase=false;FlyAuthReset();}
 }
