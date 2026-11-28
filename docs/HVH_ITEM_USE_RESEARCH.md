@@ -84,3 +84,21 @@ inspection. If the world becomes unavailable during an attempt, the state is
 cleared without touching stale game pointers, so the selected slot might not be
 restored. Both guessed calls may crash or do nothing; use a backed-up private
 world and inspect Console before enabling automatic modes.
+
+## Survival test follow-up
+
+User reports enchanted apple attempts in Survival timed out, with a drinkable
+Strength II potion also in the hotbar but not matching the aux-33 filter. This
+is not confirmed working. An [October 2025 LeviLamina GameMode header](https://github.com/LiteLDev/LeviLamina/blob/7a63812d0affa642bc3adbfcb2ce85c73308b381/src-server/mc/world/gamemode/GameMode.h)
+indicates `bool useItem(ItemStack&)`; Auto Use now records the candidate's
+return value, which is only diagnostic and not proof of consumption.
+
+[Targeted Ghidra run 46142962360](https://github.com/Alextheplayer919/Eclient-Attach/actions/runs/46142962360)
+identified LocalPlayer slot 151 at `0xce0af1c` as an integer ECS-backed getter,
+matching the historical `getItemUseDuration` slot ordering (Windows header's
+150 plus the extra Itanium destructor slot). Slots 152/153 look like float
+progress-related functions. These are still inferences, not verified semantics.
+The Auto Use page adds an opt-in duration trace, only calling slot 151 when its
+actual vtable pointer matches that exact address. It also logs the nine hotbar
+item names/aux/counts when explicitly requested, to investigate the potion mismatch.
+No held-input simulation has been implemented; the experiment may still fail.
