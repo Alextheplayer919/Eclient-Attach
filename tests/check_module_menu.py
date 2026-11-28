@@ -23,6 +23,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # first-use flag or already scaled sizes.
     assert 'eclientBaseStyle = ImGui::GetStyle();' in main
     assert 'style = eclientBaseStyle;' in main
+    assert 'style.ScaleAllSizes(scaleGlobal * 3.5f * eclientGuiScale)' in main
+    assert 'eclientAppliedGuiScale != eclientGuiScale' in main
+    assert 'ClickGUI scale' in transformed and 'Reset GUI scale' in transformed
+    assert 'screenWidth / 2.5f * eclientGuiScale' in transformed
+    assert 'calcResX * 150 * eclientGuiScale' in transformed
     assert 'std::max(style.ScrollbarSize, 18.0f)' in main
     assert 'const eclient::compat::PlacementArgs args{a0,a1,a2,a3,a4,a5,a6}' in main
     assert 'eclient::compat::forwardPlacement(old_GameMode_FastBridge, args)' in main

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Apply the minimal in-process adapter to a temporary copy of Apollon."""
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ replace('#include <jni.h>', '#include <jni.h>\n#include <atomic>\n#include <andr
 # Keep an unscaled style for each new ImGui context. The upstream static
 # isLoaded flag outlives destroyed contexts and causes tiny controls after a
 # remount; scale afresh on every valid resize without compounding the scale.
-replace('\tembraceTheDarkness();', '\tembraceTheDarkness();\n    eclientBaseStyle = ImGui::GetStyle();')
+replace('\tembraceTheDarkness();', '\tembraceTheDarkness();\n    eclientBaseStyle = ImGui::GetStyle();\n    eclientAppliedGuiScale = -1.0f;')
 replace('''\tstatic bool isLoaded = false;
 \tif (!isLoaded) {
 \t\tImGuiStyle& style = ImGui::GetStyle();
@@ -35,8 +36,9 @@ replace('''\tstatic bool isLoaded = false;
         style = eclientBaseStyle;
         scaleGlobal = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);
         calcResX = calculateResolutionX(screenWidth, 2480);
-        style.ScaleAllSizes(scaleGlobal * 3.5f);
-        io.FontGlobalScale = scaleGlobal;
+        style.ScaleAllSizes(scaleGlobal * 3.5f * eclientGuiScale);
+        io.FontGlobalScale = scaleGlobal * eclientGuiScale;
+        eclientAppliedGuiScale = eclientGuiScale;
         style.WindowBorderSize = style.ChildBorderSize = style.PopupBorderSize = scaleGlobal * 2;
         style.FrameBorderSize = style.TabBorderSize = scaleGlobal * 2;
         // Scrollbars must remain usable on a touchscreen after context recreation.
@@ -51,6 +53,7 @@ if s.count(old_jni) != 2:
 s = s.replace(old_jni, 'Java_com_mojang_minecraftpe_platforms_Platform2_imgui_1Shutdown')
 replace('bool g_Initialized = false;', '''bool g_Initialized = false;
 static ImGuiStyle eclientBaseStyle;
+static float eclientGuiScale = 1.0f, eclientAppliedGuiScale = -1.0f;
 static std::atomic<int> eclientX{0}, eclientY{0}, eclientW{0}, eclientH{0};''')
 replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/app_lib"));\n        saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));', '''        static auto lastSave = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
@@ -60,6 +63,17 @@ replace('        removeDirectory(oxorany("/data/data/") + GameName + oxorany("/a
             saveConfig(oxorany("/data/data/") + GameName + oxorany("/xal/config.json"));
             lastSave = now;
         }''')
+# Scale is applied from an unscaled base style, before starting the next frame.
+replace('        ImGui_ImplOpenGL3_NewFrame();', """        if (screenWidth > 0 && screenHeight > 0 && eclientAppliedGuiScale != eclientGuiScale) {
+            ImGuiStyle& style = ImGui::GetStyle();
+            style = eclientBaseStyle;
+            style.ScaleAllSizes(scaleGlobal * 3.5f * eclientGuiScale);
+            io.FontGlobalScale = scaleGlobal * eclientGuiScale;
+            style.ScrollbarSize = std::max(style.ScrollbarSize, 18.0f);
+            style.GrabMinSize = std::max(style.GrabMinSize, 18.0f);
+            eclientAppliedGuiScale = eclientGuiScale;
+        }
+        ImGui_ImplOpenGL3_NewFrame();""")
 replace('        BeginDraw();', '''        BeginDraw();
         if (g_window) {
             eclientX.store((int)g_window->Pos.x); eclientY.store((int)g_window->Pos.y);
@@ -140,6 +154,14 @@ for name, hexbytes in mod.EXPECTED.items():
     lines.append(f'    {{ const unsigned char expected[] = {{{data}}}; auto address = getAbsoluteAddress(MineLib, Offsets64::{name}); if (!address || memcmp((void*)address, expected, sizeof(expected))) return false; }}')
 validate = 'static bool eclientValidateTarget() {\n#if defined(__aarch64__)\n'+'\n'.join(lines)+'\n    return true;\n#else\n    return false;\n#endif\n}\n\n'
 replace('void *hack_thread(void *) {', validate+'void *hack_thread(void *) {')
+# Combat Lab is a deliberately separate opt-in test build, not the normal client.
+combat_lab = os.environ.get('ECLIENT_COMBAT_LAB') == '1'
+if combat_lab:
+    replace('#include "module_menu.h"', '#include "combat_lab.h"\n#include "module_menu.h"')
+    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) eclient_combat_lab::cancelIfArmed();\n    void* result = old_NormalTick(player);')
+    replace('\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();', '\tstd::vector<Mob*> actors = myLevel->getRuntimeActorList();\n    eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);')
+    replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
+    replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
 menu = jni / 'menu.h'
 m = menu.read_text()
@@ -176,7 +198,7 @@ m = m[:intro_start] + m[intro_end + len('\t  } else  {\n') :]
 menu_replace('        ImGui::End();\n\t}\n        ImGui::PopStyleVar();', '        ImGui::End();\n        ImGui::PopStyleVar();')
 start_info = m.index('            case 7:')
 end_info = m.index('                break;', start_info)
-m = m[:start_info] + '            case 7:\n                ImGui::Text("E-Client | Minecraft 1.21.111");\n                ImGui::TextWrapped("Based on Apollon source code by ZEFF.");\n' + m[end_info:]
+m = m[:start_info] + '            case 7:\n                ImGui::Text("E-Client | Minecraft 1.21.111");\n                ImGui::TextWrapped("Based on Apollon source code by ZEFF.");\n                ImGui::SliderFloat("ClickGUI scale", &eclientGuiScale, 0.70f, 1.40f, "%.2fx");\n                if (ImGui::Button("Reset GUI scale")) eclientGuiScale = 1.0f;\n                ImGui::TextWrapped("Scale lasts for this session.");\n' + m[end_info:]
 for social_header in ('YT', 'Telegram', 'Discord'):
     menu_replace(f'#include "Images/{social_header}.h"\n', '')
 for icon in ('youtube', 'telegram', 'discord'):
@@ -186,8 +208,17 @@ for icon in ('youtube', 'telegram', 'discord'):
 menu_replace('\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creativeFly);', '                        eclient_fly2_adapter::draw();\n\t\t\t\t        ImGui::Checkbox(OBFUSCATE("Creative Fly"), &creativeFly);')
 # A horizontal module strip below the title. "Classic" retains the complete
 # upstream controls while each mapped module gets its own independent page.
+menu_replace('ImGui::SetWindowSize(ImVec2(screenWidth / 2.5, screenHeight / 1.5));', 'ImGui::SetWindowSize(ImVec2(std::min(screenWidth * 0.95f, screenWidth / 2.5f * eclientGuiScale), std::min(screenHeight * 0.95f, screenHeight / 1.5f * eclientGuiScale)));')
+menu_replace('ImVec2(calcResX * 150, 0)', 'ImVec2(calcResX * 150 * eclientGuiScale, 0)')
+menu_replace('ImGui::SameLine(calcResX * 226);', 'ImGui::SameLine(calcResX * 226 * eclientGuiScale);')
 menu_replace('\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);', '        eclient_module_menu::row(pageId);\n\t\tfloat pointSize = calculateResolutionScale(screenWidth, screenHeight, 2480, 1116);')
 menu_replace('        switch (pageId) {', '        if (!eclient_module_menu::page(pageId)) switch (pageId) {')
+if combat_lab:
+    menu_replace('\t\tif (ImGui::Button(OBFUSCATE("Info"))) pageId = 7;', '''\t\tif (ImGui::Button(OBFUSCATE("Info"))) pageId = 7;
+        style.Colors[ImGuiCol_Button] = pageId == 8 ? ImVec4(0.70f, 0.00f, 1.00f, 1.00f) : ImVec4(0, 0, 0, 0);
+        style.Colors[ImGuiCol_ButtonHovered] = style.Colors[ImGuiCol_Button];
+        if (ImGui::Button("Console")) pageId = 8;''')
+    menu_replace('        if (!eclient_module_menu::page(pageId)) switch (pageId) {', '        if (!eclient_module_menu::page(pageId)) switch (pageId) {\n            case 8: eclient_combat_lab::drawConsole(); break;')
 # Remove superseded module lists entirely. Preserve non-module List, Hotkeys,
 # Info panels; all moved settings now live in the corresponding module pages.
 for first, after in ((0, 3), (4, 5), (6, 7)):
@@ -201,6 +232,20 @@ menu.write_text(m)
 mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
+if combat_lab:
+    for file in ('combat_lab.h', 'live_console.h'):
+        shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
+    path = jni / 'module_menu.h'
+    menu_source = path.read_text()
+    for old, new in (
+        ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST };'),
+        ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"KillAura",'),
+        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_combat_lab::crystalSettings();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_combat_lab::totemSettings();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+    ):
+        if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
+        menu_source = menu_source.replace(old, new, 1)
+    menu_source = menu_source.replace('*m.toggle = !active;', '*m.toggle = !active; eclient_console::log.add("Module %s %s", m.name, *m.toggle ? "enabled" : "disabled");')
+    path.write_text(menu_source)
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
 for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
