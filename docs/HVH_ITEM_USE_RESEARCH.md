@@ -120,3 +120,25 @@ useItem hook's ABI is inferred, not proven, and remains installed until app
 restart even after logging is disabled. It may affect normal use or crash. Use
 only for a backed-up local test, then disable trace and restart the game.
 The automatic consumption path is still unverified and has not been fixed yet.
+
+### Early-release experiment
+
+The later Survival trace found `potion aux=33` in slots 1–3. Automatic apple
+use entered duration 31 and then fell to 0 before consumption. Manual use
+counted down to completion; manual callback stack-pointer equality differed,
+but that alone does not prove whether the game passes a copy or the snapshot
+was stale. The player changed slots during the automatic attempts, so the
+trace cannot by itself prove what cancelled them.
+
+Auto Use now optionally installs a candidate GameMode slot-17 release hook on
+the first attempt (the hold setting defaults on; the module remains off). While
+an automatic attempt is active, the hook suppresses release calls for that
+GameMode only, records a count, and forwards all others. Completion, slot
+change, disable, timeout, panic and world exit clear the suppression; the
+original release is attempted on timeout/disable while the selected slot still
+matches. The hook remains installed until app restart. This is an experiment,
+not synthesized input and not proven equivalent to holding the button. It can
+crash, fail to consume, or interfere with other item use. Test with no other
+combat/item-switch modules, do not touch the hotbar until it ends, and inspect
+the countdown, observed inventory change and suppressed-release count. Inventory
+change is not proof of a server-applied effect.

@@ -5,6 +5,7 @@
 namespace eclient_autouse {
 static std::atomic<bool> enabled{false},autoApple{false},autoStrength{false},traceUse{false},inspectHotbar{false};
 static std::atomic<int> request{0},appleAt{12},strengthInterval{90};
+static std::atomic<bool> holdRelease{true};
 static eclient_use_state::Attempt attempt;
 static int activeKind=0;static bool useSent=false;static long long lastApple=0,lastStrength=0,retryAfter=0;
 static bool failed=false;static long long nextTrace=0;static int lastDuration=-9999,lastTraceSlot=-1;
@@ -12,6 +13,22 @@ static bool failed=false;static long long nextTrace=0;static int lastDuration=-9
 // but logs only while tracing. Compare pointers without dereferencing callback args.
 #if defined(__aarch64__)
 using UseItemFn=bool(*)(void*,void*);
+using ReleaseFn=void(*)(void*);
+static ReleaseFn originalRelease=nullptr;static bool releaseHookTried=false;
+static std::atomic<bool> blockRelease{false};
+static std::atomic<void*> heldGame{nullptr};static std::atomic<unsigned> suppressedReleases{0};
+static void interceptedRelease(void* game){
+    if(blockRelease.load() && game==heldGame.load()) {suppressedReleases.fetch_add(1);return;}
+    originalRelease(game);
+}
+static bool ensureReleaseHook(){
+    if(!releaseHookTried){
+        releaseHookTried=true;
+        A64HookFunction(reinterpret_cast<void*>(eclient_gatyo::base()+0xccc4c38),reinterpret_cast<void*>(&interceptedRelease),reinterpret_cast<void**>(&originalRelease));
+        eclient_console::log.add("Auto Use: release hold hook %s",originalRelease?"installed":"failed");
+    }
+    return originalRelease!=nullptr;
+}
 static UseItemFn originalUseItem=nullptr;static bool traceHookTried=false;
 static std::atomic<void*> traceGame{nullptr},traceHeld{nullptr};
 static thread_local bool internalUse=false;
@@ -43,10 +60,15 @@ static bool matches(void* stack,int kind){
 static int count(void* stack){return stack?*(reinterpret_cast<unsigned char*>(stack)+0x22):0;}
 static void resetWorld(){
 #if defined(__aarch64__)
-    traceGame.store(nullptr);traceHeld.store(nullptr);
+    blockRelease.store(false);heldGame.store(nullptr);traceGame.store(nullptr);traceHeld.store(nullptr);
 #endif
     attempt={};request.store(0);activeKind=0;useSent=false;lastApple=lastStrength=retryAfter=nextTrace=0;failed=false;lastDuration=-9999;lastTraceSlot=-1;}
 static void finish(LocalPlayer* player,GameMode* game,void* ci,void* container,int current,eclient_use_state::Result result){
+#if defined(__aarch64__)
+    blockRelease.store(false);heldGame.store(nullptr);
+    unsigned blocked=suppressedReleases.exchange(0);
+    if(blocked)eclient_console::log.add("Auto Use: suppressed %u early release calls",blocked);
+#endif
     if(useSent && result!=eclient_use_state::Result::observed && current==attempt.slot) {
         eclient_console::log.add("Auto Use: attempting release after cancellation/timeout");
         eclient_gatyo::fn<void(*)(void*)>(0xccc4c38)(game);
@@ -99,6 +121,12 @@ static void tick(LocalPlayer* player,GameMode* game,void* ci){
     if(attempt.active){
         void* stack=eclient_gatyo::slot(container,attempt.slot);
         if(enabled.load() && selected==attempt.slot && !useSent && matches(stack,activeKind) && count(stack)==attempt.count){
+#if defined(__aarch64__)
+            if(holdRelease.load()){
+                if(!ensureReleaseHook()){attempt.active=false;failed=true;finish(player,game,ci,container,selected,eclient_use_state::Result::cancelled);return;}
+                suppressedReleases.store(0);heldGame.store(game);blockRelease.store(true);
+            }
+#endif
             useSent=true;
             eclient_console::log.add("Auto Use: attempting item use; experimental call");
             // October 2025 Bedrock header suggests bool GameMode::useItem(ItemStack&),
@@ -132,7 +160,8 @@ static void tick(LocalPlayer* player,GameMode* game,void* ci){
 }
 static void ui(){
     bool on=enabled.load();if(ImGui::Checkbox("Experimental Auto Use",&on)){enabled.store(on);if(!on)request.store(0);}
-    ImGui::TextWrapped("Experimental native call may crash or do nothing. Keep items in hotbar; disable other item-switch modules. No effect detection yet.");
+    ImGui::TextWrapped("Experimental use and release hooks may crash or do nothing. Keep items in hotbar; disable other item-switch modules. No effect detection yet.");
+    bool hold=holdRelease.load();if(ImGui::Checkbox("Hold use (experimental release hook)",&hold))holdRelease.store(hold);
     bool a=autoApple.load();if(ImGui::Checkbox("Auto enchanted apple",&a))autoApple.store(a);
     int hp=appleAt.load();if(ImGui::SliderInt("Apple at or below HP",&hp,1,20))appleAt.store(hp);
     bool p=autoStrength.load();if(ImGui::Checkbox("Auto Strength II potion",&p))autoStrength.store(p);
