@@ -160,15 +160,15 @@ static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource
 // CPVP borrows a target identity only as an opaque comparison key. The aura
 // revalidates the live actor every tick; no actor pointer is retained or used.
 static bool cpvpActive() {return autoPlace.load() && crystalMode.load()==1;}
-static bool cpvpNeedsHit() {return cpvpActive() && cpvp.wantsHit();}
+static bool cpvpNeedsHit() {return cpvpActive() && cpvp.target && cpvp.wantsHit() && cpvp.ready(now(),delayMs.load());}
 static void cpvpTrack(std::uintptr_t key,const vec3_t& pos) {
     if(!cpvpActive() || !key){cpvp.reset();return;}
-    cpvp.track(key);cpvpTarget=pos;
+    cpvp.track(key,now());cpvpTarget=pos;
 }
 static void cpvpHit(std::uintptr_t key,const vec3_t& pos) {
     if(!cpvpNeedsHit())return;
     cpvpTarget=pos;cpvp.attacked(key,now());
-    eclient_console::log.add("CPVP: hit attempted, finding obsidian base");
+    eclient_console::log.add("CPVP: hit attempted, starting crystals");
 }
 static bool airAt(BlockSource* region,const vec3_ti& p) {Block* b=region->getBlock(p);return b && b->isAir();}
 static bool cellClearOfPlayer(const vec3_ti& cell,const vec3_t& eyes) {
@@ -213,12 +213,12 @@ static Mob* cpvpCrystal(LocalPlayer* player,const vec3_t& pos,const std::vector<
 static void cpvpTick(LocalPlayer* player,GameMode* game,BlockSource* region,vec3_t* pos,void* ci,const std::vector<Mob*>& actors) {
     using eclient_combat_modes::Phase;
     if(!cpvpActive() || !base() || !player || !game || !region || !pos){cpvp.reset();return;}
-    long long t=now();if(cpvp.phase==Phase::hit)return;
+    long long t=now();if(!cpvp.target)return;
     const int delay=delayMs.load();
     if(cpvp.expired(t,std::max(3500,delay+1500))){eclient_console::log.add("CPVP: phase timed out; retrying target");cpvp.reset();return;}
+    if(cpvp.phase==Phase::hit)return;
     vec3_ti chosen{cpvp.x,cpvp.y,cpvp.z};
     if(cpvp.phase==Phase::base){
-        if(!cpvp.ready(t,delay))return;
         vec3_ti cell{},clicked{};
         if(cpvpFindBlockCell(region,*pos,cpvpTarget,cell,clicked) && cpvpSwitchAndBuild(player,game,ci,0x10745510,clicked,1)) {
             cpvp.placeBase(cell.x,cell.y,cell.z,t);eclient_console::log.add("CPVP: obsidian placement attempted at %d %d %d",cell.x,cell.y,cell.z);return;
@@ -262,7 +262,7 @@ static void crystalUI() {
     int mode=crystalMode.load();const char* modes[]={"Standard","CPVP"};if(ImGui::Combo("Mode##crystal",&mode,modes,2))crystalMode.store(mode);
     if(mode==1){
         bool targetMobs=cpvpMobs.load();if(ImGui::Checkbox("Target mobs in CPVP",&targetMobs))cpvpMobs.store(targetMobs);
-        ImGui::TextWrapped("Enable Gatyo KillAura. Mob targeting uses its existing mob filters; players remain targets. The hit precedes base/crystal actions. Explosions can damage you.");
+        ImGui::TextWrapped("Enable Gatyo KillAura. Mob targeting uses its existing mob filters; players remain targets. Base first, then hit, then crystals. Explosions can damage you.");
     }
     int delay=delayMs.load();if(ImGui::SliderInt("Delay (ms)",&delay,100,3000)){delayMs.store(delay);eclient_combat_lab::breakDelay.store(delay);}
     float range=rangeBlocks.load();if(ImGui::SliderFloat("Range (blocks)",&range,2.0f,10.0f,"%.1f")){rangeBlocks.store(range);eclient_combat_lab::breakRange.store(range);}
