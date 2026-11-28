@@ -8,6 +8,25 @@ static std::atomic<int> request{0},appleAt{12},strengthInterval{90};
 static eclient_use_state::Attempt attempt;
 static int activeKind=0;static bool useSent=false;static long long lastApple=0,lastStrength=0,retryAfter=0;
 static bool failed=false;static long long nextTrace=0;static int lastDuration=-9999,lastTraceSlot=-1;
+// Opt-in instrumentation only. The hook stays installed until the process exits,
+// but logs only while tracing. Compare pointers without dereferencing callback args.
+#if defined(__aarch64__)
+using UseItemFn=bool(*)(void*,void*);
+static UseItemFn originalUseItem=nullptr;static bool traceHookTried=false;
+static std::atomic<void*> traceGame{nullptr},traceHeld{nullptr};
+static thread_local bool internalUse=false;
+static bool tracedUseItem(void* game,void* stack){
+    bool result=originalUseItem(game,stack);
+    if(traceUse.load()) eclient_console::log.add("Use hook: %s result=%d game=%d held=%d",internalUse?"auto":"manual/game",result?1:0,game==traceGame.load()?1:0,stack==traceHeld.load()?1:0);
+    return result;
+}
+static void ensureTraceHook(){
+    if(traceHookTried)return;
+    traceHookTried=true;
+    A64HookFunction(reinterpret_cast<void*>(eclient_gatyo::base()+0xccc4438),reinterpret_cast<void*>(&tracedUseItem),reinterpret_cast<void**>(&originalUseItem));
+    eclient_console::log.add("Use trace: useItem hook %s",originalUseItem?"installed":"failed");
+}
+#endif
 static bool busy(){return attempt.active;}
 static const char* itemName(void* stack){
     if(!stack || eclient_gatyo::fn<bool(*)(void*)>(0xd3e3d80)(stack))return "";
@@ -22,7 +41,11 @@ static bool matches(void* stack,int kind){
     return false;
 }
 static int count(void* stack){return stack?*(reinterpret_cast<unsigned char*>(stack)+0x22):0;}
-static void resetWorld(){attempt={};request.store(0);activeKind=0;useSent=false;lastApple=lastStrength=retryAfter=nextTrace=0;failed=false;lastDuration=-9999;lastTraceSlot=-1;}
+static void resetWorld(){
+#if defined(__aarch64__)
+    traceGame.store(nullptr);traceHeld.store(nullptr);
+#endif
+    attempt={};request.store(0);activeKind=0;useSent=false;lastApple=lastStrength=retryAfter=nextTrace=0;failed=false;lastDuration=-9999;lastTraceSlot=-1;}
 static void finish(LocalPlayer* player,GameMode* game,void* ci,void* container,int current,eclient_use_state::Result result){
     if(useSent && result!=eclient_use_state::Result::observed && current==attempt.slot) {
         eclient_console::log.add("Auto Use: attempting release after cancellation/timeout");
@@ -47,6 +70,10 @@ static void tick(LocalPlayer* player,GameMode* game,void* ci){
     if(!container || !pi){resetWorld();return;}
     int selected=*reinterpret_cast<int*>(pi+16);if(selected<0 || selected>=9){resetWorld();return;}
     long long t=eclient_gatyo::now();
+#if defined(__aarch64__)
+    traceGame.store(game);traceHeld.store(eclient_gatyo::slot(container,selected));
+    if(traceUse.load())ensureTraceHook();
+#endif
     if(inspectHotbar.exchange(false)) {
         eclient_console::log.add("Auto Use: hotbar inspection (slot, name, aux, count)");
         for(int i=0;i<9;i++) {
@@ -76,7 +103,13 @@ static void tick(LocalPlayer* player,GameMode* game,void* ci){
             eclient_console::log.add("Auto Use: attempting item use; experimental call");
             // October 2025 Bedrock header suggests bool GameMode::useItem(ItemStack&),
             // but target ABI still needs confirmation. A true result is not consumption.
+#if defined(__aarch64__)
+            internalUse=true;
+#endif
             bool result=eclient_gatyo::fn<bool(*)(void*,void*)>(0xccc4438)(game,stack);
+#if defined(__aarch64__)
+            internalUse=false;
+#endif
             eclient_console::log.add("Auto Use: candidate returned %d (not confirmation)",result?1:0);
             return;
         }
@@ -108,6 +141,6 @@ static void ui(){
     if(ImGui::Button("Log hotbar items"))inspectHotbar.store(true);
     if(ImGui::Button("Try enchanted apple"))request.store(1);
     if(ImGui::Button("Try Strength II potion"))request.store(2);
-    ImGui::TextWrapped("Enable first. Timeout stops retries until disabled and re-enabled; see Console.");
+    ImGui::TextWrapped("Trace installs an experimental hook until restart. Enable first. Timeout stops retries until disabled and re-enabled; see Console.");
 }
 }

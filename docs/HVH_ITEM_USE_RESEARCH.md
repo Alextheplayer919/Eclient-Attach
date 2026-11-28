@@ -102,3 +102,21 @@ The Auto Use page adds an opt-in duration trace, only calling slot 151 when its
 actual vtable pointer matches that exact address. It also logs the nine hotbar
 item names/aux/counts when explicitly requested, to investigate the potion mismatch.
 No held-input simulation has been implemented; the experiment may still fail.
+
+### Manual-vs-automatic trace
+
+The user's Survival trace shows the candidate returned 0 and the use-duration
+getter remained 0 on auto use. Manual apple use showed the duration descending
+from 26 to 0. Therefore the one-shot call did not establish the same use state;
+the exact cause is still unknown. The hotbar inspection in that trace showed
+only an enchanted apple; no potion item was identified in that snapshot.
+
+For the next comparison, the trace toggle installs an experimental, pass-through
+hook on the suspected useItem function and uses the existing useItemOn hook.
+It logs whether a call was automatic, whether its GameMode and stack arguments
+match the current player/held stack, and the candidate's return value; it does
+not dereference callback arguments or store their addresses in the log. The
+useItem hook's ABI is inferred, not proven, and remains installed until app
+restart even after logging is disabled. It may affect normal use or crash. Use
+only for a backed-up local test, then disable trace and restart the game.
+The automatic consumption path is still unverified and has not been fixed yet.

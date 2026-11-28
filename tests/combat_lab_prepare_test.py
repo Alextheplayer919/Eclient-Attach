@@ -20,6 +20,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert (jni/'gatyo_combat.h').exists()
     assert (jni/'auto_use.h').exists() and (jni/'use_state.h').exists()
     assert 'eclient_autouse::tick(thiz, myGameMode, CI)' in main
+    assert 'Use trace: useItemOn called' in main
+    assert 'Use hook: %s result=%d game=%d held=%d' in (jni/'auto_use.h').read_text()
     assert 'eclient_autouse::busy()' in main and 'eclient_gatyo::tryTotem(thiz)' in main
     assert '"Auto Use"' in menu and 'eclient_autouse::ui()' in menu
     assert (jni/'quick_commands.h').exists()
