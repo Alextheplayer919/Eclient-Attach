@@ -63,3 +63,24 @@ server acceptance.
 4. Test targeting, retreat hysteresis, target loss, timeouts and restore behavior
    on host first. Then make one instrumented APK and test in a private world;
    server validation and anti-cheat behavior remain separate.
+
+## Experimental Auto Use module
+
+The separate Combat → Auto Use module is **off by default** and is not the HvH
+bot. Enable it, then use a one-shot test button or the individual automatic
+settings. The experimental routine looks only in the hotbar for an enchanted
+golden apple or a regular `potion` with aux 33 (Gatyo's Strength II lead),
+switches to it and sends the existing equipment packet, then calls the slot-12
+candidate on the next game tick with a hypothesized main-hand argument. It
+watches for a stack decrease or item replacement for 3.5 seconds. Timeout stops
+automatic retries until the module is toggled off and on. On timeout/cancel it
+also calls the unverified slot-17 release candidate. A manual slot change cancels
+without overwriting the player's new selection. Gatyo KillAura, CPVP and the
+built-in aura/crystal loops pause during the attempt; Auto Totem remains active.
+Disable other item-switch modules. No genuine held input is simulated yet, so
+this may not finish eating/drinking. Inventory changes are not proof of a
+server-applied effect; strength refresh currently uses a timer, not effect
+inspection. If the world becomes unavailable during an attempt, the state is
+cleared without touching stale game pointers, so the selected slot might not be
+restored. Both guessed calls may crash or do nothing; use a backed-up private
+world and inspect Console before enabling automatic modes.

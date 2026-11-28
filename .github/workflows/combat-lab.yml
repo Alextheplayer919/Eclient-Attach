@@ -58,6 +58,8 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror tests/combat_modes_test.cpp -o "$RUNNER_TEMP/combat-modes-test"
           "$RUNNER_TEMP/combat-modes-test"
           python3 tests/combat_lab_prepare_test.py
+          g++ -std=c++17 -Wall -Wextra -Werror tests/auto_use_state_test.cpp -o "$RUNNER_TEMP/auto-use-test"
+          "$RUNNER_TEMP/auto-use-test"
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/combat_lab_test.cpp -o "$RUNNER_TEMP/combat-lab-test"
           "$RUNNER_TEMP/combat-lab-test"
           g++ -std=c++17 -pthread -Wall -Wextra -Werror tests/gatyo_combat_test.cpp -o "$RUNNER_TEMP/gatyo-combat-test"

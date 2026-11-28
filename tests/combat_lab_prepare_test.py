@@ -18,6 +18,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr)' in main
     assert 'eclient_fake::draw(draw_list' in (jni/'menu.h').read_text()
     assert (jni/'gatyo_combat.h').exists()
+    assert (jni/'auto_use.h').exists() and (jni/'use_state.h').exists()
+    assert 'eclient_autouse::tick(thiz, myGameMode, CI)' in main
+    assert 'eclient_autouse::busy()' in main and 'eclient_gatyo::tryTotem(thiz)' in main
+    assert '"Auto Use"' in menu and 'eclient_autouse::ui()' in menu
     assert (jni/'quick_commands.h').exists()
     assert 'eclient_quick_commands::flush()' in main
     assert 'Quick Commands' in menu and 'eclient_quick_commands::ui()' in menu

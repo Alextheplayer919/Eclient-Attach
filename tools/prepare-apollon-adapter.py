@@ -184,12 +184,12 @@ replace('    void* result = old_NormalTick(player);', '    if (gameReady) eclien
 # ECLIENT_COMBAT_LAB=0 remains available for isolated compatibility testing.
 combat_lab = os.environ.get('ECLIENT_COMBAT_LAB', '1') != '0'
 if combat_lab:
-    replace('#include "gatyo_aura.h"', '#define ECLIENT_COMBAT_LAB 1\n#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "gatyo_fake.h"\n#include "gatyo_aura.h"')
+    replace('#include "gatyo_aura.h"', '#define ECLIENT_COMBAT_LAB 1\n#include "combat_lab.h"\n#include "gatyo_combat.h"\n#include "auto_use.h"\n#include "gatyo_fake.h"\n#include "gatyo_aura.h"')
     replace('\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)', '\teclient_fake::install();\n\tA64HookFunction((void *)getAbsoluteAddress(MineLib, Offsets64::NormalTick)')
-    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
-    replace('    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);', '    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);\n    if (!eclient_gatyo::cpvpActive()) eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr);\n    eclient_gatyo::cpvpTick(thiz, myGameMode, myBlockSource, playerPos, CI, actors);')
-    replace('if (mobAura) {', 'if (mobAura && !eclient_gatyo::cpvpActive()) {')
-    replace('if (killAura) {', 'if (killAura && !eclient_gatyo::cpvpActive()) {')
+    replace('    void* result = old_NormalTick(player);', '    if (!gameReady) { eclient_autouse::resetWorld(); eclient_combat_lab::cancelIfArmed(); eclient_gatyo::leaveWorld(); eclient_fake::resetWorld(); }\n    void* result = old_NormalTick(player);')
+    replace('    eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);', '    eclient_fake::tick(thiz, myLevel, myBlockSource, playerPos, actors);\n    eclient_autouse::tick(thiz, myGameMode, CI);\n    if (!eclient_autouse::busy()) eclient_gatyo_aura::tick(thiz, myLevel, myGameMode, actors);\n    else if (eclient_gatyo::cpvpActive()) eclient_gatyo::cpvpTrack(0, {});\n    if (!eclient_autouse::busy() && !eclient_gatyo::cpvpActive()) eclient_combat_lab::tick(thiz, myGameMode, playerPos, actors);\n    vec3_t eclientFakeTarget;\n    bool eclientHasFakeTarget = eclient_fake::target(eclientFakeTarget);\n    if (!eclient_autouse::busy()) { eclient_gatyo::tick(thiz, myLevel, myGameMode, myBlockSource, playerPos, CI, eclientHasFakeTarget ? &eclientFakeTarget : nullptr); eclient_gatyo::cpvpTick(thiz, myGameMode, myBlockSource, playerPos, CI, actors); } else { eclient_gatyo::tryTotem(thiz); }')
+    replace('if (mobAura) {', 'if (mobAura && !eclient_gatyo::cpvpActive() && !eclient_autouse::busy()) {')
+    replace('if (killAura) {', 'if (killAura && !eclient_gatyo::cpvpActive() && !eclient_autouse::busy()) {')
     replace('    const auto result = eclient::compat::forwardPlacement(old_GameMode_FastBridge, args);', '    const auto result = eclient_combat_lab::placementExperiment(old_GameMode_FastBridge, args);')
     replace('\tRenderHook();', '\teclient_combat_lab::install();\n\tRenderHook();')
 p.write_text(s)
@@ -268,16 +268,17 @@ if combat_lab:
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (
-        ('CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS };', 'CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
-        ('static Module combat[] = {{"Gatyo KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"Gatyo KillAura",'),
-        ('    else if (m.settings == SCHEMATIC_PREVIEW)', '    else if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+        ('CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS };', 'CONFIG, SHORTCUTS, SHORTCUT_UP, SHORTCUT_DOWN, SCHEMATIC_PREVIEW, QUICK_COMMANDS, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST, AUTO_USE_TEST };'),
+        ('static Module combat[] = {{"Gatyo KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Use",nullptr,AUTO_USE_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"Gatyo KillAura",'),
+        ('    else if (m.settings == SCHEMATIC_PREVIEW)', '    else if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_USE_TEST) eclient_autouse::ui();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
     ):
         if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
         menu_source = menu_source.replace(old, new, 1)
     menu_source = menu_source.replace('*m.toggle = !active;', '*m.toggle = !active; eclient_console::log.add("Module %s %s", m.name, *m.toggle ? "enabled" : "disabled");')
     path.write_text(menu_source)
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
-shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'automation' / 'quick_commands.h', jni / 'quick_commands.h')
+for file in ('quick_commands.h', 'auto_use.h', 'use_state.h'):
+    shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'automation' / file, jni / file)
 for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
 for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h', 'gatyo_bypass_fly.h'):
