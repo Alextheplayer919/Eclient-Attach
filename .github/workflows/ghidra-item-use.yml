@@ -37,12 +37,10 @@ jobs:
           import pathlib, re, struct, subprocess, sys
           # GameMode slots are unnamed in the extractor; these are candidates,
           # not assumed item-use signatures. Compare their decompilation and callers.
-          sites={'gamemode-slot-2':0xccc0bb8, 'gamemode-slot-3':0xccc1260,
-                 'gamemode-slot-4':0xccc1890, 'gamemode-slot-8':0xccc28a8,
-                 'gamemode-slot-9':0xccc2d14, 'gamemode-slot-10':0xccc4fec,
-                 'gamemode-slot-11':0xccc4b70, 'gamemode-slot-12':0xccc4438,
-                 'gamemode-slot-13':0xccc4a88, 'gamemode-slot-17':0xccc4c38,
-                 'gatyo-quick-command':0x7029fc8}
+          sites={'localplayer-slot-149':0xc86bfe8, 'localplayer-slot-150':0xc86c164,
+                 'localplayer-slot-151':0xce0af1c, 'localplayer-slot-152':0xce0affc,
+                 'localplayer-slot-153':0xce0b17c, 'gamemode-slot-12':0xccc4438,
+                 'gamemode-slot-17':0xccc4c38}
           pattern=re.compile(r'\bFDE\b.*?\bpc=([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)')
           matches={name:[] for name in sites}
           with subprocess.Popen(['readelf','--debug-dump=frames',sys.argv[1]],stdout=subprocess.PIPE,text=True) as p:
