@@ -9,8 +9,9 @@
 #include <cstring>
 #include <string>
 namespace eclient_gatyo {
-static std::atomic<bool> autoTotem{false}, autoPlace{false}, selfTarget{false};
-static std::atomic<int> delayMs{500};
+static std::atomic<bool> autoTotem{false}, autoPlace{false};
+static std::atomic<int> delayMs{500}, totemDelayMs{1000};
+static std::atomic<float> rangeBlocks{5.0f};
 static long long lastTotem=0,lastPlacement=0,lastNoTotem=0;
 static int pendingSlot=-1;
 static uintptr_t base() { static uintptr_t p=0; if(!p) p=getAbsoluteAddress(MineLib,0); return p; }
@@ -42,7 +43,7 @@ static void tryTotem(LocalPlayer* player) {
     if(!autoTotem.load()) {pendingSlot=-1;return;}
     if(!base()) return;
     long long t=now();
-    if(t-lastTotem<1000) return;
+    if(t-lastTotem<totemDelayMs.load()) return;
     void* container=inventory(player);if(!container) return;
     void* held=fn<void*(*)(void*)>(0xc9486c8)(player);
     if(itemIs(held,0x10722418)) {
@@ -92,12 +93,13 @@ static void sendEquipment(LocalPlayer* player,void* ci,void* container,int selec
     reinterpret_cast<void(*)(void*)>((*reinterpret_cast<void***>(packet))[0])(packet);
 }
 static bool chooseBase(BlockSource* region,const vec3_t& me,const vec3_t& target,vec3_ti& best) {
+    const float range=rangeBlocks.load();
     int tx=static_cast<int>(std::floor(target.x)),ty=static_cast<int>(std::floor(target.y)),tz=static_cast<int>(std::floor(target.z));
     float score=1e9f;bool found=false;
     for(int dx=-3;dx<=3;++dx)for(int dz=-3;dz<=3;++dz)for(int dy=-3;dy<=2;++dy) {
         vec3_ti p{tx+dx,ty+dy,tz+dz};
         float px=p.x+0.5f-me.x,py=p.y+1.0f-me.y,pz=p.z+0.5f-me.z;
-        float d=px*px+py*py+pz*pz;if(d>25.0f || d<4.0f)continue;
+        float d=px*px+py*py+pz*pz;if(d>range*range || d<4.0f)continue;
         float x=p.x+0.5f-target.x,y=p.y+1.0f-target.y,z=p.z+0.5f-target.z;
         float targetDist=x*x+y*y+z*z;if(targetDist>36.0f || targetDist>=score)continue;
         if(canPlace(region,p)){score=targetDist;best=p;found=true;}
@@ -119,7 +121,6 @@ static void tryPlace(LocalPlayer* player,Level* level,GameMode* game,BlockSource
         return true;
     },true);
     if(!hasTarget && fakeTarget) {target=*fakeTarget;hasTarget=true;}
-    if(!hasTarget && selfTarget.load()) {target=*pos;hasTarget=true;}
     if(!hasTarget)return;
     void* container=inventory(player);if(!container)return;
     auto* pi=*reinterpret_cast<char**>(reinterpret_cast<char*>(player)+1392);
@@ -139,13 +140,13 @@ static void tick(LocalPlayer* player,Level* level,GameMode* game,BlockSource* re
     tryPlace(player,level,game,region,pos,ci,fakeTarget);
 }
 static void crystalUI() {
-    bool b=autoPlace.load();if(ImGui::Checkbox("Automatic crystal placement (Gatyo)",&b)){autoPlace.store(b);eclient_console::log.add("Crystal Aura auto place %s",b?"enabled":"disabled");}
-    bool self=selfTarget.load();if(ImGui::Checkbox("Target self (local test)",&self))selfTarget.store(self);
-    int delay=delayMs.load();if(ImGui::SliderInt("Placement delay (ms)",&delay,250,3000))delayMs.store(delay);
-    ImGui::TextWrapped("Scans for a base near a player, switches to a hotbar crystal, and calls buildBlock. Damage prediction is not yet ported.");
+    bool enabled=autoPlace.load();
+    if(ImGui::Checkbox("Crystal Aura",&enabled)) {autoPlace.store(enabled);eclient_combat_lab::breakAura.store(enabled);eclient_console::log.add("Crystal Aura %s",enabled?"enabled":"disabled");}
+    int delay=delayMs.load();if(ImGui::SliderInt("Delay (ms)",&delay,100,3000)){delayMs.store(delay);eclient_combat_lab::breakDelay.store(delay);}
+    float range=rangeBlocks.load();if(ImGui::SliderFloat("Range (blocks)",&range,2.0f,10.0f,"%.1f")){rangeBlocks.store(range);eclient_combat_lab::breakRange.store(range);}
 }
 static void totemUI() {
-    bool b=autoTotem.load();if(ImGui::Checkbox("Automatic totem equip (Gatyo)",&b)){autoTotem.store(b);eclient_console::log.add("Auto Totem %s",b?"enabled":"disabled");}
-    ImGui::TextWrapped("Searches your inventory and sends a transaction to move a totem to offhand; retries once per second.");
+    bool enabled=autoTotem.load();if(ImGui::Checkbox("Auto Totem",&enabled)){autoTotem.store(enabled);eclient_console::log.add("Auto Totem %s",enabled?"enabled":"disabled");}
+    int delay=totemDelayMs.load();if(ImGui::SliderInt("Delay (ms)##totem",&delay,250,3000))totemDelayMs.store(delay);
 }
 }

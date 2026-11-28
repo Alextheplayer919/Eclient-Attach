@@ -3,9 +3,9 @@
 // existing module variables; category selection never toggles a module.
 namespace eclient_module_menu {
 struct Module { const char* name; bool* toggle; int settings; };
-enum { SIMPLE, FLY2, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, SCHEMATIC_PREVIEW };
+enum { SIMPLE, FLY2, BYPASS_FLY, AURA, MOBAURA, HITBOX, AUTOCLICK, XRAY, ESP, FOV, POSITION, PLAYERS, SPEED, WATER, LAVA, JUMP, GRAVITY, CHAMS, FOG, FONT, LAN, CONFIG, SCHEMATIC_PREVIEW };
 static Module movement[] = {
-    {"Fly2",nullptr,FLY2},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
+    {"Fly2",nullptr,FLY2},{"Bypass Fly",nullptr,BYPASS_FLY},{"Speed",nullptr,SPEED},{"Water Speed",nullptr,WATER},{"Lava Speed",nullptr,LAVA},{"Jump",nullptr,JUMP},{"Gravity",nullptr,GRAVITY},{"Creative Fly",&creativeFly,SIMPLE},{"Force Creative Fly",&forceCreativeFly,SIMPLE},
     {"Ladder Fly",&ladderFly,SIMPLE},{"Damage Fly",&damageFly,SIMPLE},{"Always Sprint",&alwaysSprinting,SIMPLE},
     {"No SlowDown",&noSlowDown,SIMPLE},{"No Web",&offSlowdownTrigger,SIMPLE},{"No Jump Delay",&noJumpDelay,SIMPLE},
     {"Fast Fall",&fastFall,SIMPLE},{"Step",&step,SIMPLE},{"Noclip",&noclip,SIMPLE},{"No Water",&offWaterTrigger,SIMPLE},
@@ -91,6 +91,7 @@ static bool page(int category) {
     ImGui::TextUnformatted(m.name); ImGui::Separator();
     if (m.settings == SCHEMATIC_PREVIEW) eclient_preview::settings();
     else if (m.settings == FLY2) eclient_fly2_adapter::draw();
+    else if (m.settings == BYPASS_FLY) eclient_bypass_fly::ui();
     else if ((m.settings == SPEED || m.settings == WATER || m.settings == LAVA || m.settings == JUMP || m.settings == GRAVITY) && isLANGame) {
         ImGui::TextWrapped("Unavailable in LAN games.");
     } else if (m.settings == FOG) {

@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'eclient_fake::draw(draw_list' in (jni/'menu.h').read_text()
     assert (jni/'gatyo_combat.h').exists()
     assert '"Combat Lab"' not in menu and '"Crystal Aura"' in menu and '"Auto Totem"' in menu
-    assert 'eclient_combat_lab::crystalSettings()' in menu and 'eclient_combat_lab::totemSettings()' in menu and (jni/'combat_lab.h').exists()
+    assert 'eclient_gatyo::crystalUI()' in menu and 'eclient_gatyo::totemUI()' in menu and (jni/'combat_lab.h').exists()
     transformed=(jni/'menu.h').read_text()
     assert 'ImGui::Button("Console")' in transformed and 'case 8: eclient_combat_lab::drawConsole();' in transformed
     assert (jni/'live_console.h').exists()

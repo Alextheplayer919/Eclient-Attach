@@ -1,6 +1,7 @@
 #pragma once
 // Gatyo-inspired client NPC and virtual fallback; 1.21.111 arm64 only.
 #include "fake_simulation.h"
+#include "steve_skin.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -10,7 +11,7 @@ using namespace eclient_fake_sim;
 using Handle=void(*)(void*,void*,void*,void*);using Packet=std::shared_ptr<char>;
 static std::atomic<void*> callback{nullptr},source{nullptr},npcActor{nullptr};
 static std::atomic<int> request{0}, armor{2},protection{4},totemCount{2};
-static std::atomic<bool> moving{false},infinite{false},noKnock{false},gapples{true};
+static std::atomic<bool> moving{false},infinite{false},noKnock{false},gapples{true},forceVirtual{false};
 static std::atomic<int> status{0},shownHp{20},shownTotems{2}; // off, waiting, NPC, virtual, dead
 static uintptr_t vtables[10]{};static Handle originals[10]{};static int hooks=0;
 static std::uint64_t serial=0,runtime=0;static int waitTicks=0,equipKey=-1;static bool enabled=false,npcSent=false,virtualMode=false;
@@ -152,13 +153,13 @@ static void tick(LocalPlayer* player,Level* level,BlockSource* region,vec3_t* po
         removeNpc();auto* rot=player->getRotation();float yaw=rot?rot->y:0,rad=yaw*.0174532925f;
         Vec feet{pos->x-std::sin(rad)*3,pos->y-1.62f,pos->z+std::cos(rad)*3};
         for(int i=0;i<24;i++){float y=std::floor(pos->y-.62f)-i;if(solid(region,feet.x,y,feet.z)){feet.y=y+1;break;}}
-        sim.reset(feet,s);enabled=true;virtualMode=false;waitTicks=0;shownHp.store(20);shownTotems.store(sim.totems);
-        eclient_console::log.add("Fake Player: spawn requested at %.1f %.1f %.1f",feet.x,feet.y,feet.z);
+        sim.reset(feet,s);enabled=true;virtualMode=forceVirtual.load();waitTicks=0;shownHp.store(20);shownTotems.store(sim.totems);
+        eclient_console::log.add("Fake Player: spawn at %.1f %.1f %.1f (%s)",feet.x,feet.y,feet.z,virtualMode?"forced virtual":"NPC first");
     }
     if(!enabled)return;
     if(req==4)sim.throwPearl({pos->x,pos->y,pos->z});
     if(req==3)notify(sim.damage(heldDamage(player),{pos->x,pos->y,pos->z},s,true));
-    if(sim.dead){++sim.dead;if(sim.dead>80){removeNpc();sim.reset(sim.center,s);virtualMode=false;waitTicks=0;eclient_console::log.add("Fake Player: respawn");}}
+    if(sim.dead){++sim.dead;if(sim.dead>80){removeNpc();sim.reset(sim.center,s);virtualMode=forceVirtual.load();waitTicks=0;eclient_console::log.add("Fake Player: respawn");}}
     else {
         sim.healthTick(s);sim.pearlTick([&](float x,float y,float z){return solid(region,x,y,z);});sim.physics(s,[&](float x,float y,float z){return solid(region,x,y,z);});
         float dx=pos->x-sim.feet.x,dy=pos->y-(sim.feet.y+1.62f),dz=pos->z-sim.feet.z;
@@ -180,19 +181,54 @@ static void tick(LocalPlayer* player,Level* level,BlockSource* region,vec3_t* po
     status.store(sim.dead?4:virtualMode?3:npcActor.load()?2:1);
 }
 static bool target(vec3_t& out) {std::lock_guard<std::mutex> guard(mutex);if(!enabled || sim.dead)return false;out={sim.feet.x,sim.feet.y+1.62f,sim.feet.z};return true;}
+// Gatyo's 64x64 Steve skin and player-cuboid UVs, rendered into the overlay.
+// This uses Apollon's camera projection, not Gatyo's in-game GL depth hook.
+static GLuint skinTexture() {
+    static EGLContext context=EGL_NO_CONTEXT;static GLuint texture=0;
+    EGLContext current=eglGetCurrentContext();if(current==EGL_NO_CONTEXT)return 0;
+    if(current!=context){context=current;texture=0;}
+    if(texture)return texture;
+    int w=0,h=0,n=0;auto pixels=stbi_load_from_memory(SteveSkinPng,sizeof(SteveSkinPng),&w,&h,&n,STBI_rgb_alpha);
+    if(!pixels)return 0;GLint previous=0;glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+    glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,w,h,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels);glBindTexture(GL_TEXTURE_2D,previous);stbi_image_free(pixels);
+    return texture;
+}
 static void draw(ImDrawList* list,vec3_t camera,glm::vec2 fov,glm::mat4 matrix) {
-    Vec feet;bool draw=false;int hp=0,tot=0;
-    {std::lock_guard<std::mutex> guard(mutex);draw=enabled && virtualMode && sim.dead<=20;feet=sim.feet;hp=int(std::ceil(sim.health));tot=sim.totems;}
-    if(!draw || !list || screenWidth<=0 || screenHeight<=0)return;
-    glm::vec3 origin(camera.x,camera.y,camera.z);glm::vec2 head,foot;
-    if(!OWorldToScreen(origin,glm::vec3(feet.x,feet.y+1.8f,feet.z),head,fov,glm::vec2(screenWidth,screenHeight),matrix) || !OWorldToScreen(origin,glm::vec3(feet.x,feet.y,feet.z),foot,fov,glm::vec2(screenWidth,screenHeight),matrix))return;
-    float h=foot.y-head.y;if(!std::isfinite(h)||h<4||h>screenHeight*3)return;float x=(head.x+foot.x)*.5f,w=h*.30f;
-    // World-anchored fallback mannequin. NPC mode uses Minecraft's actual model.
-    auto rect=[&](float x1,float y1,float x2,float y2,ImU32 color){list->AddRectFilled(ImVec2(x+x1*w,head.y+y1*h),ImVec2(x+x2*w,head.y+y2*h),color);};
-    rect(-.33f,0,.33f,.25f,IM_COL32(224,178,138,255));rect(-.40f,.25f,.40f,.66f,IM_COL32(50,168,165,255));
-    rect(-.65f,.27f,-.40f,.65f,IM_COL32(224,178,138,255));rect(.40f,.27f,.65f,.65f,IM_COL32(224,178,138,255));
-    rect(-.38f,.66f,-.02f,1,IM_COL32(55,62,137,255));rect(.02f,.66f,.38f,1,IM_COL32(55,62,137,255));
-    char label[80];std::snprintf(label,sizeof(label),"EClientBot  %d HP  %d totems",hp,tot);auto size=ImGui::CalcTextSize(label);list->AddText(ImVec2(x-size.x*.5f,head.y-size.y-4),IM_COL32_WHITE,label);
+    Vec feet;bool visible=false;float yaw=0;int hp=0,tot=0;
+    {std::lock_guard<std::mutex> guard(mutex);visible=enabled && virtualMode && sim.dead<=20;feet=sim.feet;yaw=sim.yaw;hp=int(std::ceil(sim.health));tot=sim.totems;}
+    if(!visible || !list || screenWidth<=0 || screenHeight<=0)return;
+    GLuint skin=skinTexture();if(!skin)return;
+    struct Face {ImVec2 screen[4],uv[4];float depth;ImU32 tint;};std::vector<Face> faces;
+    glm::vec3 origin(camera.x,camera.y,camera.z);float r=yaw*.0174532925f,c=std::cos(r),sn=std::sin(r),scale=.9375f/16.0f;
+    auto project=[&](glm::vec3 world,ImVec2& out,float& dist){
+        glm::vec3 relative=world-origin;float z=glm::dot(glm::vec4(matrix[2].x,matrix[2].y,matrix[2].z,matrix[2].w),glm::vec4(relative,1.f));glm::vec2 p;
+        if(!std::isfinite(z)||z>=-.05f||!OWorldToScreen(origin,world,p,fov,glm::vec2(screenWidth,screenHeight),matrix)||!std::isfinite(p.x)||!std::isfinite(p.y))return false;
+        out=ImVec2(p.x,p.y);dist+=glm::dot(relative,relative);return true;
+    };
+    auto cuboid=[&](glm::vec3 lo,glm::vec3 hi,float u,float v,float w,float h,float d){
+        float x0=lo.x,x1=hi.x,y0=lo.y,y1=hi.y,z0=lo.z,z1=hi.z;
+        struct Raw {glm::vec3 p[4];float uv[4][2];float shade;};
+        const Raw raw[]={
+            {{{x0,y1,z1},{x1,y1,z1},{x1,y0,z1},{x0,y0,z1}},{{u+d,v+d},{u+d+w,v+d},{u+d+w,v+d+h},{u+d,v+d+h}},.82f},
+            {{{x1,y1,z0},{x0,y1,z0},{x0,y0,z0},{x1,y0,z0}},{{u+2*d+w,v+d},{u+2*d+2*w,v+d},{u+2*d+2*w,v+d+h},{u+2*d+w,v+d+h}},.82f},
+            {{{x0,y1,z0},{x0,y1,z1},{x0,y0,z1},{x0,y0,z0}},{{u,v+d},{u+d,v+d},{u+d,v+d+h},{u,v+d+h}},.62f},
+            {{{x1,y1,z1},{x1,y1,z0},{x1,y0,z0},{x1,y0,z1}},{{u+d+w,v+d},{u+2*d+w,v+d},{u+2*d+w,v+d+h},{u+d+w,v+d+h}},.62f},
+            {{{x0,y1,z0},{x1,y1,z0},{x1,y1,z1},{x0,y1,z1}},{{u+d,v},{u+d+w,v},{u+d+w,v+d},{u+d,v+d}},1.f},
+            {{{x0,y0,z1},{x1,y0,z1},{x1,y0,z0},{x0,y0,z0}},{{u+d+w,v},{u+d+2*w,v},{u+d+2*w,v+d},{u+d+w,v+d}},.5f}};
+        for(const auto& f:raw){Face out{};bool ok=true;for(int i=0;i<4;i++){
+            auto p=f.p[i];glm::vec3 world(feet.x+(c*p.x-sn*p.z)*scale,feet.y+p.y*scale,feet.z+(sn*p.x+c*p.z)*scale);
+            if(!project(world,out.screen[i],out.depth)){ok=false;break;}out.uv[i]=ImVec2(f.uv[i][0]/64.f,f.uv[i][1]/64.f);}
+            int shade=int(f.shade*255);out.tint=IM_COL32(shade,shade,shade,255);if(ok)faces.push_back(out);}
+    };
+    cuboid({-4,24,-4},{4,32,4},0,0,8,8,8);cuboid({-4,12,-2},{4,24,2},16,16,8,12,4);
+    cuboid({-8,12,-2},{-4,24,2},40,16,4,12,4);cuboid({4,12,-2},{8,24,2},32,48,4,12,4);
+    cuboid({-4,0,-2},{0,12,2},0,16,4,12,4);cuboid({0,0,-2},{4,12,2},16,48,4,12,4);
+    std::sort(faces.begin(),faces.end(),[](const Face& a,const Face& b){return a.depth>b.depth;});
+    for(auto& f:faces)list->AddImageQuad((ImTextureID)(intptr_t)skin,f.screen[0],f.screen[1],f.screen[2],f.screen[3],f.uv[0],f.uv[1],f.uv[2],f.uv[3],f.tint);
+    ImVec2 head;float depth=0;if(project(glm::vec3(feet.x,feet.y+2.1f,feet.z),head,depth)){
+        char label[80];std::snprintf(label,sizeof(label),"EClientBot  %d HP  %d totems",hp,tot);auto size=ImGui::CalcTextSize(label);list->AddText(ImVec2(head.x-size.x*.5f,head.y-size.y),IM_COL32_WHITE,label);}
 }
 static void ui() {
     if(ImGui::Button("Spawn / move here"))request.store(1);ImGui::SameLine();if(ImGui::Button("Remove"))request.store(2);ImGui::SameLine();if(ImGui::Button("Hit test"))request.store(3);
@@ -201,7 +237,8 @@ static void ui() {
     int a=armor.load();const char* sets[]={"None","Iron","Diamond","Netherite"};if(ImGui::Combo("Armor",&a,sets,4))armor.store(a);
     int p=protection.load();if(ImGui::SliderInt("Protection",&p,0,4))protection.store(p);
     int t=totemCount.load();if(ImGui::SliderInt("Totems on spawn",&t,0,20))totemCount.store(t);
-    bool b=moving.load();if(ImGui::Checkbox("Walk around",&b))moving.store(b);
+    bool b=forceVirtual.load();if(ImGui::Checkbox("Force virtual model on next spawn",&b))forceVirtual.store(b);
+    b=moving.load();if(ImGui::Checkbox("Walk around",&b))moving.store(b);
     b=infinite.load();if(ImGui::Checkbox("Infinite totems",&b))infinite.store(b);
     b=gapples.load();if(ImGui::Checkbox("Golden apples",&b))gapples.store(b);
     b=noKnock.load();if(ImGui::Checkbox("No knockback",&b))noKnock.store(b);

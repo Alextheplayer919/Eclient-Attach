@@ -82,7 +82,7 @@ replace('        BeginDraw();', '''        BeginDraw();
 # Queue touch transitions on the GL thread for ImGui's event processing: directly
 # changing MouseDown can collapse a fast DOWN+UP into a single invisible tap.
 replace("\tio.MousePos = ImVec2(PosX, PosY);\n\tio.MouseDown[0] = down;", "\tio.AddMousePosEvent(PosX, PosY);\n\tio.AddMouseButtonEvent(0, down);")
-replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "placement_forward.h"\n#include "module_menu.h"')
+replace('#include "menu_utils.h"', '#include "menu_utils.h"\n#include "fly2_adapter.h"\n#include "gatyo_bypass_fly.h"\n#include "placement_forward.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setFly2LogPath(JNIEnv* env, jclass, jstring path) { if (!path) return; const char* chars = env->GetStringUTFChars(path, nullptr); if (chars) { eclient_fly2_adapter::setLogPath(chars); env->ReleaseStringUTFChars(path, chars); } }')
 replace('#include "module_menu.h"', '#include "preview_adapter.h"\n#include "module_menu.h"')
 replace('#include "module_menu.h"', '#include "module_menu.h"\nextern "C" JNIEXPORT void JNICALL Java_com_mojang_minecraftpe_platforms_Platform2_setPreviewAssets(JNIEnv* env, jclass, jobject assets) { eclient_preview::setAssets(env, assets); }')
@@ -96,12 +96,25 @@ if normal.count('return old_NormalTick(thiz);') != 4:
 normal = normal.replace('return old_NormalTick(thiz);', 'return eclientFly2TickAndReturn(thiz, false);', 3)
 normal = normal.replace('return old_NormalTick(thiz);', 'return eclientFly2TickAndReturn(thiz, true);', 1)
 helper = '''static void* eclientFly2TickAndReturn(LocalPlayer* player, bool gameReady) {
+    if (gameReady && player) {
+        eclient_bypass_fly::MoveInputUpdate(player);
+        eclient_bypass_fly::LookTrackBegin(player);
+        eclient_bypass_fly::FlyOnNormalTick(player);
+        eclient_bypass_fly::LookTrackEnd(player, false);
+        eclient_bypass_fly::MoveInputRecord(player);
+    } else eclient_bypass_fly::reset();
     void* result = old_NormalTick(player);
     eclient_fly2_adapter::tick(player, gameReady);
     return result;
 }
 '''
 s = s[:normal_start] + helper + normal + s[normal_end:]
+
+# Gatyo BypassFly observes input before serialization and restores packet bits
+# after the game's original writer. The confirmed combat calls remain separate.
+replace('\tif (panic) return old_PlayerAuthInputPacket(a1, a2);', '\tif (panic) return old_PlayerAuthInputPacket(a1, a2);\n    eclient_bypass_fly::MoveInputOnAuthPacket(a1);')
+replace('\treturn old_PlayerAuthInputPacket(a1, a2);', '    uint64_t flySavedBits[2];\n    eclient_bypass_fly::FlyFilterAuthBits(a1, flySavedBits);\n    void* flyResult = old_PlayerAuthInputPacket(a1, a2);\n    eclient_bypass_fly::FlyRestoreAuthBits(a1, flySavedBits);\n    return flyResult;')
+replace('    if (panic) return old_Gravity(a1, a2, a3, a4, a5, a6);', '    if (panic) return old_Gravity(a1, a2, a3, a4, a5, a6);\n    eclient_bypass_fly::MoveInputOnGravity((void*)a4);')
 
 # The ARM64 binary's placement entry uses x0-x2, w3, x4-x5 and w6.
 # Upstream's six int arguments truncate pointers and drop w6; preserve the
@@ -234,14 +247,14 @@ mk = jni / 'Android.mk'
 import shutil
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'menu' / 'module_menu.h', jni / 'module_menu.h')
 if combat_lab:
-    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h', 'fake_simulation.h'):
+    for file in ('combat_lab.h', 'live_console.h', 'gatyo_combat.h', 'gatyo_fake.h', 'fake_simulation.h', 'steve_skin.h'):
         shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'combat-lab' / file, jni / file)
     path = jni / 'module_menu.h'
     menu_source = path.read_text()
     for old, new in (
         ('CONFIG, SCHEMATIC_PREVIEW };', 'CONFIG, SCHEMATIC_PREVIEW, CRYSTAL_AURA_TEST, AUTO_TOTEM_TEST, FAKE_PLAYER_TEST };'),
         ('static Module combat[] = {{"KillAura",', 'static Module combat[] = {{"Crystal Aura",nullptr,CRYSTAL_AURA_TEST},{"Auto Totem",nullptr,AUTO_TOTEM_TEST},{"Fake Player",nullptr,FAKE_PLAYER_TEST},{"KillAura",'),
-        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI(), eclient_combat_lab::crystalSettings();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI(), eclient_combat_lab::totemSettings();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
+        ('    if (m.settings == SCHEMATIC_PREVIEW)', '    if (m.settings == CRYSTAL_AURA_TEST) eclient_gatyo::crystalUI();\n    else if (m.settings == AUTO_TOTEM_TEST) eclient_gatyo::totemUI();\n    else if (m.settings == FAKE_PLAYER_TEST) eclient_fake::ui();\n    else if (m.settings == SCHEMATIC_PREVIEW)'),
     ):
         if menu_source.count(old) != 1: raise ValueError('unexpected combat lab menu source')
         menu_source = menu_source.replace(old, new, 1)
@@ -250,7 +263,7 @@ if combat_lab:
 shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'compat' / 'placement_forward.h', jni / 'placement_forward.h')
 for file in ('preview_adapter.h', 'anchor.h', 'mcstructure.h', 'cube_mesh.h', 'cube_mesh.cpp', 'texture_catalog.h', 'texture_catalog.cpp'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'schematic' / file, jni / file)
-for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h'):
+for file in ('fly2.h', 'fly2.cpp', 'fly2_adapter.h', 'fly2_limits.h', 'fly2_calculated.h', 'fly2_probe.h', 'gatyo_bypass_fly.h'):
     shutil.copyfile(Path(__file__).resolve().parent.parent / 'apollon-adapter' / 'fly' / file, jni / file)
 m = mk.read_text().replace('LOCAL_SRC_FILES := main.cpp \\', 'LOCAL_SRC_FILES := main.cpp \\\n    cube_mesh.cpp \\\n    texture_catalog.cpp \\\n    fly2.cpp \\').replace('LOCAL_MODULE    := ReverseSigma', 'LOCAL_MODULE    := eclient_host').replace('include $(BUILD_SHARED_LIBRARY)', 'LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384\ninclude $(BUILD_SHARED_LIBRARY)')
 mk.write_text(m)

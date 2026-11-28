@@ -18,7 +18,8 @@ struct GameplayUserManager {void forEachActivePlayer(std::function<bool(Player&)
 struct Level {GameplayUserManager manager;GameplayUserManager* getGameplayUserManager(){return &manager;}};
 std::vector<std::string> friendList,botList;bool panic=false,inMenu=false;
 const char* MineLib="unused";uintptr_t getAbsoluteAddress(const char*,uintptr_t){return 0;}
-namespace ImGui {bool Checkbox(const char*,bool*){return false;}bool SliderInt(const char*,int*,int,int){return false;}void TextWrapped(const char*,...){}}
+namespace eclient_combat_lab {std::atomic<bool> breakAura{false};std::atomic<int> breakDelay{500};std::atomic<float> breakRange{5};}
+namespace ImGui {bool SliderFloat(const char*,float*,float,float,const char*){return false;}bool Checkbox(const char*,bool*){return false;}bool SliderInt(const char*,int*,int,int){return false;}void TextWrapped(const char*,...){}}
 #include "../apollon-adapter/combat-lab/live_console.h"
 #include "../apollon-adapter/combat-lab/gatyo_combat.h"
 int main() {
